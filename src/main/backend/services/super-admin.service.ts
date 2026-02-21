@@ -1,0 +1,395 @@
+import crypto from 'crypto';
+import fs from 'fs';
+import { DatabaseService } from './database.service';
+import { databaseConfig } from '../config/database.config';
+
+export interface SuperAdminLoginResult {
+  success: boolean;
+  token?: string;
+  error?: string;
+}
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  password_hash: string;
+  created_at: string;
+}
+
+export interface License {
+  id: number;
+  user_id: number;
+  activation_code: string;
+  expiry_date: string;
+  is_active: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivationCode {
+  id: number;
+  code: string;
+  expiry_date: string;
+  is_used: number;
+  used_by_user_id: number | null;
+  used_at: string | null;
+  created_at: string;
+}
+
+export class SuperAdminService {
+  private dbService: DatabaseService;
+  private readonly SUPER_ADMIN_EMAIL = 'admin@pharmacy.com';
+  private readonly SUPER_ADMIN_PASSWORD = 'admin123'; // Default password
+
+  constructor() {
+    this.dbService = new DatabaseService();
+    this.initializeSuperAdmin();
+  }
+
+  /**
+   * Initialize super admin user if it doesn't exist
+   */
+  private async initializeSuperAdmin(): Promise<void> {
+    try {
+      const existingAdmin = await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}'`
+      );
+
+      if (!existingAdmin) {
+        const passwordHash = this.hashPassword(this.SUPER_ADMIN_PASSWORD);
+        await this.dbService.execute(
+          `INSERT INTO users (name, email, password_hash) VALUES ('Super Admin', '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}', '${passwordHash}')`
+        );
+      }
+    } catch (error) {
+      // Error initializing super admin
+    }
+  }
+
+  /**
+   * Hash password
+   */
+  private hashPassword(password: string): string {
+    return crypto.createHash('sha256').update(password).digest('hex');
+  }
+
+  /**
+   * Generate token
+   */
+  private generateToken(): string {
+    const payload = `superadmin:${Date.now()}`;
+    return crypto.createHash('sha256').update(payload).digest('hex');
+  }
+
+  /**
+   * Login as super admin
+   */
+  public async login(email: string, password: string): Promise<SuperAdminLoginResult> {
+    try {
+      if (email !== this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Invalid credentials',
+        };
+      }
+
+      const user = (await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+      )) as User | null;
+
+      if (!user) {
+        return {
+          success: false,
+          error: 'Invalid credentials',
+        };
+      }
+
+      const passwordHash = this.hashPassword(password);
+      if (user.password_hash !== passwordHash) {
+        return {
+          success: false,
+          error: 'Invalid credentials',
+        };
+      }
+
+      const token = this.generateToken();
+      return {
+        success: true,
+        token,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Login failed',
+      };
+    }
+  }
+
+  /**
+   * Get database file path
+   */
+  public getDatabasePath(): string {
+    return databaseConfig.getPath();
+  }
+
+  /**
+   * Get all users
+   */
+  public async getAllUsers(): Promise<User[]> {
+    try {
+      const users = await this.dbService.query(
+        'SELECT id, name, email, password_hash, created_at FROM users ORDER BY created_at DESC'
+      );
+      return users as User[];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  /**
+   * Create new user
+   */
+  public async createUser(
+    name: string,
+    email: string,
+    password: string
+  ): Promise<{ success: boolean; error?: string; user?: User }> {
+    try {
+      // Check if user exists
+      const existingUser = await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+      );
+
+      if (existingUser) {
+        return {
+          success: false,
+          error: 'User with this email already exists',
+        };
+      }
+
+      const passwordHash = this.hashPassword(password);
+      const result = await this.dbService.execute(
+        `INSERT INTO users (name, email, password_hash) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}')`
+      );
+
+      const userId = (result as any).lastID;
+      const user = (await this.dbService.queryOne(
+        `SELECT id, name, email, password_hash, created_at FROM users WHERE id = ${userId}`
+      )) as User;
+
+      return {
+        success: true,
+        user,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to create user',
+      };
+    }
+  }
+
+  /**
+   * Update user
+   */
+  public async updateUser(
+    userId: number,
+    name: string,
+    email: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Check if email is already taken by another user
+      const existingUser = await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}' AND id != ${userId}`
+      );
+
+      if (existingUser) {
+        return {
+          success: false,
+          error: 'Email is already taken by another user',
+        };
+      }
+
+      await this.dbService.execute(
+        `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}' WHERE id = ${userId}`
+      );
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to update user',
+      };
+    }
+  }
+
+  /**
+   * Update user password
+   */
+  public async updateUserPassword(
+    userId: number,
+    newPassword: string
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const passwordHash = this.hashPassword(newPassword);
+      await this.dbService.execute(
+        `UPDATE users SET password_hash = '${passwordHash}' WHERE id = ${userId}`
+      );
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to update password',
+      };
+    }
+  }
+
+  /**
+   * Delete user
+   */
+  public async deleteUser(userId: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Don't allow deleting super admin
+      const user = (await this.dbService.queryOne(
+        `SELECT email FROM users WHERE id = ${userId}`
+      )) as { email: string } | null;
+
+      if (user && user.email === this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Cannot delete super admin account',
+        };
+      }
+
+      await this.dbService.execute(`DELETE FROM users WHERE id = ${userId}`);
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to delete user',
+      };
+    }
+  }
+
+  /**
+   * Get all licenses
+   */
+  public async getAllLicenses(): Promise<License[]> {
+    try {
+      const licenses = await this.dbService.query(
+        'SELECT * FROM licenses ORDER BY created_at DESC'
+      );
+      return licenses as License[];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  /**
+   * Get all activation codes
+   */
+  public async getAllActivationCodes(): Promise<ActivationCode[]> {
+    try {
+      const codes = await this.dbService.query(
+        'SELECT * FROM activation_codes ORDER BY code ASC'
+      );
+      return codes as ActivationCode[];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  /**
+   * Update license
+   */
+  public async updateLicense(
+    licenseId: number,
+    expiryDate: string,
+    isActive: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `UPDATE licenses SET expiry_date = '${expiryDate}', is_active = ${isActive ? 1 : 0}, updated_at = CURRENT_TIMESTAMP WHERE id = ${licenseId}`
+      );
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to update license',
+      };
+    }
+  }
+
+  /**
+   * Delete license
+   */
+  public async deleteLicense(licenseId: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(`DELETE FROM licenses WHERE id = ${licenseId}`);
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to delete license',
+      };
+    }
+  }
+
+  /**
+   * Update activation code
+   */
+  public async updateActivationCode(
+    codeId: number,
+    code: string,
+    expiryDate: string,
+    isUsed: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `UPDATE activation_codes SET code = '${code.replace(/'/g, "''")}', expiry_date = '${expiryDate}', is_used = ${isUsed ? 1 : 0} WHERE id = ${codeId}`
+      );
+
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to update activation code',
+      };
+    }
+  }
+
+  /**
+   * Delete activation code
+   */
+  public async deleteActivationCode(codeId: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(`DELETE FROM activation_codes WHERE id = ${codeId}`);
+      return {
+        success: true,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: 'Failed to delete activation code',
+      };
+    }
+  }
+}
+
+export default SuperAdminService;
+
