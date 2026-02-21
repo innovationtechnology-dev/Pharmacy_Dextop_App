@@ -11,9 +11,11 @@ export interface PurchaseItemInput {
   discountAmount?: number;
   taxAmount?: number;
   expiryDate: string;
+  batchNumber?: string;
 }
 
 export interface PurchaseItem extends PurchaseItemInput {
+  id?: number;
   totalPills: number;
   availablePills?: number;
   pricePerPill: number;
@@ -36,8 +38,11 @@ export interface Purchase {
   grandTotal: number;
   paymentAmount: number;
   remainingBalance: number;
+  status?: 'ordered' | 'received' | 'completed';
+  invoiceNumber?: string;
   notes?: string;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 export class PurchaseService {
@@ -74,6 +79,9 @@ export class PurchaseService {
     const purchasesInfo = await this.dbService.query(`PRAGMA table_info(purchases)`);
     const hasPaymentAmount = purchasesInfo.some((col: any) => col.name === 'payment_amount');
     const hasRemainingBalance = purchasesInfo.some((col: any) => col.name === 'remaining_balance');
+    const hasUpdatedAt = purchasesInfo.some((col: any) => col.name === 'updated_at');
+    const hasStatus = purchasesInfo.some((col: any) => col.name === 'status');
+    const hasInvoiceNumber = purchasesInfo.some((col: any) => col.name === 'invoice_number');
 
     if (!hasPaymentAmount) {
       await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN payment_amount REAL NOT NULL DEFAULT 0`);
@@ -82,6 +90,15 @@ export class PurchaseService {
       await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN remaining_balance REAL NOT NULL DEFAULT 0`);
       // Calculate remaining_balance for existing records
       await this.dbService.execute(`UPDATE purchases SET remaining_balance = grand_total - payment_amount WHERE remaining_balance = 0 AND grand_total > 0`);
+    }
+    if (!hasUpdatedAt) {
+      await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN updated_at DATETIME`);
+    }
+    if (!hasStatus) {
+      await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN status TEXT DEFAULT 'ordered'`);
+    }
+    if (!hasInvoiceNumber) {
+      await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN invoice_number TEXT`);
     }
 
     await this.dbService.execute(`
@@ -101,10 +118,18 @@ export class PurchaseService {
         line_subtotal REAL NOT NULL,
         line_total REAL NOT NULL,
         expiry_date TEXT NOT NULL,
+        batch_number TEXT,
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
         FOREIGN KEY (medicine_id) REFERENCES medicines(id)
       )
     `);
+
+    // Add batch_number column if it doesn't exist (migration)
+    const purchaseItemsInfo = await this.dbService.query(`PRAGMA table_info(purchase_items)`);
+    const hasBatchNumber = purchaseItemsInfo.some((col: any) => col.name === 'batch_number');
+    if (!hasBatchNumber) {
+      await this.dbService.execute(`ALTER TABLE purchase_items ADD COLUMN batch_number TEXT`);
+    }
 
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase_id ON purchase_items(purchase_id)
@@ -227,8 +252,8 @@ export class PurchaseService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertPurchaseSql = `
-        INSERT INTO purchases (supplier_id, supplier_name, subtotal, discount_total, tax_total, grand_total, payment_amount, remaining_balance, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO purchases (supplier_id, supplier_name, subtotal, discount_total, tax_total, grand_total, payment_amount, remaining_balance, status, invoice_number, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
       const purchaseResult = await this.dbService.execute(insertPurchaseSql, [
         purchase.supplierId,
@@ -239,6 +264,8 @@ export class PurchaseService {
         grandTotal,
         paymentAmount,
         remainingBalance,
+        purchase.status || 'ordered',
+        purchase.invoiceNumber || null,
         purchase.notes || null,
       ]);
       const purchaseId = (purchaseResult as any).lastID;
@@ -268,9 +295,10 @@ export class PurchaseService {
             tax_amount,
             line_subtotal,
             line_total,
-            expiry_date
+            expiry_date,
+            batch_number
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           purchaseId,
@@ -287,6 +315,7 @@ export class PurchaseService {
           item.lineSubtotal,
           item.lineTotal,
           item.expiryDate,
+          item.batchNumber || null,
         ]);
       }
 
@@ -341,9 +370,13 @@ export class PurchaseService {
         grandTotal: purchase.grand_total,
         paymentAmount: purchase.payment_amount,
         remainingBalance: purchase.remaining_balance,
+        status: purchase.status || 'ordered',
+        invoiceNumber: purchase.invoice_number || undefined,
         notes: purchase.notes,
         createdAt: purchase.created_at,
+        updatedAt: purchase.updated_at,
         items: items.map((item: any) => ({
+          id: item.id, // Include the purchase item ID
           medicineId: item.medicine_id,
           medicineName: item.medicine_name,
           packetQuantity: item.packet_quantity,
@@ -396,9 +429,13 @@ export class PurchaseService {
       grandTotal: purchase.grand_total,
       paymentAmount: purchase.payment_amount ?? 0,
       remainingBalance: purchase.remaining_balance ?? (purchase.grand_total - (purchase.payment_amount ?? 0)),
+      status: purchase.status || 'ordered',
+      invoiceNumber: purchase.invoice_number || undefined,
       notes: purchase.notes || undefined,
       createdAt: purchase.created_at,
+      updatedAt: purchase.updated_at,
       items: items.map((item: any) => ({
+        id: item.id, // Include the purchase item ID
         medicineId: item.medicine_id,
         medicineName: item.medicine_name,
         packetQuantity: item.packet_quantity,
@@ -646,9 +683,10 @@ export class PurchaseService {
       const updatePurchaseSql = `
         UPDATE purchases 
         SET supplier_id = ?, supplier_name = ?, subtotal = ?, discount_total = ?, tax_total = ?, 
-            grand_total = ?, payment_amount = ?, remaining_balance = ?, notes = ?
+            grand_total = ?, payment_amount = ?, remaining_balance = ?, status = ?, invoice_number = ?, notes = ?, updated_at = ?
         WHERE id = ?
       `;
+      const now = new Date().toISOString();
       await this.dbService.execute(updatePurchaseSql, [
         purchase.supplierId,
         purchase.supplierName,
@@ -658,7 +696,10 @@ export class PurchaseService {
         grandTotal,
         paymentAmount,
         remainingBalance,
+        purchase.status || existingPurchase.status || 'ordered',
+        purchase.invoiceNumber || existingPurchase.invoiceNumber || null,
         purchase.notes || null,
+        now,
         purchaseId,
       ]);
 
@@ -691,9 +732,10 @@ export class PurchaseService {
             tax_amount,
             line_subtotal,
             line_total,
-            expiry_date
+            expiry_date,
+            batch_number
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           purchaseId,
@@ -710,6 +752,7 @@ export class PurchaseService {
           item.lineSubtotal,
           item.lineTotal,
           item.expiryDate,
+          item.batchNumber || null,
         ]);
       }
 

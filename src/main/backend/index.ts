@@ -17,6 +17,8 @@ import { CustomerController } from './controllers/customer.controller';
 import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
+import { PaymentController } from './controllers/payment.controller';
+import { GRNController } from './controllers/grn.controller';
 
 export class Backend {
   private databaseController: DatabaseController;
@@ -30,6 +32,8 @@ export class Backend {
   private saleReturnController: SaleReturnController;
   private licenseController: LicenseController;
   private superAdminController: SuperAdminController;
+  private paymentController: PaymentController;
+  private grnController: GRNController;
 
   /**
    * Initialize backend services and controllers
@@ -52,6 +56,8 @@ export class Backend {
       this.saleReturnController = new SaleReturnController();
       this.licenseController = new LicenseController();
       this.superAdminController = new SuperAdminController();
+      this.paymentController = new PaymentController();
+      this.grnController = new GRNController();
 
       // Initialize all tables
       await this.medicineController.initializeTables();
@@ -60,6 +66,8 @@ export class Backend {
       await this.paymentController.initializeTables();
       await this.customerController.initializeTables();
       await this.saleReturnController.initializeTables();
+      await this.paymentController.initializeTables();
+      await this.grnController.initializeTables();
 
       // Register any additional custom handlers
       this.databaseController.registerCustomHandlers();

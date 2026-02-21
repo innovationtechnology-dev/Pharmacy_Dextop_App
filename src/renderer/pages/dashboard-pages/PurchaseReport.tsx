@@ -40,7 +40,10 @@ interface Purchase {
   paymentAmount: number;
   remainingBalance: number;
   notes?: string;
+  status?: 'ordered' | 'received' | 'completed';
+  invoiceNumber?: string;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
@@ -591,9 +594,10 @@ export default function Purchases() {
             <div className="grid grid-cols-12 gap-3 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
               <div className="col-span-2">Date / PO</div>
               <div className="col-span-2">Supplier</div>
+              <div className="col-span-1">Status</div>
+              <div className="col-span-1">Invoice #</div>
               <div className="col-span-1 text-center">Items</div>
-              <div className="col-span-1 text-center">Pills</div>
-              <div className="col-span-2 text-right">Grand Total</div>
+              <div className="col-span-1 text-right">Grand Total</div>
               <div className="col-span-2 text-right">Paid</div>
               <div className="col-span-2 text-right">Outstanding</div>
             </div>
@@ -619,21 +623,33 @@ export default function Purchases() {
                     <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                       <div className="text-[11px] text-gray-500 dark:text-gray-400">#{purchase.id}</div>
                       {purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : '—'}
+                      {purchase.updatedAt && (
+                        <div className="text-[9px] text-blue-500 dark:text-blue-400 font-normal mt-0.5 flex items-center gap-0.5">
+                          <FiRefreshCw className="w-2.5 h-2.5" />
+                          {`Updated on ${new Date(purchase.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${new Date(purchase.updatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`}
+                        </div>
+                      )}
                     </div>
                     <div className="col-span-2">
                       <div className="font-medium text-gray-900 dark:text-white truncate" title={purchase.supplierName}>{purchase.supplierName}</div>
+                    </div>
+                    <div className="col-span-1">
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium capitalize
+                        ${purchase.status === 'received' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
+                          purchase.status === 'completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
+                            'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
+                        {purchase.status || 'Ordered'}
+                      </span>
+                    </div>
+                    <div className="col-span-1 text-gray-500 dark:text-gray-400 truncate">
+                      {purchase.invoiceNumber || '-'}
                     </div>
                     <div className="col-span-1 text-center">
                       <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
                         {purchase.items.length}
                       </span>
                     </div>
-                    <div className="col-span-1 text-center">
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
-                        {purchase.items.reduce((acc, item) => acc + item.totalPills, 0)}
-                      </span>
-                    </div>
-                    <div className="col-span-2 text-right">
+                    <div className="col-span-1 text-right">
                       <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{purchase.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
                     </div>
                     <div className="col-span-2 text-right text-blue-600 dark:text-blue-400">
@@ -659,8 +675,8 @@ export default function Purchases() {
             {/* Totals Footer Row */}
             {!loading && !error && filteredPurchases.length > 0 && (
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
-                <div className="col-span-6 text-right text-gray-600 dark:text-gray-300 pr-4">Total</div>
-                <div className="col-span-2 text-right text-emerald-700 dark:text-emerald-400">
+                <div className="col-span-7 text-right text-gray-600 dark:text-gray-300 pr-4">Total</div>
+                <div className="col-span-1 text-right text-emerald-700 dark:text-emerald-400">
                   {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
                 <div className="col-span-2 text-right text-blue-700 dark:text-blue-400">

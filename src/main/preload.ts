@@ -28,6 +28,7 @@ export type Channels =
   | 'purchase-create-reply' | 'purchase-get-all-reply' | 'purchase-get-by-id-reply' | 'purchase-get-total-by-date-range-reply'
   | 'purchase-export-pdf' | 'purchase-export-pdf-reply' | 'purchase-export-csv' | 'purchase-export-csv-reply'
   | 'purchase-delete' | 'purchase-delete-reply'
+  | 'purchase-update' | 'purchase-update-reply'
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
   | 'asynchronous-sql-command' | 'asynchronous-sql-reply'
   | 'ipc-show-userDataPaths';
