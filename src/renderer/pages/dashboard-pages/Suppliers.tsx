@@ -21,6 +21,7 @@ import {
   FiAlertCircle,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 
 interface Supplier {
   id?: number;
@@ -51,6 +52,7 @@ const Suppliers: React.FC = () => {
   });
   const [showSuccess, setShowSuccess] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
 
   const { setHeader } = useDashboardHeader();
 
@@ -103,10 +105,6 @@ const Suppliers: React.FC = () => {
   }, []);
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this supplier?')) {
-      return;
-    }
-
     try {
       window.electron.ipcRenderer.once('supplier-delete-reply', (response: any) => {
         if (response.success) {
@@ -247,13 +245,38 @@ const Suppliers: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={deleteConfirm !== null}
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={() => {
+          if (deleteConfirm) {
+            handleDelete(deleteConfirm.id);
+          }
+        }}
+        title="Delete Supplier"
+        message={`Are you sure you want to delete "${deleteConfirm?.name}"? This action cannot be undone and will remove all associated data.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
+
       {/* Success Message */}
       {showSuccess && (
-        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
-          <FiCheck className="w-4 h-4" />
-          <span className="font-medium">
-            Supplier {editingSupplier ? 'updated' : 'created'} successfully!
-          </span>
+        <div className="fixed top-4 right-4 z-50 animate-slideInRight">
+          <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-[300px]">
+            <FiCheck className="w-5 h-5 flex-shrink-0" />
+            <span className="font-medium flex-1">
+              Supplier {editingSupplier ? 'updated' : 'created'} successfully!
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSuccess(false)}
+              className="p-1 hover:bg-green-600 rounded transition-colors"
+            >
+              <FiX className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -262,9 +285,9 @@ const Suppliers: React.FC = () => {
         <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
           <div className="flex items-center justify-between mb-2">
             <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiUsers className="w-4 h-4 text-white" />
+              <FiBriefcase className="w-4 h-4 text-white" />
             </div>
-            <FiTrendingUp className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+            <FiUsers className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
           </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
             {stats.total}
@@ -298,12 +321,12 @@ const Suppliers: React.FC = () => {
           <p className="text-xs text-gray-600 dark:text-gray-400">With Address</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
+        <div className="bg-gradient-to-br from-white to-teal-50/50 dark:from-gray-800 dark:to-teal-900/20 rounded-lg shadow-sm border border-teal-100/50 dark:border-teal-800/30 p-3">
           <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 shadow-md">
               <FiTrendingUp className="w-4 h-4 text-white" />
             </div>
-            <FiAlertCircle className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+            <FiCheckCircle className="w-4 h-4 text-teal-400 dark:text-teal-500" />
           </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
             {stats.recent}
@@ -663,7 +686,7 @@ const Suppliers: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (supplier.id) {
-                              handleDelete(supplier.id);
+                              setDeleteConfirm({ id: supplier.id, name: supplier.name });
                             }
                           }}
                           className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"

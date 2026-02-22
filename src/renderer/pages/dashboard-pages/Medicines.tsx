@@ -14,6 +14,7 @@ import {
   FiClock,
 } from 'react-icons/fi';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 
 const currencySymbols: Record<string, string> = {
   USD: '$',
@@ -106,6 +107,7 @@ export default function MedicinesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
 
   // Get currency symbol
   const getCurrencySymbol = () => {
@@ -200,11 +202,14 @@ export default function MedicinesPage() {
 
           if (!response?.success) {
             setFormError(response?.error ?? 'Failed to update medicine.');
+            setTimeout(() => setFormError(null), 3000);
             return;
           }
 
           setFormSuccess(`${payload.name} has been updated.`);
+          setTimeout(() => setFormSuccess(null), 3000);
           setFeedbackMessage(`${payload.name} updated successfully.`);
+          setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           setEditingMedicineId(null);
           loadMedicines();
@@ -221,11 +226,14 @@ export default function MedicinesPage() {
 
           if (!response?.success) {
             setFormError(response?.error ?? 'Failed to save medicine.');
+            setTimeout(() => setFormError(null), 3000);
             return;
           }
 
           setFormSuccess(`${payload.name} has been added.`);
+          setTimeout(() => setFormSuccess(null), 3000);
           setFeedbackMessage(`${payload.name} saved to inventory.`);
+          setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           loadMedicines();
         }
@@ -235,24 +243,17 @@ export default function MedicinesPage() {
   };
 
   const stats = useMemo(() => {
-    const readyForSale = medicines.filter((medicine) => medicine.sellablePills > 0).length;
-    const inactive = medicines.filter((medicine) => medicine.status !== 'active').length;
-    const lowStockItems = medicines.filter(
-      (medicine) =>
-        medicine.totalAvailablePills > 0 && medicine.totalAvailablePills < medicine.pillQuantity
-    ).length;
-    const totalSellablePills = medicines.reduce(
-      (sum, medicine) => sum + medicine.sellablePills,
-      0
-    );
+    const active = medicines.filter((medicine) => medicine.status === 'active').length;
+    const inactive = medicines.filter((medicine) => medicine.status === 'inactive').length;
+    const discontinued = medicines.filter((medicine) => medicine.status === 'discontinued').length;
+    const expiringSoon = expiringAlerts.length;
 
     return {
       totalProducts: medicines.length,
-      readyForSale,
+      active,
       inactive,
-      lowStockItems,
-      expiringSoon: expiringAlerts.length,
-      totalSellablePills,
+      discontinued,
+      expiringSoon,
     };
   }, [medicines, expiringAlerts.length]);
 
@@ -317,10 +318,6 @@ export default function MedicinesPage() {
   }, []);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
-    if (!window.confirm(`Are you sure you want to delete "${medicineName}"? This action cannot be undone.`)) {
-      return;
-    }
-
     try {
       window.electron.ipcRenderer.once('medicine-delete-reply', (response: any) => {
         if (response.success) {
@@ -346,17 +343,8 @@ export default function MedicinesPage() {
   const { setHeader } = useDashboardHeader();
 
   const headerActions = useMemo(
-    () => (
-      <button
-        type="button"
-        onClick={resetForm}
-        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-500 dark:via-emerald-600 dark:to-emerald-500 text-white rounded-lg hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-600 dark:hover:via-emerald-700 dark:hover:to-emerald-600 transition-all duration-200 shadow-md hover:shadow-lg"
-      >
-        <FiPlus className="w-5 h-5" />
-        <span className="hidden sm:inline">New Medicine</span>
-      </button>
-    ),
-    [resetForm]
+    () => null,
+    []
   );
 
   useEffect(() => {
@@ -370,11 +358,36 @@ export default function MedicinesPage() {
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+      {/* Confirm Dialog */}
+      <ConfirmDialog
+        isOpen={deleteConfirm !== null}
+        onClose={() => setDeleteConfirm(null)}
+        onConfirm={() => {
+          if (deleteConfirm) {
+            handleDelete(deleteConfirm.id, deleteConfirm.name);
+          }
+        }}
+        title="Delete Medicine"
+        message={`Are you sure you want to delete "${deleteConfirm?.name}"? This action cannot be undone and will remove all associated data.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
+
       {/* Success/Feedback Message */}
       {feedbackMessage && (
-        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
-          <FiCheckCircle className="w-4 h-4" />
-          <span className="font-medium">{feedbackMessage}</span>
+        <div className="fixed top-4 right-4 z-50 animate-slideInRight">
+          <div className="bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-[300px]">
+            <FiCheckCircle className="w-5 h-5 flex-shrink-0" />
+            <span className="font-medium flex-1">{feedbackMessage}</span>
+            <button
+              type="button"
+              onClick={() => setFeedbackMessage(null)}
+              className="p-1 hover:bg-green-600 rounded transition-colors"
+            >
+              <FiX className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -401,9 +414,9 @@ export default function MedicinesPage() {
             <FiCheckCircle className="w-4 h-4 text-green-400 dark:text-green-500" />
           </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.readyForSale}
+            {stats.active}
           </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Ready for Sale</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Active</p>
         </div>
 
         <div className="bg-gradient-to-br from-white to-yellow-50/50 dark:from-gray-800 dark:to-yellow-900/20 rounded-lg shadow-sm border border-yellow-100/50 dark:border-yellow-800/30 p-3">
@@ -414,22 +427,22 @@ export default function MedicinesPage() {
             <FiAlertCircle className="w-4 h-4 text-yellow-400 dark:text-yellow-500" />
           </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.lowStockItems}
+            {stats.inactive}
           </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Low Stock</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Inactive</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-amber-50/50 dark:from-gray-800 dark:to-amber-900/20 rounded-lg shadow-sm border border-amber-100/50 dark:border-amber-800/30 p-3">
+        <div className="bg-gradient-to-br from-white to-red-50/50 dark:from-gray-800 dark:to-red-900/20 rounded-lg shadow-sm border border-red-100/50 dark:border-red-800/30 p-3">
           <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 shadow-md">
-              <FiClock className="w-4 h-4 text-white" />
+            <div className="p-2 rounded-lg bg-gradient-to-br from-red-500 to-red-600 shadow-md">
+              <FiX className="w-4 h-4 text-white" />
             </div>
-            <FiClock className="w-4 h-4 text-amber-400 dark:text-amber-500" />
+            <FiX className="w-4 h-4 text-red-400 dark:text-red-500" />
           </div>
           <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.expiringSoon}
+            {stats.discontinued}
           </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Expiring (≤{alertThresholdDays}d)</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Discontinued</p>
         </div>
       </div>
       {/* Main Content: Split Layout */}
@@ -759,7 +772,7 @@ export default function MedicinesPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (medicine.id) {
-                              handleDelete(medicine.id, medicine.name);
+                              setDeleteConfirm({ id: medicine.id, name: medicine.name });
                             }
                           }}
                           className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
