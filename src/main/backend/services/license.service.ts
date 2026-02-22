@@ -187,13 +187,24 @@ export class LicenseService {
     is_used: number;
   } | null> {
     try {
+      console.log(`🔍 Searching for code in database: ${code.toUpperCase()}`);
+      
+      // First, let's check all codes to debug
+      const allCodes = await this.dbService.query(
+        `SELECT code FROM activation_codes LIMIT 5`
+      );
+      console.log(`📋 Sample codes in database:`, allCodes);
+      
       const activationCode = await this.dbService.queryOne(
         `SELECT code, expiry_date, is_used FROM activation_codes WHERE code = ?`,
         [code.toUpperCase()]
       );
+      
+      console.log(`🔍 Query result for ${code.toUpperCase()}:`, activationCode);
+      
       return activationCode;
     } catch (error) {
-      // Error getting activation code from DB
+      console.error('❌ Error getting activation code from DB:', error);
       return null;
     }
   }
@@ -206,18 +217,24 @@ export class LicenseService {
     activationCode: string
   ): Promise<ActivateLicenseResult> {
     try {
+      console.log(`🔑 Attempting to activate license for user ${userId} with code: ${activationCode}`);
+      
       // Get activation code from database
       const codeData = await this.getActivationCodeFromDB(activationCode);
 
       if (!codeData) {
+        console.log(`❌ Code not found in database: ${activationCode}`);
         return {
           success: false,
           error: 'Invalid activation code. Please enter a valid code.',
         };
       }
 
+      console.log(`✓ Code found in database:`, codeData);
+
       // Check if code is already used
       if (codeData.is_used === 1) {
+        console.log(`❌ Code already used: ${activationCode}`);
         return {
           success: false,
           error: 'This activation code has already been used.',
@@ -227,7 +244,10 @@ export class LicenseService {
       // Check if code has expired (expiry date is in the past)
       const codeExpiryDate = new Date(codeData.expiry_date);
       const now = new Date();
+      console.log(`Checking expiry: Code expires on ${codeExpiryDate.toISOString()}, Current time: ${now.toISOString()}`);
+      
       if (codeExpiryDate < now) {
+        console.log(`❌ Code expired: ${activationCode}`);
         return {
           success: false,
           error: 'This activation code has expired.',
@@ -242,6 +262,8 @@ export class LicenseService {
         `SELECT * FROM licenses WHERE user_id = ? AND is_active = 1 ORDER BY expiry_date DESC LIMIT 1`,
         [userId]
       )) as License | null;
+
+      console.log(`Existing license for user ${userId}:`, existingLicense);
 
       // Mark activation code as used
       await this.dbService.execute(
@@ -272,6 +294,7 @@ export class LicenseService {
           [existingLicense.id]
         )) as License;
 
+        console.log(`✅ License updated successfully for user ${userId}`);
         return {
           success: true,
           license: LicenseService.mapRowToLicense(updatedLicense),
@@ -294,12 +317,13 @@ export class LicenseService {
         licenseId,
       ])) as License;
 
+        console.log(`✅ New license created successfully for user ${userId}`);
         return {
           success: true,
         license: LicenseService.mapRowToLicense(license),
         };
     } catch (error) {
-      // Activate license error
+      console.error('❌ Activate license error:', error);
       return {
         success: false,
         error: 'Failed to activate license. Please try again.',

@@ -3,7 +3,7 @@
  */
 
 const STORAGE_KEY = 'license_activation_attempts';
-const MAX_ATTEMPTS_PER_DAY = 5;
+const MAX_ATTEMPTS_PER_DAY = 20; // Increased from 5 to 20
 
 interface AttemptData {
   date: string; // YYYY-MM-DD format
@@ -73,6 +73,14 @@ export const hasExceededLimit = (): boolean => {
 export const getRemainingAttempts = (): number => {
   const data = getAttemptData();
   return Math.max(0, MAX_ATTEMPTS_PER_DAY - data.count);
+};
+
+/**
+ * Force reset attempts (for testing/debugging)
+ */
+export const forceResetAttempts = (): void => {
+  localStorage.removeItem(STORAGE_KEY);
+  console.log('License attempts have been reset');
 };
 
 

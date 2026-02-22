@@ -1,6 +1,18 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
-import { FiPlus } from 'react-icons/fi';
+import {
+  FiPlus,
+  FiEdit2,
+  FiTrash2,
+  FiSearch,
+  FiX,
+  FiSave,
+  FiPackage,
+  FiTrendingUp,
+  FiAlertCircle,
+  FiCheckCircle,
+  FiClock,
+} from 'react-icons/fi';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 
 const currencySymbols: Record<string, string> = {
@@ -287,350 +299,324 @@ export default function MedicinesPage() {
     [loadMedicines]
   );
 
+  const handleEdit = useCallback((medicine: Medicine) => {
+    setNewMedicine({
+      name: medicine.name,
+      pillQuantity: medicine.pillQuantity.toString(),
+      barcode: medicine.barcode || '',
+      status: medicine.status,
+    });
+    setEditingMedicineId(medicine.id);
+  }, []);
+
+  const resetForm = useCallback(() => {
+    setNewMedicine(emptyMedicineForm);
+    setEditingMedicineId(null);
+    setFormError(null);
+    setFormSuccess(null);
+  }, []);
+
+  const handleDelete = async (medicineId: number, medicineName: string) => {
+    if (!window.confirm(`Are you sure you want to delete "${medicineName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      window.electron.ipcRenderer.once('medicine-delete-reply', (response: any) => {
+        if (response.success) {
+          loadMedicines();
+          if (editingMedicineId === medicineId) {
+            resetForm();
+          }
+          setFeedbackMessage('Medicine deleted successfully!');
+          setTimeout(() => setFeedbackMessage(null), 3000);
+        } else {
+          setFeedbackMessage('Error deleting medicine: ' + (response.error || 'Unknown error'));
+          setTimeout(() => setFeedbackMessage(null), 3000);
+        }
+      });
+      window.electron.ipcRenderer.sendMessage('medicine-delete', [medicineId]);
+    } catch (error) {
+      console.error('Error deleting medicine:', error);
+      setFeedbackMessage('Error deleting medicine. Please try again.');
+      setTimeout(() => setFeedbackMessage(null), 3000);
+    }
+  };
+
+  const { setHeader } = useDashboardHeader();
+
+  const headerActions = useMemo(
+    () => (
+      <button
+        type="button"
+        onClick={resetForm}
+        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-500 dark:via-emerald-600 dark:to-emerald-500 text-white rounded-lg hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-600 dark:hover:via-emerald-700 dark:hover:to-emerald-600 transition-all duration-200 shadow-md hover:shadow-lg"
+      >
+        <FiPlus className="w-5 h-5" />
+        <span className="hidden sm:inline">New Medicine</span>
+      </button>
+    ),
+    [resetForm]
+  );
+
+  useEffect(() => {
+    setHeader({
+      title: 'Medicine Management',
+      subtitle: 'Manage your medicine inventory and stock levels',
+      actions: headerActions,
+    });
+    return () => setHeader(null);
+  }, [setHeader, headerActions]);
+
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden px-4">
+    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+      {/* Success/Feedback Message */}
       {feedbackMessage && (
-        <div className="mb-2 rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-4 py-3 text-sm text-green-800 dark:text-green-300 flex items-center justify-between gap-3">
-          <span>{feedbackMessage}</span>
-          <button
-            type="button"
-            className="text-green-700 dark:text-green-400 hover:text-green-900 dark:hover:text-green-200"
-            onClick={() => setFeedbackMessage(null)}
-          >
-            Dismiss
-          </button>
+        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
+          <FiCheckCircle className="w-4 h-4" />
+          <span className="font-medium">{feedbackMessage}</span>
         </div>
       )}
 
-      {expiringAlerts.length > 0 && (
-        <div className="mb-2 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 px-4 py-3">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                {expiringAlerts.length} medicine{expiringAlerts.length > 1 ? 's' : ''} expiring in the next {alertThresholdDays} days
-              </h3>
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Restock or remove these batches before they expire.
-              </p>
+      {/* Statistics Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3 flex-shrink-0">
+        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
+              <FiPackage className="w-4 h-4 text-white" />
             </div>
+            <FiTrendingUp className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
           </div>
-          <div className="mt-3 space-y-2 max-h-48 overflow-y-auto">
-            {expiringAlerts.slice(0, 5).map((alert) => (
-              <div
-                key={alert.id}
-                className="flex items-center justify-between rounded-md border border-amber-100 dark:border-amber-800 bg-white/80 dark:bg-gray-800/80 px-3 py-2 text-xs text-amber-900 dark:text-amber-200"
-              >
-                <div>
-                  <p className="font-semibold">{alert.name}</p>
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    Barcode: {alert.barcode || '—'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="font-semibold">
-                    {new Date(alert.nextExpiryDate).toLocaleDateString()}
-                  </p>
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    {Math.max(alert.daysUntilExpiry, 0)} days • {alert.availablePills} pills
-                  </p>
-                </div>
-              </div>
-            ))}
-            {expiringAlerts.length > 5 && (
-              <p className="text-[11px] text-amber-700 dark:text-amber-400">
-                +{expiringAlerts.length - 5} more medicines are nearing expiry.
-              </p>
-            )}
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
+            {stats.totalProducts}
+          </h3>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Total Products</p>
+        </div>
+
+        <div className="bg-gradient-to-br from-white to-green-50/50 dark:from-gray-800 dark:to-green-900/20 rounded-lg shadow-sm border border-green-100/50 dark:border-green-800/30 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-green-600 shadow-md">
+              <FiCheckCircle className="w-4 h-4 text-white" />
+            </div>
+            <FiCheckCircle className="w-4 h-4 text-green-400 dark:text-green-500" />
           </div>
-        </div>
-      )}
-
-      {loadError && (
-        <div className="mb-2 rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-800 dark:text-red-300">
-          {loadError}
-        </div>
-      )}
-
-
-      {/* Compact Stats Header - Single Row Design matching Selling Panel */}
-      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
-
-        {/* Total Products */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-            Total Products
-          </span>
-          <input
-            type="text"
-            value={stats.totalProducts.toLocaleString()}
-            readOnly
-            className="w-20 px-2.5 py-1.5 bg-white dark:bg-gray-700/50 border border-blue-300 dark:border-blue-600/50 rounded-md text-xs text-blue-600 dark:text-blue-400 font-bold text-center shadow-sm"
-          />
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
+            {stats.readyForSale}
+          </h3>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Ready for Sale</p>
         </div>
 
-        {/* Low Stock */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-yellow-50 dark:bg-yellow-900/20 px-2.5 py-1.5 rounded-md border border-yellow-200 dark:border-yellow-600/50 shadow-sm">
-            <svg className="w-3.5 h-3.5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Low Stock
-            </span>
-            <span className="text-xs font-bold text-yellow-600 dark:text-yellow-400 ml-1">
-              {stats.lowStockItems}
-            </span>
+        <div className="bg-gradient-to-br from-white to-yellow-50/50 dark:from-gray-800 dark:to-yellow-900/20 rounded-lg shadow-sm border border-yellow-100/50 dark:border-yellow-800/30 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-yellow-500 to-yellow-600 shadow-md">
+              <FiAlertCircle className="w-4 h-4 text-white" />
+            </div>
+            <FiAlertCircle className="w-4 h-4 text-yellow-400 dark:text-yellow-500" />
           </div>
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
+            {stats.lowStockItems}
+          </h3>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Low Stock</p>
         </div>
 
-        {/* Expiring */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-md border border-amber-200 dark:border-amber-600/50 shadow-sm">
-            <svg className="w-3.5 h-3.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Expiring (≤{alertThresholdDays}d)
-            </span>
-            <span className="text-xs font-bold text-amber-600 dark:text-amber-400 ml-1">
-              {stats.expiringSoon.toLocaleString()}
-            </span>
+        <div className="bg-gradient-to-br from-white to-amber-50/50 dark:from-gray-800 dark:to-amber-900/20 rounded-lg shadow-sm border border-amber-100/50 dark:border-amber-800/30 p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="p-2 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600 shadow-md">
+              <FiClock className="w-4 h-4 text-white" />
+            </div>
+            <FiClock className="w-4 h-4 text-amber-400 dark:text-amber-500" />
           </div>
+          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
+            {stats.expiringSoon}
+          </h3>
+          <p className="text-xs text-gray-600 dark:text-gray-400">Expiring (≤{alertThresholdDays}d)</p>
         </div>
-
-        {/* Ready for Sale */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-            Ready for Sale
-          </span>
-          <input
-            type="text"
-            value={stats.readyForSale.toLocaleString()}
-            readOnly
-            className="w-20 px-2.5 py-1.5 bg-white dark:bg-gray-700/50 border border-green-300 dark:border-green-600/50 rounded-md text-xs text-green-600 dark:text-green-400 font-bold text-center shadow-sm"
-          />
-        </div>
-
-        {/* Sellable Pills */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-            Sellable Pills
-          </span>
-          <input
-            type="text"
-            value={stats.totalSellablePills.toLocaleString()}
-            readOnly
-            className="w-28 px-2.5 py-1.5 bg-white dark:bg-gray-700/50 border border-indigo-300 dark:border-indigo-600/50 rounded-md text-xs text-indigo-600 dark:text-indigo-400 font-bold text-center shadow-sm"
-          />
-        </div>
-
-        {/* Inactive */}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-            Inactive
-          </span>
-          <input
-            type="text"
-            value={stats.inactive.toLocaleString()}
-            readOnly
-            className="w-20 px-2.5 py-1.5 bg-white dark:bg-gray-700/50 border border-orange-300 dark:border-orange-600/50 rounded-md text-xs text-orange-600 dark:text-orange-400 font-bold text-center shadow-sm"
-          />
-        </div>
-
-        {/* Refresh Button */}
-        <button
-          onClick={() => loadMedicines()}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-            />
-          </svg>
-          Refresh
-        </button>
-
       </div>
-
-      {/* Main Content: Vertical Layout */}
-      <div className="flex flex-col gap-3 flex-1 overflow-hidden min-h-0">
-        {/* Top: Medicine Form (Horizontal) */}
-        <div className="flex-shrink-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md">
+      {/* Main Content: Split Layout */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
+        {/* Left Side: Medicine Form */}
+        <div className="lg:col-span-1 flex flex-col overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Form Header */}
-            <div className="px-4 py-2 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
-
-                  <FiPlus className="w-4 h-4 text-white" />
+            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                    {editingMedicineId ? (
+                      <FiEdit2 className="w-4 h-4 text-white" />
+                    ) : (
+                      <FiPlus className="w-4 h-4 text-white" />
+                    )}
+                  </div>
+                  <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                    {editingMedicineId ? 'Edit Medicine' : 'New Medicine'}
+                  </h3>
                 </div>
-
-                <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
-                  {editingMedicineId ? 'Edit Medicine' : 'Add Medicine'}
-                </h3>
+                {editingMedicineId && (
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="p-1.5 hover:bg-white/50 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    title="Clear Form"
+                  >
+                    <FiX className="w-3.5 h-3.5 text-gray-600 dark:text-gray-400" />
+                  </button>
+                )}
               </div>
             </div>
 
             {/* Form Content */}
-            <form onSubmit={handleAddMedicine} className="p-3">
-
+            <form onSubmit={handleAddMedicine} className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Success & Error */}
               {formError && (
-                <div className="mb-2 p-2 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs rounded border border-red-200 dark:border-red-800">
+                <div className="p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded border border-red-200 dark:border-red-800">
                   {formError}
                 </div>
               )}
               {formSuccess && (
-                <div className="mb-2 p-2 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded border border-green-200 dark:border-green-800">
+                <div className="p-3 bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-sm rounded border border-green-200 dark:border-green-800">
                   {formSuccess}
                 </div>
               )}
 
-              {/* ---------------- ROW 1 ---------------- */}
-              <div className="flex flex-col lg:flex-row gap-3 items-end mb-3">
-                {/* Medicine Name */}
-                <div className="flex-1 w-full">
-                  <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide">
-                    Medicine Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newMedicine.name}
-                    onChange={(e) => handleNewMedicineChange('name', e.target.value)}
-                    placeholder="Enter medicine name"
-                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-700 
-        border border-gray-300 dark:border-gray-600 rounded focus:ring-2 
-        focus:ring-green-500 focus:border-green-500 outline-none"
-                  />
-                </div>
+              <div>
+                <label
+                  htmlFor="medicine-name"
+                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                >
+                  Medicine Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="medicine-name"
+                  type="text"
+                  value={newMedicine.name}
+                  onChange={(e) => handleNewMedicineChange('name', e.target.value)}
+                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  required
+                  placeholder="Enter medicine name"
+                />
+              </div>
 
-                {/* Pills/Packet */}
-                <div className="w-full lg:w-32">
-                  <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide">
-                    Pills/Packet
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="medicine-barcode"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  >
+                    Barcode <span className="text-red-500">*</span>
                   </label>
                   <input
-                    type="number"
-                    value={newMedicine.pillQuantity}
-                    onChange={(e) => handleNewMedicineChange('pillQuantity', e.target.value)}
-                    placeholder="e.g. 10"
-                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-700 
-        border border-gray-300 dark:border-gray-600 rounded focus:ring-2 
-        focus:ring-green-500 focus:border-green-500 outline-none"
-                  />
-                </div>
-
-                {/* Barcode */}
-                <div className="w-full lg:w-48">
-                  <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide">
-                    Barcode
-                  </label>
-                  <input
+                    id="medicine-barcode"
                     type="text"
                     value={newMedicine.barcode}
                     onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                     placeholder="Scan or enter"
-                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-700 
-        border border-gray-300 dark:border-gray-600 rounded focus:ring-2 
-        focus:ring-green-500 focus:border-green-500 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="medicine-pill-quantity"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  >
+                    Pills/Packet <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    id="medicine-pill-quantity"
+                    type="number"
+                    value={newMedicine.pillQuantity}
+                    onChange={(e) => handleNewMedicineChange('pillQuantity', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    placeholder="e.g. 10"
+                    required
                   />
                 </div>
               </div>
 
-              {/* ---------------- ROW 2 ---------------- */}
-              <div className="flex w-full items-end justify-between gap-2">
-
-                {/* Status (Left side) */}
-                <div className="w-full lg:w-32">
-                  <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide">
-                    Status
-                  </label>
-                  <select
-                    value={newMedicine.status}
-                    onChange={(e) => handleNewMedicineChange('status', e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs bg-white dark:bg-gray-700 
-      border border-gray-300 dark:border-gray-600 rounded focus:ring-2 
-      focus:ring-green-500 focus:border-green-500 outline-none"
-                  >
-                    {STATUS_LIBRARY.map((status) => (
-                      <option key={status} value={status}>{status}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Buttons (Right side) */}
-                <div className="flex gap-2">
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewMedicine(emptyMedicineForm);
-                      setEditingMedicineId(null);
-                    }}
-                    className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 
-      rounded hover:bg-gray-200 dark:hover:bg-gray-600 font-semibold text-xs uppercase tracking-wide"
-                  >
-                    Clear
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={isSubmitting}
-                    className="flex items-center justify-center gap-2 px-4 py-1.5 bg-gradient-to-r 
-      from-green-600 to-green-500 text-white rounded hover:from-green-700 hover:to-green-600 
-      shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50"
-                  >
-                    <span>{editingMedicineId ? '✎' : '✓'}</span>
-                    {editingMedicineId ? 'Update' : 'Save'}
-                  </button>
-
-                </div>
-
+              <div>
+                <label
+                  htmlFor="medicine-status"
+                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                >
+                  Status
+                </label>
+                <select
+                  id="medicine-status"
+                  value={newMedicine.status}
+                  onChange={(e) => handleNewMedicineChange('status', e.target.value)}
+                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                >
+                  {STATUS_LIBRARY.map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
               </div>
 
-
+              <div className="flex gap-2 pt-2">
+                {editingMedicineId && (
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
+                  >
+                    <FiX className="w-4 h-4" />
+                    Cancel
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <FiSave className="w-4 h-4" />
+                  {isSubmitting
+                    ? 'Saving...'
+                    : editingMedicineId
+                      ? 'Update Medicine'
+                      : 'Save Medicine'}
+                </button>
+              </div>
             </form>
-
           </div>
         </div>
 
-        {/* Bottom: Medicines Table */}
-        <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+        {/* Right Side: Medicines List */}
+        <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Search Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
               <div className="flex items-center gap-2">
-                <label htmlFor="medicine-search" className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap">
+                <label
+                  htmlFor="medicine-search"
+                  className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap"
+                >
                   Search Medicines
                 </label>
                 <div className="flex-1 relative">
-                  <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500">
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-                  </div>
+                  <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-3.5 h-3.5 z-10" />
                   <input
                     id="medicine-search"
                     type="text"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search by name or barcode..."
-                    className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none transition-all bg-white"
+                    placeholder="Search by name, barcode, or ID..."
+                    className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"
                   />
+                  {searchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm('')}
+                      className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                    >
+                      <FiX className="w-3 h-3 text-gray-400 dark:text-gray-500" />
+                    </button>
+                  )}
                 </div>
                 <select
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value as 'all' | MedicineStatus)}
-                  className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
                 >
                   <option value="all">All Statuses</option>
                   {STATUS_LIBRARY.map((status) => (
@@ -641,89 +627,151 @@ export default function MedicinesPage() {
             </div>
 
             {/* Medicines Table */}
-            <div className="flex-1 overflow-y-auto">
-              {isLoading && (
-                <div className="px-4 lg:px-6 py-6 text-sm text-gray-500 dark:text-gray-400">Loading medicines...</div>
-              )}
-              {!isLoading && filteredMedicines.length === 0 && (
-                <div className="px-4 lg:px-6 py-6 text-sm text-gray-500 dark:text-gray-400">No medicines found.</div>
-              )}
-              {!isLoading && filteredMedicines.map((medicine) => (
-                <div key={medicine.id} className="grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                  <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
-                    {medicine.barcode ?? '—'}
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400">{formatNumericId(medicine.id)}</div>
-                  </div>
-                  <div className="col-span-3">
-                    <div className="font-medium text-gray-900 dark:text-white">{medicine.name}</div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
-                      Avg. Pill Cost: {medicine.averageSellablePricePerPill ? `${getCurrencySymbol()}${medicine.averageSellablePricePerPill.toFixed(2)}` : '—'}
-                    </div>
-                  </div>
-                  <div className="col-span-2 text-center">
-                    <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
-                      {medicine.pillQuantity}
-                    </span>
-                  </div>
-                  <div className="col-span-2 text-center">
-                    <div className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">{medicine.sellablePills.toLocaleString()}</div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400">Total: {medicine.totalAvailablePills.toLocaleString()}</div>
-                  </div>
-                  <div className="col-span-1 text-center">
-                    <select
-                      value={medicine.status}
-                      onChange={(e) => handleStatusChange(medicine.id, e.target.value as MedicineStatus)}
-                      className={`w-full px-2 py-1 rounded-full text-xs font-medium border border-transparent focus:ring-2 focus:ring-blue-500 cursor-pointer ${medicine.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300' :
-                        medicine.status === 'inactive' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300' :
-                          'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
-                        }`}
-                    >
-                      {STATUS_LIBRARY.map((status) => (
-                        <option key={`${medicine.id}-${status}`} value={status}>{status}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="col-span-2 text-center flex justify-center gap-1">
-                    <button
-                      onClick={() => {
-                        setNewMedicine({
-                          name: medicine.name,
-                          pillQuantity: medicine.pillQuantity.toString(),
-                          barcode: medicine.barcode || '',
-                          status: medicine.status,
-                        });
-                        setEditingMedicineId(medicine.id);
-                        // Focus on form input?
-                      }}
-                      className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
-                      title="Edit Medicine"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm(`Are you sure you want to delete "${medicine.name}"? This action cannot be undone.`)) {
-                          window.electron.ipcRenderer.once('medicine-delete-reply', (response: any) => {
-                            if (response.success) {
-                              loadMedicines();
-                              setFeedbackMessage('Medicine deleted successfully!');
-                              setTimeout(() => setFeedbackMessage(null), 3000);
-                            } else {
-                              setFeedbackMessage('Error deleting medicine: ' + (response.error || 'Unknown error'));
-                              setTimeout(() => setFeedbackMessage(null), 3000);
-                            }
-                          });
-                          window.electron.ipcRenderer.sendMessage('medicine-delete', [medicine.id]);
-                        }
-                      }}
-                      className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                      title="Delete Medicine"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                    </button>
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {isLoading ? (
+                <div className="flex items-center justify-center py-20">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Loading medicines...
+                    </p>
                   </div>
                 </div>
-              ))}
+              ) : loadError ? (
+                <div className="p-12 text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-red-100 to-red-200 dark:from-red-900/50 dark:to-red-800/50 mb-4">
+                    <FiAlertCircle className="w-8 h-8 text-red-600 dark:text-red-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+                    Error Loading Medicines
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    {loadError}
+                  </p>
+                  <button
+                    onClick={loadMedicines}
+                    className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors text-sm"
+                  >
+                    Try Again
+                  </button>
+                </div>
+              ) : filteredMedicines.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-emerald-100 to-emerald-200 dark:from-emerald-900/50 dark:to-emerald-800/50 mb-4">
+                    <FiPackage className="w-8 h-8 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-2">
+                    {searchTerm ? 'No medicines found' : 'No medicines yet'}
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                    {searchTerm
+                      ? 'Try adjusting your search terms'
+                      : 'Get started by adding your first medicine'}
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {/* Table Header */}
+                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                    <div className="col-span-1">#</div>
+                    <div className="col-span-2">Barcode</div>
+                    <div className="col-span-3">Medicine</div>
+                    <div className="col-span-1 text-center">Pills/Pack</div>
+                    <div className="col-span-2 text-center">Stock</div>
+                    <div className="col-span-2 text-center">Status</div>
+                    <div className="col-span-1 text-center">Actions</div>
+                  </div>
+
+                  {/* Medicines Rows */}
+                  {filteredMedicines.map((medicine, index) => (
+                    <div
+                      key={medicine.id}
+                      onClick={() => handleEdit(medicine)}
+                      className={`grid grid-cols-12 gap-2 px-4 py-3 cursor-pointer transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30 ${editingMedicineId === medicine.id
+                        ? 'bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-900/20 dark:to-transparent ring-2 ring-emerald-500/30'
+                        : 'hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent'
+                        }`}
+                    >
+                      <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
+                        {index + 1}
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
+                          {medicine.barcode || '—'}
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+                          {formatNumericId(medicine.id)}
+                        </div>
+                      </div>
+                      <div className="col-span-3">
+                        <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
+                          {medicine.name}
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+                          Avg: {medicine.averageSellablePricePerPill ? `${getCurrencySymbol()}${medicine.averageSellablePricePerPill.toFixed(2)}` : '—'}
+                        </div>
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <span className="inline-flex items-center justify-center px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
+                          {medicine.pillQuantity}
+                        </span>
+                      </div>
+                      <div className="col-span-2 text-center">
+                        <div className="text-base font-bold text-emerald-600 dark:text-emerald-400">
+                          {medicine.sellablePills.toLocaleString()}
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500">
+                          Total: {medicine.totalAvailablePills.toLocaleString()}
+                        </div>
+                      </div>
+                      <div className="col-span-2 text-center">
+                        <select
+                          value={medicine.status}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleStatusChange(medicine.id, e.target.value as MedicineStatus);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`w-full px-2 py-1 rounded-full text-xs font-medium border border-transparent focus:ring-2 focus:ring-emerald-500 cursor-pointer ${medicine.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300' :
+                            medicine.status === 'inactive' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300' :
+                              'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
+                            }`}
+                        >
+                          {STATUS_LIBRARY.map((status) => (
+                            <option key={`${medicine.id}-${status}`} value={status}>{status}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="col-span-1 flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(medicine);
+                          }}
+                          className="p-1.5 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                          title="Edit"
+                        >
+                          <FiEdit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (medicine.id) {
+                              handleDelete(medicine.id, medicine.name);
+                            }
+                          }}
+                          className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
+                          title="Delete"
+                        >
+                          <FiTrash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

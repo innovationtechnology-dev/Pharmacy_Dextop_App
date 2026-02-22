@@ -7,7 +7,7 @@ import {
   resetAttempts,
 } from '../../utils/licenseAttempts';
 
-const MAX_ATTEMPTS_PER_DAY = 5;
+const MAX_ATTEMPTS_PER_DAY = 20; // Increased from 5 to 20
 
 interface LicenseActivationDialogProps {
   onClose: () => void;
