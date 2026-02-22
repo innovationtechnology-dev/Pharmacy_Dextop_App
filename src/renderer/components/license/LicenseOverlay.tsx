@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { FiAlertTriangle, FiX } from 'react-icons/fi';
-import { getAuthUser } from '../../utils/auth';
+import { useNavigate } from 'react-router-dom';
+import { getAuthUser, logout } from '../../utils/auth';
 import { getLicenseStatus, activateLicense, LicenseStatus } from '../../utils/license';
 import LicenseActivationDialog from './LicenseActivationDialog';
 import { resetAttempts } from '../../utils/licenseAttempts';
@@ -10,6 +11,7 @@ interface LicenseOverlayProps {
 }
 
 const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
+  const navigate = useNavigate();
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [showActivationDialog, setShowActivationDialog] = useState(false);
   const [showAlert, setShowAlert] = useState(false);
@@ -121,22 +123,43 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
                 application.
               </p>
 
-              {/* Button */}
-              <button
-                type="button"
-                onClick={() => setShowActivationDialog(true)}
-                className="w-full px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                  />
-                </svg>
-                Activate License
-              </button>
+              {/* Buttons */}
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  onClick={() => setShowActivationDialog(true)}
+                  className="w-full px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
+                    />
+                  </svg>
+                  Activate License
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    navigate('/login');
+                  }}
+                  className="w-full px-6 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
+                    />
+                  </svg>
+                  Logout
+                </button>
+              </div>
             </div>
           </div>
         </div>

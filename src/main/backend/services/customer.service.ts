@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export interface Customer {
   id?: number;
@@ -13,11 +13,7 @@ export interface Customer {
 }
 
 export class CustomerService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize customers table

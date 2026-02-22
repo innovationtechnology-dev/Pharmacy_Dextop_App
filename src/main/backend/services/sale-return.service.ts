@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export interface SaleReturnItemInput {
   medicineId: number;
@@ -31,11 +31,7 @@ export interface SaleReturn {
 }
 
 export class SaleReturnService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize sale_returns and sale_return_items tables

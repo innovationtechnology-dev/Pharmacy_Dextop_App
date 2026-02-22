@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 const MIN_PURCHASE_EXPIRY_DAYS = 90;
 
@@ -46,11 +46,7 @@ export interface Purchase {
 }
 
 export class PurchaseService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize purchases and purchase_items tables with the new workflow schema.

@@ -2,9 +2,14 @@ import sqlite3 from 'sqlite3';
 import { getDatabaseConnection } from '../database/database.connection';
 
 export class DatabaseService {
+  private connection: any;
+
+  constructor() {
+    this.connection = getDatabaseConnection();
+  }
+
   private get db(): sqlite3.Database {
-    const connection = getDatabaseConnection();
-    return connection.getDatabase();
+    return this.connection.getDatabase();
   }
 
   /**
@@ -44,13 +49,18 @@ export class DatabaseService {
    */
   public async execute(sql: string, params: any[] = []): Promise<sqlite3.RunResult> {
     return new Promise((resolve, reject) => {
-      this.db.run(sql, params, function (err) {
-        if (err) {
-          console.error('Database execute error: ', err);
-          reject(err);
-          return;
-        }
-        resolve(this);
+      // Serialize to prevent concurrent writes
+      this.db.serialize(() => {
+        this.db.run(sql, params, function (err) {
+          if (err) {
+            console.error('Database execute error: ', err);
+            console.error('SQL:', sql);
+            console.error('Params:', params);
+            reject(err);
+            return;
+          }
+          resolve(this);
+        });
       });
     });
   }
@@ -92,5 +102,15 @@ export class DatabaseService {
     });
   }
 }
+
+// Singleton instance to prevent multiple DatabaseService instances
+let databaseServiceInstance: DatabaseService | null = null;
+
+export const getDatabaseService = (): DatabaseService => {
+  if (!databaseServiceInstance) {
+    databaseServiceInstance = new DatabaseService();
+  }
+  return databaseServiceInstance;
+};
 
 export default DatabaseService;

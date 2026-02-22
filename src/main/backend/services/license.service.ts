@@ -1,5 +1,5 @@
 import sqlite3 from 'sqlite3';
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export interface License {
   id?: number;
@@ -26,11 +26,7 @@ export interface ActivateLicenseResult {
 }
 
 export class LicenseService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize license tables

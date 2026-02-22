@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -28,11 +28,7 @@ export interface ExpiringMedicineAlert {
 const SELLABLE_THRESHOLD_EXPRESSION = `date('now', '+30 days')`;
 
 export class MedicineService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize medicines table and enforce the required schema.

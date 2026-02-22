@@ -1,12 +1,11 @@
 import { ipcMain, IpcMainEvent } from 'electron';
-import { DatabaseService } from '../services/database.service';
+import { getDatabaseService } from '../services/database.service';
 import { getDatabaseConnection } from '../database/database.connection';
 
 export class DatabaseController {
-  private databaseService: DatabaseService;
+  private databaseService = getDatabaseService();
 
   constructor() {
-    this.databaseService = new DatabaseService();
     this.registerHandlers();
   }
 

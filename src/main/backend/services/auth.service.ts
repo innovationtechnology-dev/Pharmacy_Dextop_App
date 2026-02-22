@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export interface User {
   id: number;
@@ -24,11 +24,7 @@ export interface SignupResult {
 }
 
 export class AuthService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Hash password using SHA256 (simple hashing for demo - use bcrypt in production)

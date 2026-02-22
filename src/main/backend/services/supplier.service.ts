@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 
 export interface Supplier {
   id?: number;
@@ -14,11 +14,7 @@ export interface Supplier {
 }
 
 export class SupplierService {
-  private dbService: DatabaseService;
-
-  constructor() {
-    this.dbService = new DatabaseService();
-  }
+  private dbService = getDatabaseService();
 
   /**
    * Initialize suppliers table

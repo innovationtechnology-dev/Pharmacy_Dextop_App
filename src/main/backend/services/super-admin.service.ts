@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 import { databaseConfig } from '../config/database.config';
 
 export interface SuperAdminLoginResult {
@@ -38,12 +38,11 @@ export interface ActivationCode {
 }
 
 export class SuperAdminService {
-  private dbService: DatabaseService;
+  private dbService = getDatabaseService();
   private readonly SUPER_ADMIN_EMAIL = 'admin@pharmacy.com';
   private readonly SUPER_ADMIN_PASSWORD = 'admin123'; // Default password
 
   constructor() {
-    this.dbService = new DatabaseService();
     this.initializeSuperAdmin();
   }
 

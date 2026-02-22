@@ -143,8 +143,22 @@ export class DatabaseConnection {
           return;
         }
         console.log(`Connected to database at: ${this.dbPath}`);
-        this.initializeTables();
-        resolve();
+        
+        // Configure SQLite for better concurrency - must be done serially
+        this.db?.serialize(() => {
+          this.db?.run('PRAGMA journal_mode = WAL;', (walErr) => {
+            if (walErr) console.error('WAL mode error:', walErr);
+          });
+          this.db?.run('PRAGMA busy_timeout = 5000;', (timeoutErr) => {
+            if (timeoutErr) console.error('Busy timeout error:', timeoutErr);
+          });
+          this.db?.run('PRAGMA synchronous = NORMAL;', (syncErr) => {
+            if (syncErr) console.error('Synchronous mode error:', syncErr);
+          });
+          
+          this.initializeTables();
+          resolve();
+        });
       });
     });
   }

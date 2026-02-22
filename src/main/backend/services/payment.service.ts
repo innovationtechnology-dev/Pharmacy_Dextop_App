@@ -1,4 +1,4 @@
-import { DatabaseService } from './database.service';
+import { getDatabaseService } from './database.service';
 import PurchaseService from './purchase.service';
 
 export interface Payment {
@@ -13,11 +13,10 @@ export interface Payment {
 }
 
 export class PaymentService {
-    private dbService: DatabaseService;
+    private dbService = getDatabaseService();
     private purchaseService: PurchaseService;
 
     constructor() {
-        this.dbService = new DatabaseService();
         this.purchaseService = new PurchaseService();
     }
 

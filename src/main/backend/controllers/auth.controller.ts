@@ -1,14 +1,13 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { AuthService } from '../services/auth.service';
-import { DatabaseService } from '../services/database.service';
+import { getDatabaseService } from '../services/database.service';
 
 export class AuthController {
   private authService: AuthService;
-  private dbService: DatabaseService;
+  private dbService = getDatabaseService();
 
   constructor() {
     this.authService = new AuthService();
-    this.dbService = new DatabaseService();
     this.registerHandlers();
     this.initializeAuth();
   }

@@ -44,6 +44,9 @@ export class Backend {
       const dbConnection = getDatabaseConnection();
       await dbConnection.connect();
 
+      // Small delay to ensure database is fully ready
+      await new Promise(resolve => setTimeout(resolve, 100));
+
       // Initialize controllers (they register their own IPC handlers)
       this.databaseController = new DatabaseController();
       this.exampleController = new ExampleController();
@@ -56,17 +59,16 @@ export class Backend {
       this.saleReturnController = new SaleReturnController();
       this.licenseController = new LicenseController();
       this.superAdminController = new SuperAdminController();
-      this.paymentController = new PaymentController();
       this.grnController = new GRNController();
 
-      // Initialize all tables
+      // Initialize all tables SEQUENTIALLY to avoid SQLite concurrency issues
+      console.log('Initializing database tables...');
       await this.medicineController.initializeTables();
       await this.supplierController.initializeTables();
+      await this.customerController.initializeTables();
       await this.purchaseController.initializeTables();
       await this.paymentController.initializeTables();
-      await this.customerController.initializeTables();
       await this.saleReturnController.initializeTables();
-      await this.paymentController.initializeTables();
       await this.grnController.initializeTables();
 
       // Register any additional custom handlers
