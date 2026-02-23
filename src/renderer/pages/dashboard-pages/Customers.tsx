@@ -229,17 +229,8 @@ const Customers: React.FC = () => {
   }, [customers]);
 
   const headerActions = useMemo(
-    () => (
-      <button
-        type="button"
-        onClick={resetForm}
-        className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-500 dark:via-emerald-600 dark:to-emerald-500 text-white rounded-lg hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-600 dark:hover:to-emerald-700 dark:hover:via-emerald-600 transition-all duration-200 shadow-md hover:shadow-lg"
-      >
-        <FiPlus className="w-5 h-5" />
-        <span className="hidden sm:inline">New Customer</span>
-      </button>
-    ),
-    [resetForm]
+    () => null,
+    []
   );
 
   useEffect(() => {
@@ -319,9 +310,9 @@ const Customers: React.FC = () => {
       </div>
 
       {/* Main Content: Split Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 flex-1 overflow-hidden min-h-0">
         {/* Left Side: Customer Form */}
-        <div className="lg:col-span-1 flex flex-col overflow-hidden min-h-0">
+        <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
           <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Form Header */}
             <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
@@ -474,6 +465,16 @@ const Customers: React.FC = () => {
               </div>
 
               <div className="flex gap-2 pt-2">
+                {editingCustomer && (
+                  <button
+                    type="button"
+                    onClick={resetForm}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-xs"
+                  >
+                    <FiX className="w-3.5 h-3.5" />
+                    Cancel
+                  </button>
+                )}
                 <button
                   type="submit"
                   disabled={processing}
@@ -492,7 +493,7 @@ const Customers: React.FC = () => {
         </div>
 
         {/* Right Side: Customers List */}
-        <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
+        <div className="lg:col-span-3 flex flex-col overflow-hidden min-h-0">
           <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Search Header */}
             <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">

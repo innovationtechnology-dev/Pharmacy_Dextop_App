@@ -10,12 +10,10 @@ import React, {
 } from 'react';
 import { useNavigate, Outlet, Link, useLocation } from 'react-router-dom';
 import {
-  FiLogOut,
   FiBell,
   FiChevronDown,
   FiHelpCircle,
-  FiMenu,
-  FiArrowLeft,
+  FiLogOut,
 } from 'react-icons/fi';
 import { getAuthUser, getAuthToken, logout as authLogout } from '../utils/auth';
 import {
@@ -26,6 +24,7 @@ import {
 import Breadcrumbs from '../components/navigation/Breadcrumbs';
 import Loader from '../components/Loader';
 import LicenseOverlay from '../components/license/LicenseOverlay';
+import { PageHeader } from '../components/common/PageHeader';
 
 const ALERT_THRESHOLD_DAYS = 30;
 
@@ -272,271 +271,178 @@ const Dashboard_Layout: React.FC = () => {
                     !location.pathname.includes('/sale-return') &&
                     !location.pathname.includes('/dashboard') &&
                     (
-                      <div className="flex items-center gap-4">
-                        <Link
-                          to="/main-menu"
-                          className="p-2.5 rounded-xl bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-lg hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                          title="Main Menu"
-                        >
-                          <FiMenu className="w-5 h-5 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                        </Link>
-                        <div className="flex-1">
-                          <h1 className="text-2xl font-bold text-gray-900 ">
-                            {pageTitle || customHeader?.title || 'Dashboard'}
-                          </h1>
-                        </div>
-                      </div>
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Dashboard'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                      />
                     )}
 
                   {/* Compact header for selling-panel */}
                   {location.pathname.includes('/selling-panel') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Selling Panel'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Selling Panel'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for purchasing-panel */}
                   {location.pathname.includes('/purchasing-panel') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Purchasing Panel'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Purchasing Panel'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for suppliers */}
                   {location.pathname.includes('/suppliers') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Supplier Management'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Supplier Management'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for customers */}
                   {location.pathname.includes('/customers') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Customer Management'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Customer Management'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for medicines */}
                   {location.pathname.includes('/medicines') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Medicine Management'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Medicine Management'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for sales */}
                   {location.pathname.includes('/sales') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Sales Report'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Sales Report'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for purchases */}
                   {location.pathname.includes('/purchases') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Purchase Records'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Purchase Records'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for settings */}
                   {location.pathname.includes('/settings') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || customHeader?.title || 'Settings'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || customHeader?.title || 'Settings'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for dashboard */}
                   {location.pathname.includes('/dashboard') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'Dashboard'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Dashboard'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for license */}
                   {location.pathname.includes('/license') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'License'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'License'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for sale return */}
                   {location.pathname.includes('/sale-return') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'Sale Return'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Sale Return'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for financial summary */}
                   {location.pathname.includes('/financial-summary') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'Financial Summary'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Financial Summary'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for alerts */}
                   {location.pathname.includes('/alerts') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'Alerts'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Alerts'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 
                   {/* Compact header for payment */}
                   {location.pathname.includes('/payment') && (
-                    <div className="flex items-center gap-3 flex-1 ml-3">
-                      <Link
-                        to="/main-menu"
-                        className="p-2 rounded-lg bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border border-emerald-200/50 dark:border-emerald-700/50 hover:shadow-md hover:from-emerald-100 hover:to-emerald-200/50 dark:hover:from-emerald-800/40 dark:hover:to-emerald-700/30 transition-all duration-200 group"
-                        title="Main Menu"
-                      >
-                        <FiMenu className="w-4 h-4 text-emerald-600 dark:text-emerald-400 group-hover:scale-110 transition-transform" />
-                      </Link>
-                      <div className="flex-1">
-                        <h1 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">
-                          {pageTitle || 'Payment'}
-                        </h1>
-                      </div>
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Payment'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
                     </div>
                   )}
 

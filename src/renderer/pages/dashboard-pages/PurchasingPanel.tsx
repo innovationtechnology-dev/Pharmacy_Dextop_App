@@ -5,6 +5,7 @@ import { FiPackage, FiSearch, FiX, FiPlus, FiMinus, FiTrash2, FiDollarSign, FiCh
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { useToast, ToastContainer } from '../../components/common/Toast';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -80,6 +81,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
 const PurchasingPanel: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { toasts, removeToast, success, error, warning, info } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -300,7 +302,7 @@ const PurchasingPanel: React.FC = () => {
       );
 
       if (!medicine) {
-        alert(`Medicine with barcode "${normalized}" not found!`);
+        error(`Medicine with barcode "${normalized}" not found!`);
         return;
       }
 
@@ -391,7 +393,7 @@ const PurchasingPanel: React.FC = () => {
 
     const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
     if (!selectedSupplier) {
-      alert('Selected supplier not found!');
+      error('Selected supplier not found!');
       return;
     }
 
@@ -399,14 +401,14 @@ const PurchasingPanel: React.FC = () => {
 
     try {
       if (cart.some((item) => !item.expiryDate)) {
-        alert('Please set an expiry date for every medicine in the purchase.');
+        warning('Please set an expiry date for every medicine in the purchase.');
         setProcessing(false);
         return;
       }
 
       for (const item of cart) {
         if (!isExpiryValid(item.expiryDate)) {
-          alert(
+          warning(
             `"${item.medicine.name}" must have an expiry date at least ${Math.round(
               MIN_EXPIRY_DAYS / 30
             )} months from today.`
@@ -423,12 +425,12 @@ const PurchasingPanel: React.FC = () => {
 
       // Validate payment amount
       if (paymentAmount < 0) {
-        alert('Payment amount cannot be negative');
+        error('Payment amount cannot be negative');
         setProcessing(false);
         return;
       }
       if (paymentAmount > total) {
-        alert(`Payment amount (${paymentAmount.toFixed(2)}) cannot be greater than grand total (${total.toFixed(2)})`);
+        error(`Payment amount (${paymentAmount.toFixed(2)}) cannot be greater than grand total (${total.toFixed(2)})`);
         setProcessing(false);
         return;
       }
@@ -487,7 +489,7 @@ const PurchasingPanel: React.FC = () => {
               setShowSuccess(false);
             }, 2000);
           } else {
-            alert('Error updating purchase: ' + (response.error || 'Unknown error'));
+            error('Error updating purchase: ' + (response.error || 'Unknown error'));
           }
         });
 
@@ -512,12 +514,13 @@ const PurchasingPanel: React.FC = () => {
             setSearchTerm('');
             loadMedicines(); // Reload medicines to update quantities
             refreshExpiringAlerts();
+            loadPastPurchases(); // Reload purchase history
 
             setTimeout(() => {
               setShowSuccess(false);
             }, 2000);
           } else {
-            alert('Error processing purchase: ' + (response.error || 'Unknown error'));
+            error('Error processing purchase: ' + (response.error || 'Unknown error'));
           }
         });
 
@@ -526,7 +529,7 @@ const PurchasingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error processing purchase:', error);
       setProcessing(false);
-      alert('Error processing purchase. Please try again.');
+      error('Error processing purchase. Please try again.');
     }
   };
 
@@ -576,15 +579,15 @@ const PurchasingPanel: React.FC = () => {
         setDeleteConfirm(null);
         if (response.success) {
           loadPastPurchases();
-          alert('Purchase deleted successfully!');
+          success('Purchase deleted successfully!');
         } else {
-          alert('Error deleting purchase: ' + (response.error || 'Unknown error'));
+          error('Error deleting purchase: ' + (response.error || 'Unknown error'));
         }
       });
       window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
     } catch (err) {
       setDeleteConfirm(null);
-      alert('Error deleting purchase. Please try again.');
+      error('Error deleting purchase. Please try again.');
     }
   };
 
@@ -668,12 +671,12 @@ const PurchasingPanel: React.FC = () => {
           setCart(cartItems);
           setEditingPurchaseId(purchaseId);
         } else {
-          alert('Failed to load purchase: ' + (response.error || 'Unknown error'));
+          error('Failed to load purchase: ' + (response.error || 'Unknown error'));
         }
       });
       window.electron.ipcRenderer.sendMessage('purchase-get-by-id', [purchaseId]);
     } catch (err) {
-      alert('Error loading purchase. Please try again.');
+      error('Error loading purchase. Please try again.');
     }
   }, []);
 
@@ -849,9 +852,12 @@ const PurchasingPanel: React.FC = () => {
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+      {/* Toast Notifications */}
+      <ToastContainer toasts={toasts} onClose={removeToast} />
+      
       {/* Success Message */}
       {showSuccess && (
-        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
+        <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-slideInRight">
           <FiCheck className="w-4 h-4" />
           <span className="font-medium">Purchase completed successfully!</span>
         </div>
@@ -859,7 +865,7 @@ const PurchasingPanel: React.FC = () => {
 
       {/* Validation Error Message */}
       {showValidationError && (
-        <div className="fixed top-4 right-4 z-50 bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-in slide-in-from-top">
+        <div className="fixed top-4 right-4 z-50 bg-orange-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-slideInRight">
           <FiAlertCircle className="w-4 h-4" />
           <span className="font-medium">{validationMessage}</span>
         </div>
@@ -1017,124 +1023,144 @@ const PurchasingPanel: React.FC = () => {
       )}
 
       <div className="w-full flex-1 flex flex-col overflow-hidden min-h-0">
-        {/* Top Section: Professional Two Column Layout - Compact */}
-        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-2 mb-2 flex-shrink-0">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* Top Section: Professional Desktop-Style Header */}
+        <div className="bg-gradient-to-b from-white to-gray-50 dark:from-gray-800 dark:to-gray-800/95 rounded-xl border-2 border-gray-200 dark:border-gray-700 shadow-lg p-4 mb-3 flex-shrink-0">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Left Side: Purchase Details - Organized Grid */}
-            <div className="space-y-2">
+            <div className="space-y-3">
               {/* First Row: PO, Date, Time */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-3">
                 {/* PO Number */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase">PO #</label>
-                  <div className="flex items-center gap-0.5">
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">PO #</label>
+                  <div className="flex items-center gap-1">
                     <button
                       type="button"
                       onClick={navigateToPreviousPurchase}
                       disabled={(currentPurchaseIndex === -1 && purchaseHistoryList.length === 0) || (currentPurchaseIndex >= 0 && currentPurchaseIndex >= purchaseHistoryList.length - 1)}
-                      className="h-7 w-6 flex items-center justify-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-600 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                      className="h-8 w-7 flex items-center justify-center border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-100 dark:hover:bg-gray-600 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed transition"
                     >
-                      <FiChevronLeft className="w-3 h-3" />
+                      <FiChevronLeft className="w-3.5 h-3.5" />
                     </button>
                     <input
                       type="text"
                       value={purchaseOrderNumber || (editingPurchaseId ? `PO-${editingPurchaseId}` : '')}
                       onChange={(e) => setPurchaseOrderNumber(e.target.value)}
                       placeholder="New"
-                      className="flex-1 h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/20 focus:border-emerald-500 transition text-center"
+                      className="flex-1 h-8 px-2 text-[11px] font-semibold border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition text-center"
                     />
                     <button
                       type="button"
                       onClick={navigateToNextPurchase}
                       disabled={currentPurchaseIndex <= 0 || currentPurchaseIndex === -1}
-                      className="h-7 w-6 flex items-center justify-center border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-50 dark:hover:bg-gray-600 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed transition"
+                      className="h-8 w-7 flex items-center justify-center border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-100 dark:hover:bg-gray-600 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed transition"
                     >
-                      <FiChevronRight className="w-3 h-3" />
+                      <FiChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
 
                 {/* Date */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase flex items-center gap-1">
-                    <FiCalendar className="w-2.5 h-2.5 text-emerald-500" />
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1">
+                    <FiCalendar className="w-3 h-3 text-emerald-500" />
                     Date
                   </label>
                   <input
                     type="text"
                     readOnly
                     value={currentDate}
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
+                    className="w-full h-8 px-2 text-[11px] font-semibold border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
                   />
                 </div>
 
                 {/* Time */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase flex items-center gap-1">
-                    <FiClock className="w-2.5 h-2.5 text-emerald-500" />
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1">
+                    <FiClock className="w-3 h-3 text-emerald-500" />
                     Time
                   </label>
                   <input
                     type="text"
                     readOnly
                     value={currentTime}
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
+                    className="w-full h-8 px-2 text-[11px] font-semibold border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
                   />
                 </div>
               </div>
 
               {/* Second Row: Supplier, Contact, Company */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3 gap-3">
                 {/* Supplier */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase">Supplier</label>
-                  <select
-                    value={selectedSupplierId || ''}
-                    onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border-2 border-emerald-500/30 dark:border-emerald-500/40 bg-white dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
-                  >
-                    <option value="">Select Supplier</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
+                <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-700/50 dark:to-gray-700/30 rounded-lg p-2.5 border-2 border-gray-200 dark:border-gray-600 shadow-sm">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1.5">
+                    <svg className="w-3 h-3 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                    </svg>
+                    Supplier
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedSupplierId || ''}
+                      onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
+                      className="w-full h-9 pl-3 pr-8 text-xs font-semibold border-2 border-emerald-400/50 dark:border-emerald-500/50 bg-white dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all shadow-sm appearance-none cursor-pointer hover:border-emerald-500/70 dark:hover:border-emerald-400/70"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2310b981' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                        backgroundPosition: 'right 0.5rem center',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundSize: '1.5em 1.5em',
+                      }}
+                    >
+                      <option value="" className="text-gray-500">Select Supplier...</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id} className="py-2">{s.name}</option>
+                      ))}
+                    </select>
+                    {selectedSupplierId && (
+                      <div className="absolute right-8 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <svg className="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* Contact */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase">Contact</label>
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">Contact</label>
                   <input
                     type="text"
                     value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.phone || 'N/A') : ''}
                     readOnly
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
+                    className="w-full h-8 px-2 text-[11px] font-medium border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
                   />
                 </div>
 
                 {/* Company */}
-                <div className="space-y-0.5">
-                  <label className="text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase">Company</label>
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">Company</label>
                   <input
                     type="text"
                     value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.company || suppliers.find(s => s.id === selectedSupplierId)?.companyName || 'N/A') : ''}
                     readOnly
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
+                    className="w-full h-8 px-2 text-[11px] font-medium border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded"
                   />
                 </div>
               </div>
 
               {/* Third Row: Action Buttons */}
-              <div className="flex items-center gap-1.5 pt-0.5">
+              <div className="flex items-center gap-3 pt-1">
                 <Link
                   to="/purchases"
-                  className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wide bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+                  className="px-4 py-2 text-[10px] font-bold uppercase tracking-wide bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition border-2 border-gray-300 dark:border-gray-600"
                 >
                   History
                 </Link>
                 <button
                   type="button"
                   onClick={clearFormForNewPurchase}
-                  className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wide bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 rounded hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition border border-emerald-200 dark:border-emerald-800"
+                  className="px-4 py-2 text-[10px] font-bold uppercase tracking-wide bg-gradient-to-r from-emerald-50 to-emerald-100 dark:from-emerald-900/30 dark:to-emerald-900/20 text-emerald-700 dark:text-emerald-300 rounded-lg hover:from-emerald-100 hover:to-emerald-200 dark:hover:from-emerald-900/50 dark:hover:to-emerald-900/30 transition border-2 border-emerald-300 dark:border-emerald-700"
                 >
                   New Purchase
                 </button>
@@ -1142,39 +1168,34 @@ const PurchasingPanel: React.FC = () => {
             </div>
 
             {/* Right Side: Payment Summary - Professional Layout */}
-            <div className="space-y-2">
-              {/* Financial Breakdown Row */}
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-1.5 border border-gray-200 dark:border-gray-700">
-                  <div className="text-[8px] font-semibold text-gray-600 dark:text-gray-400 uppercase mb-0.5">Subtotal</div>
-                  <div className="text-xs font-bold text-gray-900 dark:text-white">{formatCurrency(subtotal)}</div>
+            <div className="space-y-3">
+              {/* Financial Summary Cards */}
+              <div className="grid grid-cols-4 gap-3">
+                <div className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-700/50 dark:to-gray-700/30 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
+                  <div className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Subtotal</div>
+                  <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(subtotal)}</div>
                 </div>
-                <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-1.5 border border-orange-200 dark:border-orange-800">
-                  <div className="text-[8px] font-semibold text-orange-700 dark:text-orange-400 uppercase mb-0.5">Discount</div>
-                  <div className="text-xs font-bold text-orange-600 dark:text-orange-400">-{formatCurrency(discountTotal)}</div>
+                <div className="bg-gradient-to-br from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-900/10 rounded-lg p-2 border border-orange-200 dark:border-orange-700">
+                  <div className="text-[9px] font-bold text-orange-600 dark:text-orange-400 uppercase mb-1">Discount</div>
+                  <div className="text-sm font-bold text-orange-700 dark:text-orange-400">-{formatCurrency(discountTotal)}</div>
                 </div>
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-lg p-1.5 border border-blue-200 dark:border-blue-800">
-                  <div className="text-[8px] font-semibold text-blue-700 dark:text-blue-400 uppercase mb-0.5">Tax</div>
-                  <div className="text-xs font-bold text-blue-600 dark:text-blue-400">+{formatCurrency(taxTotal)}</div>
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-900/10 rounded-lg p-2 border border-blue-200 dark:border-blue-700">
+                  <div className="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Tax</div>
+                  <div className="text-sm font-bold text-blue-700 dark:text-blue-400">+{formatCurrency(taxTotal)}</div>
                 </div>
-              </div>
-
-              {/* Net Payable and Payment Row */}
-              <div className="grid grid-cols-2 gap-1.5">
-                {/* Net Payable */}
-                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-700 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-800 rounded-lg p-2 border border-emerald-400/30 dark:border-emerald-500/30">
-                  <div className="flex items-center justify-between mb-0.5">
-                    <div className="text-[8px] font-semibold text-white/95 uppercase">Net Payable</div>
-                    <div className="px-1.5 py-0.5 bg-white/25 rounded text-[8px] font-bold text-white">
-                      {cart.length}
-                    </div>
+                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-700 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-800 rounded-lg p-2 border border-emerald-400 dark:border-emerald-500 shadow-lg">
+                  <div className="text-[9px] font-bold text-white/90 uppercase mb-1 flex items-center justify-between">
+                    <span>Net Total</span>
+                    <span className="px-1.5 py-0.5 bg-white/25 rounded text-[8px]">{cart.length}</span>
                   </div>
                   <div className="text-base font-extrabold text-white">{formatCurrency(grandTotal)}</div>
                 </div>
+              </div>
 
-                {/* Payment Section */}
-                <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-700 space-y-1.5">
-                  <div className="text-[8px] font-semibold text-gray-700 dark:text-gray-300 uppercase">Payment</div>
+              {/* Payment Input Section */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
+                  <label className="text-[9px] font-bold text-gray-600 dark:text-gray-400 uppercase mb-1.5 block">Payment Amount</label>
                   <input
                     type="number"
                     min="0"
@@ -1188,47 +1209,63 @@ const PurchasingPanel: React.FC = () => {
                       }
                     }}
                     placeholder="0.00"
-                    className="w-full h-7 px-1.5 text-xs font-bold text-gray-900 dark:text-white bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none"
+                    className="w-full h-8 px-2 text-sm font-bold text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700 border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none"
                   />
-                  <select
-                    value={paymentMethod}
-                    onChange={(e) => setPaymentMethod(e.target.value as any)}
-                    className="w-full h-7 px-1.5 text-[10px] font-medium border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 dark:text-white"
-                  >
-                    <option value="cash">Cash</option>
-                    <option value="bank_transfer">Bank Transfer</option>
-                    <option value="check">Check</option>
-                    <option value="online">Online</option>
-                  </select>
+                </div>
+                <div className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-700/50 dark:to-gray-700/30 rounded-lg p-2.5 border-2 border-gray-200 dark:border-gray-600 shadow-sm">
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1.5">
+                    <svg className="w-3 h-3 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                    Payment Method
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={paymentMethod}
+                      onChange={(e) => setPaymentMethod(e.target.value as any)}
+                      className="w-full h-9 pl-3 pr-8 text-xs font-semibold border-2 border-blue-400/50 dark:border-blue-500/50 bg-white dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 transition-all shadow-sm appearance-none cursor-pointer hover:border-blue-500/70 dark:hover:border-blue-400/70"
+                      style={{
+                        backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%233b82f6' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                        backgroundPosition: 'right 0.5rem center',
+                        backgroundRepeat: 'no-repeat',
+                        backgroundSize: '1.5em 1.5em',
+                      }}
+                    >
+                      <option value="cash">💵 Cash</option>
+                      <option value="bank_transfer">🏦 Bank Transfer</option>
+                      <option value="check">📝 Check</option>
+                      <option value="online">💳 Online</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 
               {/* Action Buttons Row */}
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-3 pt-1">
                 <button
                   type="button"
                   onClick={handlePurchase}
                   disabled={processing || cart.length === 0}
-                  className="flex-1 py-1.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-[10px] font-semibold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-1"
+                  className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-xs font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-md"
                 >
                   {processing ? (
                     <>
-                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       <span>Processing...</span>
                     </>
                   ) : (
                     <>
-                      <FiCheck className="w-3 h-3" />
-                      <span>{editingPurchaseId ? 'Update' : 'Complete'}</span>
+                      <FiCheck className="w-4 h-4" />
+                      <span>{editingPurchaseId ? 'Update Purchase' : 'Complete Purchase'}</span>
                     </>
                   )}
                 </button>
                 <button
                   type="button"
                   onClick={clearCart}
-                  className="px-2.5 py-1.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-[9px] font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all flex items-center justify-center gap-1 border border-gray-300 dark:border-gray-600"
+                  className="px-4 py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all flex items-center justify-center gap-1.5 border-2 border-gray-300 dark:border-gray-600"
                 >
-                  <FiRefreshCw className="w-3 h-3" />
+                  <FiRefreshCw className="w-3.5 h-3.5" />
                   <span>Reset</span>
                 </button>
                 <button
@@ -1238,9 +1275,9 @@ const PurchasingPanel: React.FC = () => {
                       clearFormForNewPurchase();
                     }
                   }}
-                  className="px-2.5 py-1.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-[9px] font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all flex items-center justify-center gap-1 border border-gray-300 dark:border-gray-600"
+                  className="px-4 py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all flex items-center justify-center gap-1.5 border-2 border-gray-300 dark:border-gray-600"
                 >
-                  <FiPlus className="w-3 h-3" />
+                  <FiPlus className="w-3.5 h-3.5" />
                   <span>New</span>
                 </button>
               </div>
@@ -1485,7 +1522,7 @@ const PurchasingPanel: React.FC = () => {
                       <div className="col-span-3">Medicine</div>
                       <div className="col-span-1 text-center">Pkts</div>
                       <div className="col-span-1 text-center">Pills/Pkt</div>
-                      <div className="col-span-1 text-center">Price</div>
+                      <div className="col-span-1 text-center">Price/Pkt</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-2 text-center">Expiry</div>
@@ -1512,10 +1549,10 @@ const PurchasingPanel: React.FC = () => {
                             </button>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <h4 className="font-medium text-gray-900 dark:text-white truncate text-[11px]">{item.medicine.name}</h4>
+                                <h4 className="font-semibold text-gray-900 dark:text-white text-sm break-words leading-tight" title={item.medicine.name}>{item.medicine.name}</h4>
                               </div>
                               {item.medicine.barcode && (
-                                <div className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500 truncate">
+                                <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400 break-words">
                                   {item.medicine.barcode}
                                 </div>
                               )}
@@ -1525,39 +1562,35 @@ const PurchasingPanel: React.FC = () => {
 
                         {/* Packet Quantity */}
                         <div className="col-span-1">
-                          <div className="flex items-center gap-0.5 justify-center">
-                            <button
-                              onClick={() => adjustPacketQuantity(item.medicine.id, -1)}
-                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                              disabled={item.packetQuantity <= 1}
-                            >
-                              <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            </button>
+                          <div className="flex items-center justify-center">
                             <input
                               type="number"
                               min="1"
-                              value={item.packetQuantity}
+                              value={item.packetQuantity || ''}
                               onClick={(e: React.MouseEvent<HTMLInputElement>) => {
                                 e.currentTarget.select();
                               }}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value) || 1;
-                                updateCartItemField(item.medicine.id, 'packetQuantity', val);
-                              }}
-                              onBlur={(e) => {
-                                const val = parseInt(e.target.value) || 1;
-                                if (val < 1) {
-                                  removeFromCart(item.medicine.id);
+                                const val = e.target.value;
+                                if (val === '') {
+                                  // Allow empty during typing
+                                  updateCartItemField(item.medicine.id, 'packetQuantity', '' as any);
+                                } else {
+                                  const numVal = parseInt(val);
+                                  if (!isNaN(numVal) && numVal >= 0) {
+                                    updateCartItemField(item.medicine.id, 'packetQuantity', numVal);
+                                  }
                                 }
                               }}
-                              className="w-10 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                              onBlur={(e) => {
+                                const val = e.target.value;
+                                if (val === '' || parseInt(val) < 1 || isNaN(parseInt(val))) {
+                                  // Set to 1 if empty or invalid when leaving field
+                                  updateCartItemField(item.medicine.id, 'packetQuantity', 1);
+                                }
+                              }}
+                              className="w-full px-2 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             />
-                            <button
-                              onClick={() => adjustPacketQuantity(item.medicine.id, 1)}
-                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                            >
-                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            </button>
                           </div>
                         </div>
 
@@ -1565,15 +1598,9 @@ const PurchasingPanel: React.FC = () => {
                         <div className="col-span-1 text-center">
                           <input
                             type="number"
-                            min="1"
-                            value={item.pillsPerPacket}
-                            onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                              e.currentTarget.select();
-                            }}
-                            onChange={(e) =>
-                              updateCartItemField(item.medicine.id, 'pillsPerPacket', parseInt(e.target.value) || 1)
-                            }
-                            className="w-full px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            value={item.pillsPerPacket || ''}
+                            readOnly
+                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/30 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
                           />
                         </div>
 
@@ -1583,15 +1610,29 @@ const PurchasingPanel: React.FC = () => {
                             type="number"
                             min="0"
                             step="0.01"
-                            value={item.pricePerPacket}
+                            value={item.pricePerPacket || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
                               e.currentTarget.select();
                             }}
-                            onChange={(e) =>
-                              updateCartItemField(item.medicine.id, 'pricePerPacket', parseFloat(e.target.value) || 0)
-                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                updateCartItemField(item.medicine.id, 'pricePerPacket', '' as any);
+                              } else {
+                                const numVal = parseFloat(val);
+                                if (!isNaN(numVal) && numVal >= 0) {
+                                  updateCartItemField(item.medicine.id, 'pricePerPacket', numVal);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || isNaN(parseFloat(val))) {
+                                updateCartItemField(item.medicine.id, 'pricePerPacket', 0);
+                              }
+                            }}
                             placeholder="0.00"
-                            className="w-full px-1 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                           />
                         </div>
 
@@ -1602,15 +1643,29 @@ const PurchasingPanel: React.FC = () => {
                             min="0"
                             max="100"
                             step="0.1"
-                            value={item.discount}
+                            value={item.discount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
                               e.currentTarget.select();
                             }}
-                            onChange={(e) =>
-                              updateCartItemField(item.medicine.id, 'discount', parseFloat(e.target.value) || 0)
-                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                updateCartItemField(item.medicine.id, 'discount', '' as any);
+                              } else {
+                                const numVal = parseFloat(val);
+                                if (!isNaN(numVal) && numVal >= 0) {
+                                  updateCartItemField(item.medicine.id, 'discount', numVal);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || isNaN(parseFloat(val))) {
+                                updateCartItemField(item.medicine.id, 'discount', 0);
+                              }
+                            }}
                             placeholder="0"
-                            className="w-full px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                           />
                         </div>
 
@@ -1621,15 +1676,29 @@ const PurchasingPanel: React.FC = () => {
                             min="0"
                             max="100"
                             step="0.1"
-                            value={item.tax}
+                            value={item.tax || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
                               e.currentTarget.select();
                             }}
-                            onChange={(e) =>
-                              updateCartItemField(item.medicine.id, 'tax', parseFloat(e.target.value) || 0)
-                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '') {
+                                updateCartItemField(item.medicine.id, 'tax', '' as any);
+                              } else {
+                                const numVal = parseFloat(val);
+                                if (!isNaN(numVal) && numVal >= 0) {
+                                  updateCartItemField(item.medicine.id, 'tax', numVal);
+                                }
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || isNaN(parseFloat(val))) {
+                                updateCartItemField(item.medicine.id, 'tax', 0);
+                              }
+                            }}
                             placeholder="0"
-                            className="w-full px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                           />
                         </div>
 
@@ -1643,12 +1712,12 @@ const PurchasingPanel: React.FC = () => {
                               e.currentTarget.select();
                             }}
                             onChange={(e) => updateCartItemField(item.medicine.id, 'expiryDate', e.target.value)}
-                            className="w-full px-1 py-1 text-[10px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                           />
                         </div>
 
                         {/* Line Total */}
-                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                        <div className="col-span-1 flex items-center justify-center text-center font-bold text-emerald-600 dark:text-emerald-400 text-[11px] py-1">
                           {item.lineTotal.toFixed(2)}
                         </div>
                       </div>
