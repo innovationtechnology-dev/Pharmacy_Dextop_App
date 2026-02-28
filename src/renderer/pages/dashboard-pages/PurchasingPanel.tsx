@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FiPackage, FiSearch, FiX, FiPlus, FiMinus, FiTrash2, FiDollarSign, FiCheck, FiPercent, FiRefreshCw, FiMaximize2, FiList, FiEdit2, FiEye, FiClock, FiCalendar, FiChevronLeft, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText } from 'react-icons/fi';
+import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText } from 'react-icons/fi';
+import { FaPlus, FaTrashAlt, FaDollarSign, FaCheck, FaPercent, FaList, FaEdit, FaEye, FaChevronLeft } from 'react-icons/fa';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
@@ -134,6 +135,8 @@ const PurchasingPanel: React.FC = () => {
 
   // Update time every minute
   useEffect(() => {
+    if (selectedPurchaseId !== null) return; // Don't update if viewing a specific purchase
+
     const interval = setInterval(() => {
       const now = new Date();
       setCurrentTime(
@@ -144,8 +147,16 @@ const PurchasingPanel: React.FC = () => {
       );
     }, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedPurchaseId]);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
+  
+  const selectedPurchase = useMemo(() => {
+    if (selectedPurchaseId === null) return null;
+    return purchaseHistoryList.find(p => p.id === selectedPurchaseId);
+  }, [selectedPurchaseId, purchaseHistoryList]);
+
+  const isSelectedUpdate = selectedPurchase?.updatedAt && selectedPurchase?.updatedAt !== selectedPurchase?.createdAt;
+
   const { setHeader, refreshExpiringAlerts } = useDashboardHeader();
 
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -526,8 +537,8 @@ const PurchasingPanel: React.FC = () => {
 
         window.electron.ipcRenderer.sendMessage('purchase-create', [purchasePayload]);
       }
-    } catch (error) {
-      console.error('Error processing purchase:', error);
+    } catch (err) {
+      console.error('Error processing purchase:', err);
       setProcessing(false);
       error('Error processing purchase. Please try again.');
     }
@@ -563,7 +574,7 @@ const PurchasingPanel: React.FC = () => {
           setPurchaseHistoryList(purchases);
         }
       });
-      window.electron.ipcRenderer.sendMessage('purchase-get-all');
+      window.electron.ipcRenderer.sendMessage('purchase-get-all', []);
     } catch (err) {
       setLoadingPurchases(false);
     }
@@ -595,8 +606,8 @@ const PurchasingPanel: React.FC = () => {
     USD: '$',
     EUR: '€',
     GBP: '£',
-    PKR: '₨',
-    INR: '₹',
+    PKR: 'Rs.',
+    INR: 'Rs.',
   };
 
   const formatCurrency = (value: number) => {
@@ -646,7 +657,7 @@ const PurchasingPanel: React.FC = () => {
             // Calculate tax percentage (tax is applied to taxable base after discount)
             const taxPercent = taxableBase > 0 ? (taxAmount / taxableBase) * 100 : 0;
 
-            return {
+            return recalculatePurchaseItem({
               medicine: {
                 id: item.medicineId,
                 name: item.medicineName,
@@ -665,7 +676,7 @@ const PurchasingPanel: React.FC = () => {
               pricePerPill: item.pricePerPill,
               lineSubtotal: lineSubtotal,
               lineTotal: item.lineTotal,
-            };
+            });
           });
 
           setCart(cartItems);
@@ -698,6 +709,23 @@ const PurchasingPanel: React.FC = () => {
     setSelectedPurchaseId(purchase.id);
     setCurrentPurchaseIndex(index);
     setPurchaseOrderNumber(`PO-${purchase.id}`);
+    
+    // Use updatedAt if available, otherwise createdAt
+    const dateToUse = purchase.updatedAt || purchase.createdAt;
+    
+    if (dateToUse) {
+      const dbDate = new Date(dateToUse);
+      setCurrentDate(dbDate.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }));
+      setCurrentTime(dbDate.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }));
+    }
+    
     // Reload suppliers to ensure they're up to date
     loadSuppliers();
     loadPurchaseForEdit(purchase.id);
@@ -858,7 +886,7 @@ const PurchasingPanel: React.FC = () => {
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-slideInRight">
-          <FiCheck className="w-4 h-4" />
+          <FaCheck className="w-4 h-4" />
           <span className="font-medium">Purchase completed successfully!</span>
         </div>
       )}
@@ -941,7 +969,7 @@ const PurchasingPanel: React.FC = () => {
                           }}
                           className="ml-4 px-4 py-2 bg-emerald-600 dark:bg-emerald-500 text-white rounded-lg hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-colors flex items-center gap-2"
                         >
-                          <FiPlus className="w-4 h-4" />
+                          <FaPlus className="w-4 h-4" />
                           Add
                         </button>
                       </div>
@@ -1032,7 +1060,7 @@ const PurchasingPanel: React.FC = () => {
               <div className="grid grid-cols-3 gap-3">
                 {/* PO Number */}
                 <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
-                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">PO #</label>
+                  <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 block">Order Number</label>
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
@@ -1040,7 +1068,7 @@ const PurchasingPanel: React.FC = () => {
                       disabled={(currentPurchaseIndex === -1 && purchaseHistoryList.length === 0) || (currentPurchaseIndex >= 0 && currentPurchaseIndex >= purchaseHistoryList.length - 1)}
                       className="h-8 w-7 flex items-center justify-center border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded hover:bg-gray-100 dark:hover:bg-gray-600 disabled:bg-gray-100 dark:disabled:bg-gray-800 disabled:text-gray-400 disabled:cursor-not-allowed transition"
                     >
-                      <FiChevronLeft className="w-3.5 h-3.5" />
+                      <FaChevronLeft className="w-3.5 h-3.5" />
                     </button>
                     <input
                       type="text"
@@ -1064,7 +1092,7 @@ const PurchasingPanel: React.FC = () => {
                 <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
                   <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1">
                     <FiCalendar className="w-3 h-3 text-emerald-500" />
-                    Date
+                    Date {isSelectedUpdate && <span className="text-blue-500 lowercase">(updated)</span>}
                   </label>
                   <input
                     type="text"
@@ -1078,7 +1106,7 @@ const PurchasingPanel: React.FC = () => {
                 <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
                   <label className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1.5 flex items-center gap-1">
                     <FiClock className="w-3 h-3 text-emerald-500" />
-                    Time
+                    Time {isSelectedUpdate && <span className="text-blue-500 lowercase">(updated)</span>}
                   </label>
                   <input
                     type="text"
@@ -1170,7 +1198,7 @@ const PurchasingPanel: React.FC = () => {
             {/* Right Side: Payment Summary - Professional Layout */}
             <div className="space-y-3">
               {/* Financial Summary Cards */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div className="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-700/50 dark:to-gray-700/30 rounded-lg p-2 border border-gray-200 dark:border-gray-600">
                   <div className="text-[9px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Subtotal</div>
                   <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(subtotal)}</div>
@@ -1189,6 +1217,10 @@ const PurchasingPanel: React.FC = () => {
                     <span className="px-1.5 py-0.5 bg-white/25 rounded text-[8px]">{cart.length}</span>
                   </div>
                   <div className="text-base font-extrabold text-white">{formatCurrency(grandTotal)}</div>
+                </div>
+                <div className="bg-gradient-to-br from-red-50 to-red-100/50 dark:from-red-900/20 dark:to-red-900/10 rounded-lg p-2 border border-red-200 dark:border-red-700">
+                  <div className="text-[9px] font-bold text-red-600 dark:text-red-400 uppercase mb-1">Balance</div>
+                  <div className="text-sm font-bold text-red-700 dark:text-red-400">{formatCurrency(grandTotal - (paymentAmount || 0))}</div>
                 </div>
               </div>
 
@@ -1255,7 +1287,7 @@ const PurchasingPanel: React.FC = () => {
                     </>
                   ) : (
                     <>
-                      <FiCheck className="w-4 h-4" />
+                      <FaCheck className="w-4 h-4" />
                       <span>{editingPurchaseId ? 'Update Purchase' : 'Complete Purchase'}</span>
                     </>
                   )}
@@ -1277,7 +1309,7 @@ const PurchasingPanel: React.FC = () => {
                   }}
                   className="px-4 py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all flex items-center justify-center gap-1.5 border-2 border-gray-300 dark:border-gray-600"
                 >
-                  <FiPlus className="w-3.5 h-3.5" />
+                  <FaPlus className="w-3.5 h-3.5" />
                   <span>New</span>
                 </button>
               </div>
@@ -1457,7 +1489,7 @@ const PurchasingPanel: React.FC = () => {
                             }}
                             className="ml-3 px-2.5 py-1 bg-emerald-600 dark:bg-emerald-500 text-white rounded-md hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-colors flex items-center gap-1 text-xs font-medium flex-shrink-0"
                           >
-                            <FiPlus className="w-3 h-3" />
+                            <FaPlus className="w-3 h-3" />
                             Add
                           </button>
                         </div>
@@ -1753,12 +1785,14 @@ const PurchasingPanel: React.FC = () => {
                 ) : (
                   <div className="space-y-1.5">
                     {purchaseHistoryList.map((purchase) => {
-                      const purchaseDate = new Date(purchase.createdAt);
-                      const formattedDate = purchaseDate.toLocaleDateString('en-US', {
+                      const isUpdated = purchase.updatedAt && purchase.updatedAt !== purchase.createdAt;
+                      const displayDate = new Date(isUpdated ? purchase.updatedAt : purchase.createdAt);
+                      
+                      const formattedDate = displayDate.toLocaleDateString('en-US', {
                         month: 'short',
                         day: 'numeric',
                       });
-                      const formattedTime = purchaseDate.toLocaleTimeString('en-US', {
+                      const formattedTime = displayDate.toLocaleTimeString('en-US', {
                         hour: '2-digit',
                         minute: '2-digit',
                       });
@@ -1806,6 +1840,11 @@ const PurchasingPanel: React.FC = () => {
                                 >
                                   PO-{purchase.id}
                                 </span>
+                                {isUpdated && (
+                                  <span className="px-1 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[8px] font-bold uppercase rounded tracking-tighter">
+                                    Updated
+                                  </span>
+                                )}
                               </div>
                               <div className="flex items-center gap-1.5">
                                 <span
@@ -1879,184 +1918,6 @@ const PurchasingPanel: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* Supplier Selection and Summary - OLD SECTION TO REMOVE */}
-      {
-        false && cart.length > 0 && (
-          <div className="mt-2 grid grid-cols-1 lg:grid-cols-4 gap-2">
-            {/* Supplier Selection - Compact */}
-            <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 shadow-sm p-3">
-              <h3 className="text-xs font-semibold text-gray-900 dark:text-white mb-2">Supplier Information</h3>
-              <div className="space-y-2">
-                <div className="flex gap-2">
-                  <select
-                    value={selectedSupplierId || ''}
-                    onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
-                    className="flex-1 px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                    required
-                  >
-                    <option value="">Select Supplier</option>
-                    {suppliers.map((supplier) => (
-                      <option key={supplier.id} value={supplier.id}>
-                        {supplier.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => navigate('/suppliers')}
-                    className="px-2 sm:px-3 py-1.5 text-xs bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 transition-colors flex items-center gap-1"
-                    title="Add New Supplier"
-                  >
-                    <FiPlus className="w-3 h-3" />
-                    <span className="hidden sm:inline">Add</span>
-                  </button>
-                  <button
-                    onClick={loadSuppliers}
-                    className="px-2 sm:px-3 py-1.5 text-xs bg-gray-600 dark:bg-gray-500 text-white rounded hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors flex items-center gap-1"
-                    title="Refresh Suppliers"
-                  >
-                    <FiRefreshCw className="w-3 h-3" />
-                    <span className="hidden sm:inline">Refresh</span>
-                  </button>
-                </div>
-                {selectedSupplier && (
-                  <div className="text-xs text-gray-600 dark:text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-gray-700/50 p-2 rounded">
-                    <p><strong>Contact:</strong> {selectedSupplier.contactPerson || 'N/A'}</p>
-                    {selectedSupplier.phone && <p><strong>Phone:</strong> {selectedSupplier.phone}</p>}
-                    {selectedSupplier.email && <p><strong>Email:</strong> {selectedSupplier.email}</p>}
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 dark:text-gray-500 mb-1">Notes (Optional)</label>
-                  <textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={2}
-                    className="w-full px-2 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                    placeholder="Purchase notes..."
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Summary - Compact */}
-            <div className="lg:col-span-2 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 shadow-sm p-3">
-              <h3 className="text-xs font-semibold text-gray-900 dark:text-white mb-2">Summary</h3>
-              <div className="space-y-1 mb-3">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Items:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">{cart.length}</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Purchase Price:</span>
-                  <span className="font-medium text-gray-900 dark:text-white">
-                    {subtotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Discount Total:</span>
-                  <span className="font-medium text-red-600 dark:text-red-400">
-                    -{discountTotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Tax Total:</span>
-                  <span className="font-medium text-blue-600 dark:text-blue-400">
-                    +{taxTotal.toFixed(2)}
-                  </span>
-                </div>
-                <div className="border-t border-gray-200 dark:border-gray-700 dark:border-gray-700 pt-1 mt-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold text-gray-900 dark:text-white">Grand Total:</span>
-                    <span className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                      {grandTotal.toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-                <div className="border-t-2 border-emerald-200 dark:border-emerald-800 pt-3 mt-3 space-y-3 bg-emerald-50/50 dark:bg-emerald-900/20 p-3 rounded-lg">
-                  <div>
-                    <label className="block text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
-                      {/* <FiDollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> */}
-                      Payment Amount to Supplier:
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-gray-600 dark:text-gray-400 dark:text-gray-500 pointer-events-none">
-                        {(() => {
-                          const currency = pharmacySettings.currency || 'USD';
-                          return currencySymbols[currency] || currency;
-                        })()}
-                      </span>
-                      <input
-                        type="number"
-                        min="0"
-                        max={grandTotal}
-                        step="0.01"
-                        value={paymentAmount || ''}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          if (val <= grandTotal) {
-                            setPaymentAmount(val);
-                          }
-                        }}
-                        onBlur={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          if (val > grandTotal) {
-                            setPaymentAmount(grandTotal);
-                            alert(`Payment amount cannot exceed grand total of ${formatCurrency(grandTotal)}`);
-                          } else if (val < 0) {
-                            setPaymentAmount(0);
-                          }
-                        }}
-                        placeholder="0.00"
-                        className="w-full pl-8 pr-3 py-2.5 text-sm font-semibold border-2 border-emerald-300 dark:border-emerald-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 dark:text-white"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setPaymentAmount(grandTotal)}
-                      className="mt-2 w-full px-3 py-1.5 text-xs font-semibold text-white bg-emerald-600 dark:bg-emerald-500 hover:bg-emerald-700 dark:hover:bg-emerald-600 rounded-lg transition-colors"
-                    >
-                      Pay Full Amount ({formatCurrency(grandTotal)})
-                    </button>
-                  </div>
-                  <div className="flex items-center justify-between text-sm bg-white dark:bg-gray-800 p-2 rounded border border-gray-200 dark:border-gray-700">
-                    <span className="font-medium text-gray-700 dark:text-gray-300 dark:text-gray-500">Remaining Balance:</span>
-                    <span className={`font-bold text-lg ${(grandTotal - (paymentAmount || 0)) > 0 ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'}`}>
-                      {formatCurrency(grandTotal - (paymentAmount || 0))}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handlePurchase}
-                  disabled={processing || !selectedSupplierId}
-                  className="flex-1 py-2 bg-emerald-600 dark:bg-emerald-500 text-white rounded text-xs font-medium hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1"
-                >
-                  {processing ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      {editingPurchaseId ? 'Updating...' : 'Processing...'}
-                    </>
-                  ) : (
-                    <>
-                      <FiPackage className="w-3 h-3" />
-                      {editingPurchaseId ? 'Update Purchase' : 'Complete Purchase'}
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={clearCart}
-                  className="px-3 py-2 bg-red-600 dark:bg-red-500 text-white rounded text-xs font-medium hover:bg-red-700 dark:hover:bg-red-600 transition-colors"
-                >
-                  Clear
-                </button>
-              </div>
-            </div>
-          </div>
-        )
-      }
 
       {/* View Purchase Details Modal */}
       {

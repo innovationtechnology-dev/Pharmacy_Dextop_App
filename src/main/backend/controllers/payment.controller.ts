@@ -14,7 +14,7 @@ export class PaymentController {
     }
 
     private registerHandlers(): void {
-        // Add payment
+        // Add payment (alias for payment-create for compatibility)
         ipcMain.on('payment-add', async (event: IpcMainEvent, args: any[]) => {
             try {
                 const payment = args[0] as Payment;
@@ -23,6 +23,30 @@ export class PaymentController {
             } catch (error) {
                 console.error('Add payment error:', error);
                 event.reply('payment-add-reply', { success: false, error: String(error) });
+            }
+        });
+
+        // Create payment (main handler used by frontend)
+        ipcMain.on('payment-create', async (event: IpcMainEvent, args: any[]) => {
+            try {
+                const paymentData = args[0] as any;
+                // Transform the frontend data to match Payment interface
+                const payment: Payment = {
+                    purchaseId: paymentData.purchaseId,
+                    amount: paymentData.amount,
+                    paymentMethod: paymentData.paymentMethod === 'bank_transfer' ? 'bank_deposit' : 
+                                   paymentData.paymentMethod === 'check' ? 'cheque' : 
+                                   paymentData.paymentMethod === 'online' ? 'card' : 
+                                   paymentData.paymentMethod,
+                    reference: paymentData.referenceNumber || paymentData.checkNumber,
+                    notes: paymentData.notes,
+                    paymentDate: paymentData.paymentDate
+                };
+                const paymentId = await this.paymentService.addPayment(payment);
+                event.reply('payment-create-reply', { success: true, data: { id: paymentId } });
+            } catch (error) {
+                console.error('Create payment error:', error);
+                event.reply('payment-create-reply', { success: false, error: String(error) });
             }
         });
 

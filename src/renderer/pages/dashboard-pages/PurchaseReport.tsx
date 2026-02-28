@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
-import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown } from 'react-icons/fa';
+import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown, FaArrowLeft } from 'react-icons/fa';
 import { exportPurchasesPdf, exportPurchasesCsv } from '../../utils/purchases';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 
@@ -9,8 +9,8 @@ const currencySymbols: Record<string, string> = {
   USD: '$',
   EUR: '€',
   GBP: '£',
-  PKR: '₨',
-  INR: '₹',
+  PKR: 'Rs.',
+  INR: 'Rs.',
 };
 
 interface PurchaseItem {
@@ -462,10 +462,19 @@ export default function Purchases() {
           </div>
         </div>
 
+        {/* Back to Purchasing Button */}
+        <button
+          onClick={() => window.location.hash = '#/purchasing-panel'}
+          className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FaArrowLeft className="w-3.5 h-3.5" />
+          Back to Purchasing
+        </button>
+
         {/* Refresh Button */}
         <button
           onClick={fetchPurchases}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
         >
           {renderIcon(FiRefreshCw, { className: `w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}` })}
           Refresh
@@ -623,10 +632,10 @@ export default function Purchases() {
                     <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                       <div className="text-[11px] text-gray-500 dark:text-gray-400">#{purchase.id}</div>
                       {purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : '—'}
-                      {purchase.updatedAt && (
-                        <div className="text-[9px] text-blue-500 dark:text-blue-400 font-normal mt-0.5 flex items-center gap-0.5">
+                      {purchase.updatedAt && purchase.updatedAt !== purchase.createdAt && (
+                        <div className="text-[9px] text-blue-600 dark:text-blue-400 font-bold mt-1 inline-flex items-center gap-1 px-1 py-0.5 bg-blue-50 dark:bg-blue-900/20 rounded uppercase tracking-tighter">
                           <FiRefreshCw className="w-2.5 h-2.5" />
-                          {`Updated on ${new Date(purchase.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${new Date(purchase.updatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`}
+                          Updated: {new Date(purchase.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {new Date(purchase.updatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       )}
                     </div>
