@@ -603,20 +603,17 @@ const PurchasingPanel: React.FC = () => {
   };
 
   const currencySymbols: Record<string, string> = {
-    USD: '$',
-    EUR: '€',
-    GBP: '£',
+    USD: 'Rs.',
+    EUR: 'Rs.',
+    GBP: 'Rs.',
     PKR: 'Rs.',
     INR: 'Rs.',
   };
 
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
-    if (currency === 'INR' || currency === 'PKR') {
-      return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    }
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
+    const symbol = currencySymbols[currency] || 'Rs.';
+    return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const formatDate = (value?: string) =>
@@ -715,15 +712,17 @@ const PurchasingPanel: React.FC = () => {
     
     if (dateToUse) {
       const dbDate = new Date(dateToUse);
-      setCurrentDate(dbDate.toLocaleDateString('en-US', {
+      const formattedDate = dbDate.toLocaleDateString('en-US', {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
-      }));
-      setCurrentTime(dbDate.toLocaleTimeString('en-US', {
+      });
+      const formattedTime = dbDate.toLocaleTimeString('en-US', {
         hour: '2-digit',
         minute: '2-digit',
-      }));
+      });
+      setCurrentDate(formattedDate);
+      setCurrentTime(formattedTime);
     }
     
     // Reload suppliers to ensure they're up to date
@@ -765,6 +764,18 @@ const PurchasingPanel: React.FC = () => {
     setSelectedPurchaseId(null);
     setCurrentPurchaseIndex(-1);
     setPurchaseOrderNumber('');
+    
+    // Reset date and time to current
+    const now = new Date();
+    setCurrentDate(now.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    }));
+    setCurrentTime(now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    }));
   }, []);
 
   useEffect(() => {
@@ -1073,9 +1084,9 @@ const PurchasingPanel: React.FC = () => {
                     <input
                       type="text"
                       value={purchaseOrderNumber || (editingPurchaseId ? `PO-${editingPurchaseId}` : '')}
-                      onChange={(e) => setPurchaseOrderNumber(e.target.value)}
+                      readOnly
                       placeholder="New"
-                      className="flex-1 h-8 px-2 text-[11px] font-semibold border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition text-center"
+                      className="flex-1 h-8 px-2 text-[11px] font-semibold border-2 border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 dark:text-white rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition text-center cursor-default"
                     />
                     <button
                       type="button"
@@ -1205,11 +1216,11 @@ const PurchasingPanel: React.FC = () => {
                 </div>
                 <div className="bg-gradient-to-br from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-900/10 rounded-lg p-2 border border-orange-200 dark:border-orange-700">
                   <div className="text-[9px] font-bold text-orange-600 dark:text-orange-400 uppercase mb-1">Discount</div>
-                  <div className="text-sm font-bold text-orange-700 dark:text-orange-400">-{formatCurrency(discountTotal)}</div>
+                  <div className="text-sm font-bold text-orange-700 dark:text-orange-400">{formatCurrency(discountTotal)}</div>
                 </div>
                 <div className="bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-900/10 rounded-lg p-2 border border-blue-200 dark:border-blue-700">
                   <div className="text-[9px] font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">Tax</div>
-                  <div className="text-sm font-bold text-blue-700 dark:text-blue-400">+{formatCurrency(taxTotal)}</div>
+                  <div className="text-sm font-bold text-blue-700 dark:text-blue-400">{formatCurrency(taxTotal)}</div>
                 </div>
                 <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-700 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-800 rounded-lg p-2 border border-emerald-400 dark:border-emerald-500 shadow-lg">
                   <div className="text-[9px] font-bold text-white/90 uppercase mb-1 flex items-center justify-between">
@@ -1220,7 +1231,7 @@ const PurchasingPanel: React.FC = () => {
                 </div>
                 <div className="bg-gradient-to-br from-red-50 to-red-100/50 dark:from-red-900/20 dark:to-red-900/10 rounded-lg p-2 border border-red-200 dark:border-red-700">
                   <div className="text-[9px] font-bold text-red-600 dark:text-red-400 uppercase mb-1">Balance</div>
-                  <div className="text-sm font-bold text-red-700 dark:text-red-400">{formatCurrency(grandTotal - (paymentAmount || 0))}</div>
+                  <div className="text-sm font-bold text-red-700 dark:text-red-400">{formatCurrency(Math.max(0, grandTotal - (paymentAmount || 0)))}</div>
                 </div>
               </div>
 
@@ -1984,11 +1995,11 @@ const PurchasingPanel: React.FC = () => {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Discount Total:</span>
-                    <span className="font-medium text-red-600 dark:text-red-400">-{formatCurrency(viewPurchase.discountTotal || 0)}</span>
+                    <span className="font-medium text-orange-600 dark:text-orange-400">{formatCurrency(viewPurchase.discountTotal || 0)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Tax Total:</span>
-                    <span className="font-medium text-blue-600 dark:text-blue-400">+{formatCurrency(viewPurchase.taxTotal || 0)}</span>
+                    <span className="font-medium text-blue-600 dark:text-blue-400">{formatCurrency(viewPurchase.taxTotal || 0)}</span>
                   </div>
                   <div className="flex justify-between text-base font-bold border-t pt-2">
                     <span className="text-gray-900 dark:text-white">Grand Total:</span>
@@ -2000,7 +2011,7 @@ const PurchasingPanel: React.FC = () => {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Remaining Balance:</span>
-                    <span className="font-medium text-orange-600 dark:text-orange-400">{formatCurrency(viewPurchase.remainingBalance || viewPurchase.grandTotal)}</span>
+                    <span className="font-medium text-red-600 dark:text-red-400">{formatCurrency(Math.max(0, (viewPurchase.grandTotal || 0) - (viewPurchase.paymentAmount || 0)))}</span>
                   </div>
                 </div>
                 {viewPurchase.notes && (

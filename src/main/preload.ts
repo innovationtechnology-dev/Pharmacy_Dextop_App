@@ -30,6 +30,13 @@ export type Channels =
   | 'purchase-delete' | 'purchase-delete-reply'
   | 'purchase-update' | 'purchase-update-reply'
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
+  | 'payment-create' | 'payment-create-reply'
+  | 'payment-get-by-purchase' | 'payment-get-by-purchase-reply'
+  | 'payment-get-by-date' | 'payment-get-by-date-reply'
+  | 'payment-get-all' | 'payment-get-all-reply'
+  | 'payment-get-summary' | 'payment-get-summary-reply'
+  | 'payment-get-supplier-accounts' | 'payment-get-supplier-accounts-reply'
+  | 'payment-delete' | 'payment-delete-reply'
   | 'asynchronous-sql-command' | 'asynchronous-sql-reply'
   | 'ipc-show-userDataPaths';
 

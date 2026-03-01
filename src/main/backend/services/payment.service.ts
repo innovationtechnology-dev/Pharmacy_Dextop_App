@@ -107,6 +107,37 @@ export class PaymentService {
         return rows.map(this.mapRowToPayment);
     }
 
+    public async deletePayment(paymentId: number): Promise<void> {
+        // Get payment details before deleting
+        const payment = await this.dbService.queryOne(
+            'SELECT * FROM purchase_payments WHERE id = ?',
+            [paymentId]
+        );
+
+        if (!payment) {
+            throw new Error(`Payment with id ${paymentId} not found`);
+        }
+
+        await this.dbService.execute('BEGIN TRANSACTION');
+        try {
+            // Delete the payment record
+            await this.dbService.execute('DELETE FROM purchase_payments WHERE id = ?', [paymentId]);
+
+            // Update the purchase record to reflect the reversed payment
+            await this.dbService.execute(`
+                UPDATE purchases 
+                SET payment_amount = payment_amount - ?,
+                    remaining_balance = remaining_balance + ?
+                WHERE id = ?
+            `, [payment.amount, payment.amount, payment.purchase_id]);
+
+            await this.dbService.execute('COMMIT');
+        } catch (error) {
+            await this.dbService.execute('ROLLBACK');
+            throw error;
+        }
+    }
+
     private mapRowToPayment(row: any): Payment {
         return {
             id: row.id,

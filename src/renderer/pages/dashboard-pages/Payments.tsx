@@ -100,18 +100,36 @@ const currencySymbols: Record<string, string> = {
   AED: 'د.إ',
 };
 
-const paymentMethodLabels: Record<PaymentMethod, string> = {
+const paymentMethodLabels: Record<string, string> = {
   cash: 'Cash',
   bank_transfer: 'Bank Transfer',
+  bank_deposit: 'Bank Transfer',
   check: 'Check / Cheque',
+  cheque: 'Check / Cheque',
   online: 'Online Payment',
+  card: 'Online Payment',
+  other: 'Other',
 };
 
-const paymentMethodColors: Record<PaymentMethod, { bg: string; text: string; border: string }> = {
+const paymentMethodColors: Record<string, { bg: string; text: string; border: string }> = {
   cash: { bg: 'bg-green-100 dark:bg-green-900/30', text: 'text-green-700 dark:text-green-300', border: 'border-green-300 dark:border-green-700' },
   bank_transfer: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-700' },
+  bank_deposit: { bg: 'bg-blue-100 dark:bg-blue-900/30', text: 'text-blue-700 dark:text-blue-300', border: 'border-blue-300 dark:border-blue-700' },
   check: { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-700' },
+  cheque: { bg: 'bg-amber-100 dark:bg-amber-900/30', text: 'text-amber-700 dark:text-amber-300', border: 'border-amber-300 dark:border-amber-700' },
   online: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-700' },
+  card: { bg: 'bg-purple-100 dark:bg-purple-900/30', text: 'text-purple-700 dark:text-purple-300', border: 'border-purple-300 dark:border-purple-700' },
+  other: { bg: 'bg-gray-100 dark:bg-gray-700/30', text: 'text-gray-700 dark:text-gray-300', border: 'border-gray-300 dark:border-gray-600' },
+};
+
+// Helper function to get payment method colors safely
+const getPaymentMethodColor = (method: string) => {
+  return paymentMethodColors[method] || paymentMethodColors.other;
+};
+
+// Helper function to get payment method label safely
+const getPaymentMethodLabel = (method: string) => {
+  return paymentMethodLabels[method] || method;
 };
 
 const Payments: React.FC = () => {
@@ -186,6 +204,15 @@ const Payments: React.FC = () => {
       month: 'short',
       year: 'numeric'
     });
+  }, []);
+
+  const isToday = useCallback((dateString?: string) => {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    const today = new Date();
+    return date.getDate() === today.getDate() &&
+           date.getMonth() === today.getMonth() &&
+           date.getFullYear() === today.getFullYear();
   }, []);
 
   // Load data
@@ -1044,13 +1071,15 @@ const Payments: React.FC = () => {
                                 <FiPlus className="w-4 h-4" />
                               </button>
                             )}
-                            <button
-                              onClick={() => setDeleteConfirm(p.id)}
-                              className="inline-flex items-center justify-center w-8 h-8 text-white bg-red-600 dark:bg-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600"
-                              title="Delete Purchase"
-                            >
-                              <FiTrash2 className="w-4 h-4" />
-                            </button>
+                            {isToday(p.createdAt) && (
+                              <button
+                                onClick={() => setDeleteConfirm(p.id)}
+                                className="inline-flex items-center justify-center w-8 h-8 text-white bg-red-600 dark:bg-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600"
+                                title="Delete Purchase (Today Only)"
+                              >
+                                <FiTrash2 className="w-4 h-4" />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1132,7 +1161,7 @@ const Payments: React.FC = () => {
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                   {displayRecords.map((record) => {
-                    const methodColor = paymentMethodColors[record.paymentMethod];
+                    const methodColor = getPaymentMethodColor(record.paymentMethod);
                     return (
                       <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                         <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">{formatDate(record.paymentDate)}</td>
@@ -1145,7 +1174,7 @@ const Payments: React.FC = () => {
                         <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">PO-{record.purchaseId}</td>
                         <td className="px-4 py-3 text-center">
                           <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                            {paymentMethodLabels[record.paymentMethod]}
+                            {getPaymentMethodLabel(record.paymentMethod)}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
@@ -1156,13 +1185,15 @@ const Payments: React.FC = () => {
                         </td>
                         <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(record.amount)}</td>
                         <td className="px-4 py-3 text-center">
-                          <button
-                            onClick={() => handleDeletePaymentRecord(record.id)}
-                            className="inline-flex items-center justify-center w-8 h-8 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
-                            title="Delete Payment"
-                          >
-                            <FiTrash2 className="w-4 h-4" />
-                          </button>
+                          {isToday(record.paymentDate) && (
+                            <button
+                              onClick={() => handleDeletePaymentRecord(record.id)}
+                              className="inline-flex items-center justify-center w-8 h-8 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
+                              title="Delete Payment (Today Only)"
+                            >
+                              <FiTrash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -1201,7 +1232,7 @@ const Payments: React.FC = () => {
                     {/* Records for this date */}
                     <div className="space-y-3">
                       {records.map((record) => {
-                        const methodColor = paymentMethodColors[record.paymentMethod];
+                        const methodColor = getPaymentMethodColor(record.paymentMethod);
                         return (
                           <div
                             key={record.id}
@@ -1210,7 +1241,7 @@ const Payments: React.FC = () => {
                             <div className="flex items-center gap-4 flex-1">
                               <div className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 flex items-center justify-center border-2 border-gray-200 dark:border-gray-600">
                                 <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                                  {paymentMethodLabels[record.paymentMethod].charAt(0)}
+                                  {getPaymentMethodLabel(record.paymentMethod).charAt(0)}
                                 </span>
                               </div>
                               <div className="flex-1">
@@ -1229,7 +1260,7 @@ const Payments: React.FC = () => {
                                     <span className="font-medium">PO-{record.purchaseId}</span>
                                   </span>
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                                    {paymentMethodLabels[record.paymentMethod]}
+                                    {getPaymentMethodLabel(record.paymentMethod)}
                                   </span>
                                   {(record.checkNumber || record.referenceNumber) && (
                                     <span className="text-gray-500 dark:text-gray-400">
@@ -1256,13 +1287,15 @@ const Payments: React.FC = () => {
                                   })}
                                 </div>
                               </div>
-                              <button
-                                onClick={() => handleDeletePaymentRecord(record.id)}
-                                className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
-                                title="Delete Payment"
-                              >
-                                <FiTrash2 className="w-4 h-4" />
-                              </button>
+                              {isToday(record.paymentDate) && (
+                                <button
+                                  onClick={() => handleDeletePaymentRecord(record.id)}
+                                  className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                                  title="Delete Payment (Today Only)"
+                                >
+                                  <FiTrash2 className="w-4 h-4" />
+                                </button>
+                              )}
                             </div>
                           </div>
                         );
@@ -1543,8 +1576,8 @@ const Payments: React.FC = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Payment Method</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {(Object.keys(paymentMethodLabels) as PaymentMethod[]).map((method) => {
-                    const colors = paymentMethodColors[method];
+                  {(['cash', 'bank_transfer', 'check', 'online'] as PaymentMethod[]).map((method) => {
+                    const colors = getPaymentMethodColor(method);
                     return (
                     <button
                         key={method}
@@ -1555,7 +1588,7 @@ const Payments: React.FC = () => {
                             : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
                         }`}
                       >
-                        {paymentMethodLabels[method]}
+                        {getPaymentMethodLabel(method)}
                       </button>
                     );
                   })}
@@ -1716,7 +1749,7 @@ const Payments: React.FC = () => {
               ) : (
                 <div className="space-y-3">
                   {purchasePayments.map((payment, index) => {
-                    const methodColor = paymentMethodColors[payment.paymentMethod];
+                    const methodColor = getPaymentMethodColor(payment.paymentMethod);
                     return (
                       <div
                         key={payment.id}
@@ -1730,7 +1763,7 @@ const Payments: React.FC = () => {
                             <div className="font-medium text-gray-900 dark:text-white">{formatDate(payment.paymentDate)}</div>
                             <div className="flex items-center gap-2 mt-1">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                                {paymentMethodLabels[payment.paymentMethod]}
+                                {getPaymentMethodLabel(payment.paymentMethod)}
                               </span>
                               {(payment.checkNumber || payment.referenceNumber) && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400">
@@ -1747,13 +1780,15 @@ const Payments: React.FC = () => {
                           <div className="text-right">
                             <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(payment.amount)}</div>
                           </div>
-                          <button
-                            onClick={() => handleDeletePaymentRecord(payment.id)}
-                            className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
-                            title="Delete Payment"
-                          >
-                            <FiTrash2 className="w-4 h-4" />
-                          </button>
+                          {isToday(payment.paymentDate) && (
+                            <button
+                              onClick={() => handleDeletePaymentRecord(payment.id)}
+                              className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
+                              title="Delete Payment (Today Only)"
+                            >
+                              <FiTrash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );

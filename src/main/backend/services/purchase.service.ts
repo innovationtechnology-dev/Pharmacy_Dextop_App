@@ -222,6 +222,15 @@ export class PurchaseService {
   public async createPurchase(purchase: Omit<Purchase, 'id' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'grandTotal' | 'remainingBalance' | 'items'> & {
     items: PurchaseItemInput[];
     paymentAmount?: number;
+    paymentDetails?: {
+      paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'online';
+      referenceNumber?: string;
+      checkNumber?: string;
+      bankName?: string;
+      accountNumber?: string;
+      paymentDate: string;
+      notes?: string;
+    };
   }): Promise<number> {
     if (!purchase.items || purchase.items.length === 0) {
       throw new Error('At least one medicine must be included in a purchase.');
@@ -312,6 +321,36 @@ export class PurchaseService {
           item.lineTotal,
           item.expiryDate,
           item.batchNumber || null,
+        ]);
+      }
+
+      // Create payment record if payment amount > 0
+      if (paymentAmount > 0 && purchase.paymentDetails) {
+        const paymentMethod = purchase.paymentDetails.paymentMethod === 'bank_transfer' ? 'bank_deposit' : 
+                             purchase.paymentDetails.paymentMethod === 'check' ? 'cheque' : 
+                             purchase.paymentDetails.paymentMethod;
+        
+        let reference = purchase.paymentDetails.referenceNumber || '';
+        if (purchase.paymentDetails.checkNumber) {
+          reference = `Check: ${purchase.paymentDetails.checkNumber}`;
+          if (purchase.paymentDetails.bankName) {
+            reference += ` | Bank: ${purchase.paymentDetails.bankName}`;
+          }
+        } else if (purchase.paymentDetails.bankName && purchase.paymentDetails.accountNumber) {
+          reference = `Bank: ${purchase.paymentDetails.bankName} | Acc: ${purchase.paymentDetails.accountNumber}`;
+        }
+
+        const insertPaymentSql = `
+          INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `;
+        await this.dbService.execute(insertPaymentSql, [
+          purchaseId,
+          paymentAmount,
+          paymentMethod,
+          reference || null,
+          purchase.paymentDetails.notes || null,
+          purchase.paymentDetails.paymentDate || new Date().toISOString(),
         ]);
       }
 
@@ -623,12 +662,22 @@ export class PurchaseService {
   /**
    * Update an existing purchase and its items.
    * Reverses old inventory changes and applies new ones.
+   * Note: This does NOT update payment records - use addPayment for additional payments
    */
   public async updatePurchase(
     purchaseId: number,
     purchase: Omit<Purchase, 'id' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'grandTotal' | 'remainingBalance' | 'items'> & {
       items: PurchaseItemInput[];
       paymentAmount?: number;
+      paymentDetails?: {
+        paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'online';
+        referenceNumber?: string;
+        checkNumber?: string;
+        bankName?: string;
+        accountNumber?: string;
+        paymentDate: string;
+        notes?: string;
+      };
     }
   ): Promise<void> {
     if (!purchase.items || purchase.items.length === 0) {
@@ -661,17 +710,37 @@ export class PurchaseService {
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
     const grandTotal = subtotal - discountTotal + taxTotal;
-    const paymentAmount = purchase.paymentAmount ?? existingPurchase.paymentAmount ?? 0;
-
-    // Validate payment amount
-    if (paymentAmount < 0) {
-      throw new Error('Payment amount cannot be negative');
+    
+    // Get total payments from payment records
+    const paymentsResult = await this.dbService.query(
+      'SELECT COALESCE(SUM(amount), 0) as total_paid FROM purchase_payments WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    const totalPaid = paymentsResult[0]?.total_paid || 0;
+    
+    // If new payment is being added
+    const newPaymentAmount = purchase.paymentAmount ?? 0;
+    let finalPaymentAmount = totalPaid;
+    
+    if (newPaymentAmount > totalPaid) {
+      // There's a new payment to add
+      const additionalPayment = newPaymentAmount - totalPaid;
+      
+      // Validate payment amount
+      if (additionalPayment < 0) {
+        throw new Error('Payment amount cannot be negative');
+      }
+      if (newPaymentAmount > grandTotal) {
+        throw new Error(`Payment amount (${newPaymentAmount}) cannot be greater than grand total (${grandTotal})`);
+      }
+      
+      finalPaymentAmount = newPaymentAmount;
+    } else {
+      // Use existing payment total
+      finalPaymentAmount = totalPaid;
     }
-    if (paymentAmount > grandTotal) {
-      throw new Error(`Payment amount (${paymentAmount}) cannot be greater than grand total (${grandTotal})`);
-    }
 
-    const remainingBalance = grandTotal - paymentAmount;
+    const remainingBalance = grandTotal - finalPaymentAmount;
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
@@ -690,7 +759,7 @@ export class PurchaseService {
         discountTotal,
         taxTotal,
         grandTotal,
-        paymentAmount,
+        finalPaymentAmount,
         remainingBalance,
         purchase.status || existingPurchase.status || 'ordered',
         purchase.invoiceNumber || existingPurchase.invoiceNumber || null,
@@ -749,6 +818,38 @@ export class PurchaseService {
           item.lineTotal,
           item.expiryDate,
           item.batchNumber || null,
+        ]);
+      }
+
+      // Add new payment record if there's an additional payment
+      if (newPaymentAmount > totalPaid && purchase.paymentDetails) {
+        const additionalPayment = newPaymentAmount - totalPaid;
+        
+        const paymentMethod = purchase.paymentDetails.paymentMethod === 'bank_transfer' ? 'bank_deposit' : 
+                             purchase.paymentDetails.paymentMethod === 'check' ? 'cheque' : 
+                             purchase.paymentDetails.paymentMethod;
+        
+        let reference = purchase.paymentDetails.referenceNumber || '';
+        if (purchase.paymentDetails.checkNumber) {
+          reference = `Check: ${purchase.paymentDetails.checkNumber}`;
+          if (purchase.paymentDetails.bankName) {
+            reference += ` | Bank: ${purchase.paymentDetails.bankName}`;
+          }
+        } else if (purchase.paymentDetails.bankName && purchase.paymentDetails.accountNumber) {
+          reference = `Bank: ${purchase.paymentDetails.bankName} | Acc: ${purchase.paymentDetails.accountNumber}`;
+        }
+
+        const insertPaymentSql = `
+          INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `;
+        await this.dbService.execute(insertPaymentSql, [
+          purchaseId,
+          additionalPayment,
+          paymentMethod,
+          reference || null,
+          purchase.paymentDetails.notes || null,
+          purchase.paymentDetails.paymentDate || new Date().toISOString(),
         ]);
       }
 

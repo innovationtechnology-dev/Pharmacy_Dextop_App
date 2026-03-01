@@ -74,6 +74,18 @@ export class PaymentController {
                 event.reply('payment-get-by-date-reply', { success: false, error: String(error) });
             }
         });
+
+        // Delete payment
+        ipcMain.on('payment-delete', async (event: IpcMainEvent, args: any[]) => {
+            try {
+                const paymentId = args[0] as number;
+                await this.paymentService.deletePayment(paymentId);
+                event.reply('payment-delete-reply', { success: true });
+            } catch (error) {
+                console.error('Delete payment error:', error);
+                event.reply('payment-delete-reply', { success: false, error: String(error) });
+            }
+        });
     }
 }
 
