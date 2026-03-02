@@ -17,6 +17,8 @@ import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmac
 interface FinancialData {
   purchasingTotal: number;
   sellingTotal: number;
+  saleReturnsTotal: number;
+  netRevenue: number;
   paymentTotal: number;
   remainingPayment: number;
   profit: number;
@@ -54,6 +56,8 @@ const FinancialSummary: React.FC = () => {
   const [financialData, setFinancialData] = useState<FinancialData>({
     purchasingTotal: 0,
     sellingTotal: 0,
+    saleReturnsTotal: 0,
+    netRevenue: 0,
     paymentTotal: 0,
     remainingPayment: 0,
     profit: 0,
@@ -88,6 +92,8 @@ const FinancialSummary: React.FC = () => {
           setFinancialData({
             purchasingTotal: 0,
             sellingTotal: 0,
+            saleReturnsTotal: 0,
+            netRevenue: 0,
             paymentTotal: 0,
             remainingPayment: 0,
             profit: 0,
@@ -194,31 +200,10 @@ const FinancialSummary: React.FC = () => {
   const headerActions = useMemo(
     () => (
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={setCurrentMonth}
-          className="px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-700/50 hover:border-emerald-500 dark:hover:border-emerald-400 transition-colors font-medium"
-        >
-          This Month
-        </button>
-        <button
-          type="button"
-          onClick={setCurrentYear}
-          className="px-3 py-2 text-sm bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-700/50 hover:border-emerald-500 dark:hover:border-emerald-400 transition-colors font-medium"
-        >
-          This Year
-        </button>
-        <button
-          type="button"
-          onClick={loadFinancialData}
-          className="px-3 py-2 text-sm bg-emerald-600 dark:bg-emerald-50 dark:bg-emerald-900/300 text-white rounded-lg hover:bg-emerald-700 dark:hover:bg-emerald-600 transition-colors font-medium flex items-center gap-2"
-        >
-          {renderIcon(FiRefreshCw, 'w-4 h-4')}
-          Refresh
-        </button>
+        {/* Removed duplicate buttons - they are in the date range section */}
       </div>
     ),
-    [setCurrentMonth, setCurrentYear, loadFinancialData]
+    []
   );
 
   useEffect(() => {
@@ -327,11 +312,25 @@ const FinancialSummary: React.FC = () => {
                 bgColor="bg-blue-50 dark:bg-blue-900/30"
               />
               <StatCard
-                title="Selling Total"
+                title="Gross Sales"
                 value={financialData.sellingTotal}
                 icon={FiDollarSign}
                 color="text-emerald-600 dark:text-emerald-400"
                 bgColor="bg-emerald-50 dark:bg-emerald-900/30"
+              />
+              <StatCard
+                title="Sale Returns"
+                value={financialData.saleReturnsTotal}
+                icon={FiTrendingDown}
+                color="text-red-600 dark:text-red-400"
+                bgColor="bg-red-50 dark:bg-red-900/30"
+              />
+              <StatCard
+                title="Net Revenue"
+                value={financialData.netRevenue}
+                icon={FiDollarSign}
+                color="text-teal-600 dark:text-teal-400"
+                bgColor="bg-teal-50 dark:bg-teal-900/30"
               />
               <StatCard
                 title="Payment Total"
@@ -347,9 +346,9 @@ const FinancialSummary: React.FC = () => {
                 color="text-orange-600 dark:text-orange-400"
                 bgColor="bg-orange-50 dark:bg-orange-900/30"
               />
-              <div className="sm:col-span-2 lg:col-span-1">
+              <div className="sm:col-span-2 lg:col-span-3">
                 <StatCard
-                  title="Profit"
+                  title="Net Profit"
                   value={financialData.profit}
                   icon={FiTrendingUp}
                   color={financialData.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}
@@ -364,9 +363,21 @@ const FinancialSummary: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
                 <div className="space-y-3 sm:space-y-4">
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-0 pb-2 sm:pb-3 border-b border-gray-200 dark:border-gray-700">
-                    <span className="text-sm sm:text-base text-gray-600 dark:text-gray-400 font-medium">Total Sales</span>
+                    <span className="text-sm sm:text-base text-gray-600 dark:text-gray-400 font-medium">Gross Sales</span>
                     <span className="text-base sm:text-lg font-bold text-emerald-600 dark:text-emerald-400">
                       {formatCurrency(financialData.sellingTotal)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-0 pb-2 sm:pb-3 border-b border-gray-200 dark:border-gray-700">
+                    <span className="text-sm sm:text-base text-gray-600 dark:text-gray-400 font-medium">Sale Returns</span>
+                    <span className="text-base sm:text-lg font-bold text-red-600 dark:text-red-400">
+                      -{formatCurrency(financialData.saleReturnsTotal)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-0 pb-2 sm:pb-3 border-b-2 border-gray-300 dark:border-gray-600">
+                    <span className="text-sm sm:text-base text-gray-700 dark:text-gray-300 font-bold">Net Revenue</span>
+                    <span className="text-base sm:text-lg font-bold text-teal-600 dark:text-teal-400">
+                      {formatCurrency(financialData.netRevenue)}
                     </span>
                   </div>
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 sm:gap-0 pb-2 sm:pb-3 border-b border-gray-200 dark:border-gray-700">

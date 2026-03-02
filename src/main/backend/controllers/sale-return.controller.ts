@@ -311,6 +311,17 @@ export class SaleReturnController {
         event.reply('sale-return-export-pdf-reply', { success: false, error: String(error) });
       }
     });
+
+    // Get total sale returns (for dashboard)
+    ipcMain.on('sale-return-get-total', async (event: IpcMainEvent) => {
+      try {
+        const total = await this.saleReturnService.getTotalSaleReturns();
+        event.reply('sale-return-get-total-reply', { success: true, data: total });
+      } catch (error) {
+        console.error('Get total sale returns error:', error);
+        event.reply('sale-return-get-total-reply', { success: false, error: String(error) });
+      }
+    });
   }
 }
 

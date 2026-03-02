@@ -563,6 +563,34 @@ export class SaleReturnService {
       reason: row.reason || undefined,
     }));
   }
+
+  /**
+   * Get total sale returns amount (for financial summary)
+   */
+  public async getTotalSaleReturns(): Promise<number> {
+    const sql = `
+      SELECT COALESCE(SUM(total), 0) as total_returns
+      FROM sale_returns
+    `;
+    const result = await this.dbService.queryOne(sql);
+    return result?.total_returns || 0;
+  }
+
+  /**
+   * Get sale returns total by date range
+   */
+  public async getSaleReturnsByDateRange(fromDate: string, toDate: string): Promise<number> {
+    const fromDateTime = `${fromDate} 00:00:00`;
+    const toDateTime = `${toDate} 23:59:59`;
+    const sql = `
+      SELECT COALESCE(SUM(total), 0) as total_returns
+      FROM sale_returns 
+      WHERE datetime(created_at) >= datetime(?) 
+        AND datetime(created_at) <= datetime(?)
+    `;
+    const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+    return result?.total_returns || 0;
+  }
 }
 
 export default SaleReturnService;

@@ -110,7 +110,7 @@ const MetricCard: React.FC<{ metric: Metric }> = ({ metric }) => (
   </div>
 );
 
-const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[]) => {
+const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
   const purchaseTotal = purchases.reduce((sum, p) => sum + (p.grandTotal || 0), 0);
 
@@ -133,8 +133,11 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
     costOfGoodsSold = revenue * 0.7;
   }
 
-  // Net Profit = Revenue - Cost of Goods Sold (not all purchases!)
-  const profit = revenue - costOfGoodsSold;
+  // Net Revenue = Revenue - Sale Returns
+  const netRevenue = revenue - saleReturnsTotal;
+
+  // Net Profit = Net Revenue - Cost of Goods Sold (not all purchases!)
+  const profit = netRevenue - costOfGoodsSold;
 
   const orders = sales.length;
   const uniqueCustomers = new Set(
@@ -150,6 +153,8 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
 
   return {
     revenue,
+    netRevenue,
+    saleReturnsTotal,
     purchaseTotal,
     costOfGoodsSold,
     profit,
@@ -277,6 +282,7 @@ const Dashboard = () => {
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
   const [medicines, setMedicines] = useState<MedicineRecord[]>([]);
+  const [saleReturnsTotal, setSaleReturnsTotal] = useState<number>(0);
   const [range, setRange] = useState<'this_month' | 'last_month' | 'this_year'>('this_month');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -300,14 +306,16 @@ const Dashboard = () => {
     setLoading(true);
     setError(null);
     try {
-      const [salesData, purchaseData, medicineData] = await Promise.all([
+      const [salesData, purchaseData, medicineData, saleReturnsData] = await Promise.all([
         invokeIpc<SaleRecord[]>('sale-get-all', 'sale-get-all-reply'),
         invokeIpc<PurchaseRecord[]>('purchase-get-all', 'purchase-get-all-reply'),
         invokeIpc<MedicineRecord[]>('medicine-get-all', 'medicine-get-all-reply'),
+        invokeIpc<number>('sale-return-get-total', 'sale-return-get-total-reply'),
       ]);
       setSales(salesData || []);
       setPurchases(purchaseData || []);
       setMedicines(medicineData || []);
+      setSaleReturnsTotal(saleReturnsData || 0);
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Unable to load dashboard data. Please try again.'
@@ -372,19 +380,27 @@ const Dashboard = () => {
   };
 
   const totals = useMemo(
-    () => buildTotals(sales, purchases, medicines),
-    [sales, purchases, medicines]
+    () => buildTotals(sales, purchases, medicines, saleReturnsTotal),
+    [sales, purchases, medicines, saleReturnsTotal]
   );
 
   const metrics: Metric[] = useMemo(
     () => [
       {
         id: 'revenue',
-        title: 'Total Revenue',
+        title: 'Gross Revenue',
         value: formatCurrency(totals.revenue),
         delta: `${formatNumber(totals.orders)} orders`,
         icon: <FiDollarSign className="w-5 h-5" />,
         color: 'bg-gradient-to-br from-blue-500 to-cyan-400',
+      },
+      {
+        id: 'netRevenue',
+        title: 'Net Revenue',
+        value: formatCurrency(totals.netRevenue),
+        delta: totals.saleReturnsTotal > 0 ? `Rs.${totals.saleReturnsTotal.toFixed(2)} returned` : 'No returns',
+        icon: <FiShoppingBag className="w-5 h-5" />,
+        color: 'bg-gradient-to-br from-indigo-500 to-blue-400',
       },
       {
         id: 'profit',

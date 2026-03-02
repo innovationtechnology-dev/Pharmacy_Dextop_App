@@ -6,11 +6,11 @@ import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFi
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 
 const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
+  USD: 'Rs.',
+  EUR: 'Rs.',
+  GBP: 'Rs.',
+  PKR: 'Rs.',
+  INR: 'Rs.',
 };
 
 export default function SaleReturn() {

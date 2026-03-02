@@ -58,11 +58,11 @@ interface CartItem {
 }
 
 const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
+  USD: 'Rs.',
+  EUR: 'Rs.',
+  GBP: 'Rs.',
+  PKR: 'Rs.',
+  INR: 'Rs.',
 };
 
 const recalculateSaleItem = (item: CartItem): CartItem => {
@@ -158,6 +158,7 @@ const SellingPanel: React.FC = () => {
   const [returnReason, setReturnReason] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
   const [processingReturn, setProcessingReturn] = useState(false);
+  const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -401,6 +402,7 @@ const SellingPanel: React.FC = () => {
   const clearFormForNewBill = useCallback(() => {
     setSelectedSaleId(null);
     setCart([]);
+    setReturnedQuantities(new Map());
     setCustomerName('');
     setCustomerPhone('');
     const timestamp = Date.now();
@@ -791,6 +793,7 @@ const SellingPanel: React.FC = () => {
           if (response.success) {
             setShowSuccess(true);
             setCart([]);
+            setReturnedQuantities(new Map());
             setCustomerName('');
             setCustomerPhone('');
             setBarcodeInput('');
@@ -1025,6 +1028,7 @@ const SellingPanel: React.FC = () => {
   const clearCart = () => {
     if (window.confirm('Clear cart and start a new sale?')) {
       setCart([]);
+      setReturnedQuantities(new Map());
       setSelectedSaleId(null);
       setCurrentBillIndex(-1); // Reset to new bill
       clearFormForNewBill();
@@ -1050,101 +1054,101 @@ const SellingPanel: React.FC = () => {
 
   // Function to load sale details into the form
   const loadSaleDetails = useCallback(
-    (
-      sale: {
-        saleId: number;
-        createdAt: string;
-        customerName: string;
-        customerPhone: string;
-        items: FlatSaleRow[];
-        total: number;
-      },
-      index?: number
-    ) => {
-      // Set selected sale ID
-      setSelectedSaleId(sale.saleId);
+      async (sale: { saleId: number; createdAt: string; customerName: string; customerPhone: string; items: FlatSaleRow[]; total: number }, index?: number) => {
+        setSelectedSaleId(sale.saleId);
 
-      // Clear current cart
-      setCart([]);
+        // Set customer information
+        setCustomerName(sale.customerName || 'CASH CUSTOMER');
+        setCustomerPhone(sale.customerPhone || '0000');
+        setInvoiceNumber(`INV-${sale.saleId}`);
 
-      // Set customer information
-      setCustomerName(sale.customerName || 'CASH CUSTOMER');
-      setCustomerPhone(sale.customerPhone || '0000');
-      setInvoiceNumber(`INV-${sale.saleId}`);
+        // Set date and time from sale
+        const saleDate = new Date(sale.createdAt);
+        const day = String(saleDate.getDate()).padStart(2, '0');
+        const month = saleDate.toLocaleString('default', { month: 'short' });
+        const year = saleDate.getFullYear();
+        setCurrentDate(`${day}/${month}/${year}`);
+        setCurrentTime(
+          saleDate.toLocaleTimeString('en-US', {
+            hour12: true,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        );
 
-      // Set date and time from sale
-      const saleDate = new Date(sale.createdAt);
-      const day = String(saleDate.getDate()).padStart(2, '0');
-      const month = saleDate.toLocaleString('default', { month: 'short' });
-      const year = saleDate.getFullYear();
-      setCurrentDate(`${day}/${month}/${year}`);
-      setCurrentTime(
-        saleDate.toLocaleTimeString('en-US', {
-          hour12: true,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        })
-      );
+        // Fetch returns for this sale to show returned quantities
+        const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
+        const returnedByMedicine = new Map<number, number>();
 
-      // Load cart items from sale items
-      const cartItems: CartItem[] = sale.items.map((item) => {
-        // Find the medicine in the medicines list
-        const medicine = medicines.find((m) => m.id === item.medicineId);
-
-        // If medicine not found, create a placeholder medicine object
-        const medicineObj: Medicine = medicine || {
-          id: item.medicineId,
-          name: item.medicineName,
-          pillQuantity: 0,
-          status: 'active',
-          sellablePills: 0,
-          totalAvailablePills: 0,
-          averageSellablePricePerPill: item.unitPrice,
-        };
-
-        // Calculate discount percentage from discount amount
-        const subtotal = item.unitPrice * item.pills;
-        const discountPercent =
-          subtotal > 0 ? (item.discountAmount / subtotal) * 100 : 0;
-
-        // Calculate tax percentage from tax amount
-        const taxableBase = subtotal - item.discountAmount;
-        const taxPercent =
-          taxableBase > 0 ? (item.taxAmount / taxableBase) * 100 : 0;
-
-        const cartItem: CartItem = {
-          medicine: medicineObj,
-          pills: item.pills,
-          unitPrice: item.unitPrice,
-          discount: discountPercent,
-          tax: taxPercent,
-          subtotal,
-          discountAmount: item.discountAmount,
-          taxAmount: item.taxAmount,
-          finalPrice: item.total,
-        };
-
-        return recalculateSaleItem(cartItem);
-      });
-
-      setCart(cartItems);
-
-      // Set current bill index if provided
-      if (index !== undefined) {
-        setCurrentBillIndex(index);
-      }
-
-      // Scroll to top of cart section
-      setTimeout(() => {
-        const cartSection = document.querySelector('[data-cart-section]');
-        if (cartSection) {
-          cartSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (returnsResponse.success && returnsResponse.data) {
+          returnsResponse.data.forEach((ret) => {
+            ret.items.forEach((item) => {
+              const current = returnedByMedicine.get(item.medicineId) || 0;
+              returnedByMedicine.set(item.medicineId, current + item.pills);
+            });
+          });
         }
-      }, 100);
-    },
-    [medicines]
-  );
+
+        // Load cart items from sale items
+        const cartItems: CartItem[] = sale.items.map((item) => {
+          // Find the medicine in the medicines list
+          const medicine = medicines.find((m) => m.id === item.medicineId);
+
+          // If medicine not found, create a placeholder medicine object
+          const medicineObj: Medicine = medicine || {
+            id: item.medicineId,
+            name: item.medicineName,
+            pillQuantity: 0,
+            status: 'active',
+            sellablePills: 0,
+            totalAvailablePills: 0,
+            averageSellablePricePerPill: item.unitPrice,
+          };
+
+          // Calculate discount percentage from discount amount
+          const subtotal = item.unitPrice * item.pills;
+          const discountPercent =
+            subtotal > 0 ? (item.discountAmount / subtotal) * 100 : 0;
+
+          // Calculate tax percentage from tax amount
+          const taxableBase = subtotal - item.discountAmount;
+          const taxPercent =
+            taxableBase > 0 ? (item.taxAmount / taxableBase) * 100 : 0;
+
+          const cartItem: CartItem = {
+            medicine: medicineObj,
+            pills: item.pills,
+            unitPrice: item.unitPrice,
+            discount: discountPercent,
+            tax: taxPercent,
+            subtotal,
+            discountAmount: item.discountAmount,
+            taxAmount: item.taxAmount,
+            finalPrice: item.total,
+          };
+
+          return recalculateSaleItem(cartItem);
+        });
+
+        setCart(cartItems);
+        setReturnedQuantities(returnedByMedicine);
+
+        // Set current bill index if provided
+        if (index !== undefined) {
+          setCurrentBillIndex(index);
+        }
+
+        // Scroll to top of cart section
+        setTimeout(() => {
+          const cartSection = document.querySelector('[data-cart-section]');
+          if (cartSection) {
+            cartSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }, 100);
+      },
+      [medicines]
+    );
 
   // Navigate to previous bill
   const navigateToPreviousBill = useCallback(() => {
@@ -1970,57 +1974,72 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         <div className="col-span-1">
-                          <div className="flex items-center gap-0.5 justify-center">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCartQuantity(item.medicine.id, -1)
-                              }
-                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                              disabled={item.pills <= 1}
-                            >
-                              <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            </button>
-                            <input
-                              type="number"
-                              min={1}
-                              max={
-                                typeof item.medicine.sellablePills === 'number'
-                                  ? item.medicine.sellablePills
-                                  : undefined
-                              }
-                              value={item.pills}
-                              onChange={(
-                                e: React.ChangeEvent<HTMLInputElement>
-                              ) => {
-                                let val = parseInt(e.target.value, 10);
-                                if (Number.isNaN(val) || val < 1) val = 1;
-                                if (
-                                  typeof item.medicine.sellablePills ===
-                                  'number' &&
-                                  val > item.medicine.sellablePills
-                                ) {
-                                  val = item.medicine.sellablePills;
+                          {currentBillIndex >= 0 ? (
+                            // Read-only display for old sales
+                            <div className="text-center">
+                              <div className="text-[11px] font-semibold text-gray-900 dark:text-white">
+                                {item.pills}
+                              </div>
+                              {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
+                                <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold">
+                                  -{returnedQuantities.get(item.medicine.id)} ret
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            // Editable for new sales
+                            <div className="flex items-center gap-0.5 justify-center">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateCartQuantity(item.medicine.id, -1)
                                 }
-                                setCartItemQuantity(item.medicine.id, val);
-                              }}
-                              className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
-                            />
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateCartQuantity(item.medicine.id, 1)
-                              }
-                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                              disabled={
-                                typeof item.medicine.sellablePills === 'number'
-                                  ? item.pills >= item.medicine.sellablePills
-                                  : false
-                              }
-                            >
-                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                            </button>
-                          </div>
+                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                                disabled={item.pills <= 1}
+                              >
+                                <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              </button>
+                              <input
+                                type="number"
+                                min={1}
+                                max={
+                                  typeof item.medicine.sellablePills === 'number'
+                                    ? item.medicine.sellablePills
+                                    : undefined
+                                }
+                                value={item.pills}
+                                onChange={(
+                                  e: React.ChangeEvent<HTMLInputElement>
+                                ) => {
+                                  let val = parseInt(e.target.value, 10);
+                                  if (Number.isNaN(val) || val < 1) val = 1;
+                                  if (
+                                    typeof item.medicine.sellablePills ===
+                                    'number' &&
+                                    val > item.medicine.sellablePills
+                                  ) {
+                                    val = item.medicine.sellablePills;
+                                  }
+                                  setCartItemQuantity(item.medicine.id, val);
+                                }}
+                                className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                              />
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateCartQuantity(item.medicine.id, 1)
+                                }
+                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                                disabled={
+                                  typeof item.medicine.sellablePills === 'number'
+                                    ? item.pills >= item.medicine.sellablePills
+                                    : false
+                                }
+                              >
+                                <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <div className="col-span-1 text-center">
 
@@ -2029,16 +2048,8 @@ const SellingPanel: React.FC = () => {
                             min={0}
                             step={0.01}
                             value={item.unitPrice}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLInputElement>
-                            ) =>
-                              updateCartItemField(
-                                item.medicine.id,
-                                'unitPrice',
-                                parseFloat(e.target.value) || 0
-                              )
-                            }
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly
+                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
                           />
                         </div>
                         <div className="col-span-1 text-center">

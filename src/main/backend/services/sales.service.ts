@@ -1,4 +1,5 @@
 import { getDatabaseService } from './database.service';
+import { SaleReturnService } from './sale-return.service';
 
 const SELLABLE_THRESHOLD_EXPRESSION = `date('now', '+30 days')`;
 
@@ -30,6 +31,7 @@ export interface Sale {
 
 export class SalesService {
   private dbService = getDatabaseService();
+  private saleReturnService = new SaleReturnService();
 
   /**
    * Flat sale rows by date range [fromDate..toDate]
@@ -678,6 +680,8 @@ export class SalesService {
   public async getFinancialSummaryByDateRange(fromDate: string, toDate: string): Promise<{
     purchasingTotal: number;
     sellingTotal: number;
+    saleReturnsTotal: number;
+    netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
     profit: number;
@@ -698,6 +702,12 @@ export class SalesService {
     const sellingTotal = salesResult?.selling_total || 0;
     const paymentTotal = salesResult?.payment_total || 0;
 
+    // Get sale returns total for this date range
+    const saleReturnsTotal = await this.saleReturnService.getSaleReturnsByDateRange(fromDate, toDate);
+    
+    // Calculate net revenue (sales - returns)
+    const netRevenue = sellingTotal - saleReturnsTotal;
+
     const purchasingTotal = await this.getPurchasingTotalByRange(fromDateTime, toDateTime);
 
     // Get remaining payments (debt) for purchases in this date range
@@ -711,7 +721,8 @@ export class SalesService {
     const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDateTime, toDateTime]);
     const remainingPayment = remainingPaymentResult?.total_remaining || 0;
 
-    const profit = sellingTotal - purchasingTotal;
+    // Calculate profit from net revenue
+    const profit = netRevenue - purchasingTotal;
 
     // Trend calculation
     const salesTrendSql = `
@@ -754,6 +765,8 @@ export class SalesService {
     return {
       purchasingTotal,
       sellingTotal,
+      saleReturnsTotal,
+      netRevenue,
       paymentTotal,
       remainingPayment,
       profit,
