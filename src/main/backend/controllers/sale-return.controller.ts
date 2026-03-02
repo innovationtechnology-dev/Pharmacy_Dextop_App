@@ -148,8 +148,8 @@ export class SaleReturnController {
                 quantity: item.pills,
                 unitPrice: item.unitPrice.toFixed(2),
                 subtotal: item.subtotal.toFixed(2),
-                discount: item.discountAmount.toFixed(2),
-                tax: item.taxAmount.toFixed(2),
+                discount: (item.discountAmount || 0).toFixed(2),
+                tax: (item.taxAmount || 0).toFixed(2),
                 total: item.total.toFixed(2),
                 reason: item.reason || sr.reason || ''
               };
@@ -269,8 +269,8 @@ export class SaleReturnController {
                         <td class="text-center">${item.pills}</td>
                         <td class="text-right">${item.unitPrice.toFixed(2)}</td>
                         <td class="text-right">${item.subtotal.toFixed(2)}</td>
-                        <td class="text-right">${item.discountAmount.toFixed(2)}</td>
-                        <td class="text-right">${item.taxAmount.toFixed(2)}</td>
+                        <td class="text-right">${(item.discountAmount || 0).toFixed(2)}</td>
+                        <td class="text-right">${(item.taxAmount || 0).toFixed(2)}</td>
                         <td class="text-right" style="font-weight: bold;">${item.total.toFixed(2)}</td>
                         <td>${item.reason || sr.reason || ''}</td>
                       </tr>`

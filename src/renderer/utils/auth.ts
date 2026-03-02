@@ -7,6 +7,11 @@ export interface User {
   id: number;
   name: string;
   email: string;
+  phone?: string;
+  address?: string;
+  role?: string;
+  firstName?: string;
+  lastName?: string;
 }
 
 export interface AuthResponse {
@@ -76,7 +81,7 @@ export const isAuthenticated = (): boolean => {
  */
 export const login = async (email: string, password: string): Promise<AuthResponse> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('auth-login-reply', (response: AuthResponse) => {
+    window.electron.ipcRenderer.once('auth-login-reply', (response: any) => {
       if (response.success && response.token && response.user) {
         setAuthToken(response.token);
         setAuthUser(response.user);
@@ -93,7 +98,7 @@ export const login = async (email: string, password: string): Promise<AuthRespon
  */
 export const signup = async (name: string, email: string, password: string): Promise<AuthResponse> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('auth-signup-reply', (response: AuthResponse) => {
+    window.electron.ipcRenderer.once('auth-signup-reply', (response: any) => {
       if (response.success && response.token && response.user) {
         setAuthToken(response.token);
         setAuthUser(response.user);
@@ -118,7 +123,7 @@ export const logout = (): void => {
  */
 export const verifyToken = async (token: string): Promise<{ valid: boolean; user: User | null }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('auth-verify-token-reply', (response: { valid: boolean; user: User | null }) => {
+    window.electron.ipcRenderer.once('auth-verify-token-reply', (response: any) => {
       resolve(response);
     });
 

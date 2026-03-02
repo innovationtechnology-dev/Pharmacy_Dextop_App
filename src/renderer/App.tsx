@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import * as MiscAppFxns from './pages/lib/app/misc.ts';
+import * as MiscAppFxns from './pages/lib/app/misc';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 import Home from './pages/home';
@@ -31,7 +31,7 @@ import './index.css';
 const updateMainColWidth = MiscAppFxns.updateMainColWidth;
 
 export default class App extends React.Component {
-  constructor(props) {
+  constructor(props: any) {
     super(props);
     this.state = {};
   }

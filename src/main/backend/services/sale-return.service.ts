@@ -579,7 +579,7 @@ export class SaleReturnService {
   /**
    * Get sale returns total by date range
    */
-  public async getSaleReturnsByDateRange(fromDate: string, toDate: string): Promise<number> {
+  public async getSaleReturnsTotalByDateRange(fromDate: string, toDate: string): Promise<number> {
     const fromDateTime = `${fromDate} 00:00:00`;
     const toDateTime = `${toDate} 23:59:59`;
     const sql = `

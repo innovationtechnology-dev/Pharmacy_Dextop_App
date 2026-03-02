@@ -17,7 +17,7 @@ import {
   FiTrendingUp,
   FiTrendingDown,
   FiFileText,
-  FiUser,
+  FiUsers,
   FiPhone,
   FiMail,
   FiEye,
@@ -298,7 +298,7 @@ const Payments: React.FC = () => {
         filters.periodType = 'custom';
       }
 
-      window.electron.ipcRenderer.once('payment-get-all-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-all-reply' as any, (response: any) => {
         if (response.success) {
           if (response.data.data) {
             // Paginated response
@@ -315,7 +315,7 @@ const Payments: React.FC = () => {
           console.error('Error loading payment records:', response.error);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-all', [filters, true]); // true = paginated
+      window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, true]); // true = paginated
     } catch (err) {
       console.error('Error loading payment records:', err);
     }
@@ -333,12 +333,12 @@ const Payments: React.FC = () => {
         }
       }
 
-      window.electron.ipcRenderer.once('payment-get-summary-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-summary-reply' as any, (response: any) => {
         if (response.success) {
           setPaymentSummary(response.data);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-summary', [filters]);
+      window.electron.ipcRenderer.sendMessage('payment-get-summary' as any, [filters]);
     } catch (err) {
       console.error('Error loading payment summary:', err);
     }
@@ -346,12 +346,12 @@ const Payments: React.FC = () => {
 
   const loadSupplierAccounts = useCallback(async () => {
     try {
-      window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply' as any, (response: any) => {
         if (response.success) {
           setSupplierAccounts(response.data || []);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts', []);
+      window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts' as any, []);
     } catch (err) {
       console.error('Error loading supplier accounts:', err);
     }
@@ -359,12 +359,12 @@ const Payments: React.FC = () => {
 
   const loadPurchasePayments = useCallback(async (purchaseId: number) => {
     try {
-      window.electron.ipcRenderer.once('payment-get-by-purchase-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
         if (response.success) {
           setPurchasePayments(response.data || []);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-by-purchase', [purchaseId]);
+      window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
     } catch (err) {
       console.error('Error loading purchase payments:', err);
     }
@@ -479,7 +479,7 @@ const Payments: React.FC = () => {
 
   // Group records by date for timeline view
   const recordsByDate = useMemo(() => {
-    const grouped: Record<string, { records: PaymentRecord[]; total: number; date: Date }> = {};
+    const grouped: Record<string, { records: PaymentRecord[]; totalAmount: number; date: Date }> = {};
     displayRecords.forEach(record => {
       const recordDate = new Date(record.paymentDate);
       const dateKey = recordDate.toLocaleDateString('en-GB', {
@@ -488,15 +488,15 @@ const Payments: React.FC = () => {
         year: 'numeric'
       });
       if (!grouped[dateKey]) {
-        grouped[dateKey] = { records: [], total: 0, date: recordDate };
+        grouped[dateKey] = { records: [], totalAmount: 0, date: recordDate };
       }
       grouped[dateKey].records.push(record);
-      grouped[dateKey].total += record.amount;
+      grouped[dateKey].totalAmount += record.amount;
     });
     // Sort dates in descending order using the actual date object
     return Object.entries(grouped).sort((a, b) => {
       return b[1].date.getTime() - a[1].date.getTime();
-    }).map(([dateKey, data]) => [dateKey, { records: data.records, total: data.total }]);
+    });
   }, [displayRecords]);
 
   const filteredSupplierAccounts = useMemo(() => {
@@ -579,7 +579,7 @@ const Payments: React.FC = () => {
         paymentDate,
       };
 
-      window.electron.ipcRenderer.once('payment-create-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-create-reply' as any, (response: any) => {
         setProcessing(false);
         if (response.success) {
           resetPaymentForm();
@@ -589,7 +589,7 @@ const Payments: React.FC = () => {
           alert('Error recording payment: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-create', [paymentData]);
+      window.electron.ipcRenderer.sendMessage('payment-create' as any, [paymentData]);
     } catch (err) {
       setProcessing(false);
       alert('Error recording payment. Please try again.');
@@ -603,7 +603,7 @@ const Payments: React.FC = () => {
     
     setProcessing(true);
     try {
-      window.electron.ipcRenderer.once('payment-delete-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-delete-reply' as any, (response: any) => {
         setProcessing(false);
         if (response.success) {
           loadAllData();
@@ -615,7 +615,7 @@ const Payments: React.FC = () => {
           alert('Error deleting payment: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-delete', [paymentId]);
+      window.electron.ipcRenderer.sendMessage('payment-delete' as any, [paymentId]);
     } catch (err) {
       setProcessing(false);
       alert('Error deleting payment. Please try again.');
@@ -694,7 +694,7 @@ const Payments: React.FC = () => {
             }`}
           onClick={() => setActiveTab('accounts')}
         >
-            <FiUser className="w-4 h-4 inline mr-2" />
+            <FiUsers className="w-4 h-4 inline mr-2" />
             Supplier Accounts
         </button>
         </div>
@@ -1204,34 +1204,34 @@ const Payments: React.FC = () => {
             ) : (
               /* Timeline View - Grouped by Date */
               <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                {recordsByDate.map(([dateKey, { records, total }]) => (
+                {recordsByDate.map(([dateKey, group]) => (
                   <div key={dateKey} className="p-6 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
                     {/* Date Header */}
                     <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
-                          {new Date(dateKey).getDate()}
+                          {group.date.getDate()}
                         </div>
                         <div>
                           <div className="font-semibold text-gray-900 dark:text-white text-lg">
                             {dateKey}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {records.length} payment{records.length !== 1 ? 's' : ''}
+                            {group.records.length} payment{group.records.length !== 1 ? 's' : ''}
                           </div>
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Daily Total</div>
                         <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(total)}
+                          {formatCurrency(group.totalAmount)}
                         </div>
                       </div>
                     </div>
 
                     {/* Records for this date */}
                     <div className="space-y-3">
-                      {records.map((record) => {
+                      {group.records.map((record: PaymentRecord) => {
                         const methodColor = getPaymentMethodColor(record.paymentMethod);
                         return (
                           <div
@@ -1384,7 +1384,7 @@ const Payments: React.FC = () => {
             </div>
           ) : filteredSupplierAccounts.length === 0 ? (
             <div className="p-12 text-center bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
-              <FiUser className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+              <FiUsers className="w-16 h-16 mx-auto text-gray-300 mb-4" />
               <p className="text-gray-500 dark:text-gray-400 font-medium">No supplier accounts found</p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
                 Supplier accounts will appear here after making purchases

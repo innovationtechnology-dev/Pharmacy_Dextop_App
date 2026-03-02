@@ -20,8 +20,8 @@ export type Channels =
   | 'sales-get-flat-rows-range' | 'sales-get-flat-rows-range-reply'
   | 'sales-export-csv-range' | 'sales-export-csv-range-reply'
   | 'sales-export-pdf' | 'sales-export-pdf-reply'
-  | 'sale-return-create' | 'sale-return-get-all' | 'sale-return-get-by-id' | 'sale-return-get-by-sale-id' | 'sale-return-get-by-date-range' | 'sale-return-get-flat-rows-range' | 'sale-return-delete' | 'sale-return-export-csv' | 'sale-return-export-pdf' | 'sale-return-get-total'
-  | 'sale-return-create-reply' | 'sale-return-get-all-reply' | 'sale-return-get-by-id-reply' | 'sale-return-get-by-sale-id-reply' | 'sale-return-get-by-date-range-reply' | 'sale-return-get-flat-rows-range-reply' | 'sale-return-delete-reply' | 'sale-return-export-csv-reply' | 'sale-return-export-pdf-reply' | 'sale-return-get-total-reply'
+  | 'sale-return-create' | 'sale-return-get-all' | 'sale-return-get-by-id' | 'sale-return-get-by-sale-id' | 'sale-return-get-by-date-range' | 'sale-return-get-flat-rows-range' | 'sale-return-delete' | 'sale-return-export-csv' | 'sale-return-export-pdf'
+  | 'sale-return-create-reply' | 'sale-return-get-all-reply' | 'sale-return-get-by-id-reply' | 'sale-return-get-by-sale-id-reply' | 'sale-return-get-by-date-range-reply' | 'sale-return-get-flat-rows-range-reply' | 'sale-return-delete-reply' | 'sale-return-export-csv-reply' | 'sale-return-export-pdf-reply'
   | 'supplier-get-all' | 'supplier-get-by-id' | 'supplier-create' | 'supplier-update' | 'supplier-delete'
   | 'supplier-get-all-reply' | 'supplier-get-by-id-reply' | 'supplier-create-reply' | 'supplier-update-reply' | 'supplier-delete-reply'
   | 'purchase-create' | 'purchase-get-all' | 'purchase-get-by-id' | 'purchase-get-total-by-date-range'
@@ -30,15 +30,17 @@ export type Channels =
   | 'purchase-delete' | 'purchase-delete-reply'
   | 'purchase-update' | 'purchase-update-reply'
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
-  | 'payment-create' | 'payment-create-reply'
-  | 'payment-get-by-purchase' | 'payment-get-by-purchase-reply'
-  | 'payment-get-by-date' | 'payment-get-by-date-reply'
   | 'payment-get-all' | 'payment-get-all-reply'
   | 'payment-get-summary' | 'payment-get-summary-reply'
   | 'payment-get-supplier-accounts' | 'payment-get-supplier-accounts-reply'
+  | 'payment-get-by-purchase' | 'payment-get-by-purchase-reply'
+  | 'payment-create' | 'payment-create-reply'
   | 'payment-delete' | 'payment-delete-reply'
+  | 'payment-export-pdf' | 'payment-export-pdf-reply'
+  | 'payment-export-csv' | 'payment-export-csv-reply'
   | 'asynchronous-sql-command' | 'asynchronous-sql-reply'
-  | 'ipc-show-userDataPaths';
+  | 'ipc-show-userDataPaths'
+  | (string & {});
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: {

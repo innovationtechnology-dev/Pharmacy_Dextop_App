@@ -703,7 +703,7 @@ export class SalesService {
     const paymentTotal = salesResult?.payment_total || 0;
 
     // Get sale returns total for this date range
-    const saleReturnsTotal = await this.saleReturnService.getSaleReturnsByDateRange(fromDate, toDate);
+    const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     
     // Calculate net revenue (sales - returns)
     const netRevenue = sellingTotal - saleReturnsTotal;

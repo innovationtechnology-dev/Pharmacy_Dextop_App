@@ -14,6 +14,10 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  phone?: string;
+  address?: string;
+  firstName?: string;
+  lastName?: string;
   created_at: string;
 }
 
@@ -73,7 +77,7 @@ export const superAdminLogin = async (
   password: string
 ): Promise<SuperAdminLoginResponse> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-login-reply', (response: SuperAdminLoginResponse) => {
+    window.electron.ipcRenderer.once('super-admin-login-reply', (response: any) => {
       if (response.success && response.token) {
         setSuperAdminToken(response.token);
       }
@@ -96,7 +100,7 @@ export const superAdminLogout = (): void => {
  */
 export const getAllUsers = async (): Promise<User[]> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-get-users-reply', (users: User[]) => {
+    window.electron.ipcRenderer.once('super-admin-get-users-reply', (users: any) => {
       resolve(users);
     });
 
@@ -113,7 +117,7 @@ export const createUser = async (
   password: string
 ): Promise<{ success: boolean; error?: string; user?: User }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-create-user-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-create-user-reply', (response: any) => {
       resolve(response);
     });
 
@@ -130,7 +134,7 @@ export const updateUser = async (
   email: string
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-update-user-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-update-user-reply', (response: any) => {
       resolve(response);
     });
 
@@ -146,7 +150,7 @@ export const updateUserPassword = async (
   newPassword: string
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-update-password-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-update-password-reply', (response: any) => {
       resolve(response);
     });
 
@@ -159,7 +163,7 @@ export const updateUserPassword = async (
  */
 export const deleteUser = async (userId: number): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-delete-user-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-delete-user-reply', (response: any) => {
       resolve(response);
     });
 
@@ -172,7 +176,7 @@ export const deleteUser = async (userId: number): Promise<{ success: boolean; er
  */
 export const getAllLicenses = async (): Promise<License[]> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-get-licenses-reply', (licenses: License[]) => {
+    window.electron.ipcRenderer.once('super-admin-get-licenses-reply', (licenses: any) => {
       resolve(licenses);
     });
 
@@ -185,7 +189,7 @@ export const getAllLicenses = async (): Promise<License[]> => {
  */
 export const getAllActivationCodes = async (): Promise<ActivationCode[]> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-get-activation-codes-reply', (codes: ActivationCode[]) => {
+    window.electron.ipcRenderer.once('super-admin-get-activation-codes-reply', (codes: any) => {
       resolve(codes);
     });
 
@@ -202,7 +206,7 @@ export const updateLicense = async (
   isActive: boolean
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-update-license-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-update-license-reply', (response: any) => {
       resolve(response);
     });
 
@@ -219,7 +223,7 @@ export const updateLicense = async (
  */
 export const deleteLicense = async (licenseId: number): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-delete-license-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-delete-license-reply', (response: any) => {
       resolve(response);
     });
 
@@ -237,7 +241,7 @@ export const updateActivationCode = async (
   isUsed: boolean
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-update-activation-code-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-update-activation-code-reply', (response: any) => {
       resolve(response);
     });
 
@@ -257,7 +261,7 @@ export const deleteActivationCode = async (
   codeId: number
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-delete-activation-code-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-delete-activation-code-reply', (response: any) => {
       resolve(response);
     });
 
@@ -270,7 +274,7 @@ export const deleteActivationCode = async (
  */
 export const downloadDatabase = async (): Promise<{ success: boolean; error?: string; path?: string }> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-download-database-reply', (response) => {
+    window.electron.ipcRenderer.once('super-admin-download-database-reply', (response: any) => {
       resolve(response);
     });
 

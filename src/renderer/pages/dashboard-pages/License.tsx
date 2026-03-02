@@ -196,14 +196,14 @@ const License: React.FC = () => {
             <p className="text-sm text-gray-600 mb-1">Days Remaining</p>
             <p
               className={`text-lg font-semibold ${
-                licenseStatus?.daysUntilExpiry !== null && licenseStatus.daysUntilExpiry >= 0
+                licenseStatus && licenseStatus.daysUntilExpiry !== null && licenseStatus.daysUntilExpiry >= 0
                   ? licenseStatus.daysUntilExpiry <= 7
                     ? 'text-amber-600'
                     : 'text-emerald-600'
                   : 'text-red-600'
               }`}
             >
-              {licenseStatus?.daysUntilExpiry !== null
+              {licenseStatus && licenseStatus.daysUntilExpiry !== null
                 ? licenseStatus.daysUntilExpiry >= 0
                   ? `${licenseStatus.daysUntilExpiry} days`
                   : 'Expired'

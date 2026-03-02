@@ -17,23 +17,22 @@ import { CustomerController } from './controllers/customer.controller';
 import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
-import { PaymentController } from './controllers/payment.controller';
+
 import { GRNController } from './controllers/grn.controller';
 
 export class Backend {
-  private databaseController: DatabaseController;
-  private exampleController: ExampleController;
-  private authController: AuthController;
-  private medicineController: MedicineController;
-  private supplierController: SupplierController;
-  private purchaseController: PurchaseController;
-  private paymentController: PaymentController;
-  private customerController: CustomerController;
-  private saleReturnController: SaleReturnController;
-  private licenseController: LicenseController;
-  private superAdminController: SuperAdminController;
-  private paymentController: PaymentController;
-  private grnController: GRNController;
+  private databaseController!: DatabaseController;
+  private exampleController!: ExampleController;
+  private authController!: AuthController;
+  private medicineController!: MedicineController;
+  private supplierController!: SupplierController;
+  private purchaseController!: PurchaseController;
+  private paymentController!: PaymentController;
+  private customerController!: CustomerController;
+  private saleReturnController!: SaleReturnController;
+  private licenseController!: LicenseController;
+  private superAdminController!: SuperAdminController;
+  private grnController!: GRNController;
 
   /**
    * Initialize backend services and controllers

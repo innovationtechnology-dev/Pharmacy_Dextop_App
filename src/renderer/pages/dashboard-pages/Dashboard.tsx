@@ -555,7 +555,7 @@ const Dashboard = () => {
                           ? 'rgb(var(--color-white) / 1)'
                           : 'rgb(var(--color-gray-900) / 1)',
                       }}
-                      formatter={(value: number) => formatCurrency(value)}
+                      formatter={(value: any) => formatCurrency(Number(value) || 0)}
                     />
                     <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                       {chartData.map((entry, index) => (
@@ -619,7 +619,7 @@ const Dashboard = () => {
                         </linearGradient>
                       </defs>
                       <Tooltip
-                        formatter={(value: number) => formatCurrency(value)}
+                        formatter={(value: any) => formatCurrency(Number(value) || 0)}
                         contentStyle={{
                           borderRadius: '12px',
                           border: 'none',

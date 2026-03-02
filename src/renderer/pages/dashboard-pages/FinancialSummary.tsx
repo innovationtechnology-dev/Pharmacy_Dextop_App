@@ -27,8 +27,8 @@ interface FinancialData {
 
 const renderIcon = (IconComponent: IconType, className?: string) =>
   React.createElement(
-    IconComponent as unknown as React.ComponentType<IconBaseProps>,
-    { className }
+    IconComponent as any,
+    { className } as any
   );
 
 const currencySymbols: Record<string, string> = {
@@ -454,7 +454,7 @@ const FinancialSummary: React.FC = () => {
                         itemStyle={{ fontSize: '12px' }}
                         labelStyle={{ color: '#374151', fontWeight: 'bold', marginBottom: '4px' }}
                         labelFormatter={(date) => new Date(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
-                        formatter={(value: number) => [formatCurrency(value), undefined]}
+                        formatter={(value: any) => [formatCurrency(Number(value) || 0), 'Amount']}
                       />
                       <Legend wrapperStyle={{ paddingTop: '20px' }} />
                       <Line
