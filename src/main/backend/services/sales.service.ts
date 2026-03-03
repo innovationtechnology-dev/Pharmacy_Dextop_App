@@ -488,16 +488,35 @@ export class SalesService {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
-    // Check if there are any returns for this sale
-    const existingReturns = await this.dbService.query(
-      'SELECT COUNT(*) as count FROM sale_returns WHERE sale_id = ?',
+    // Get all previous returns for this sale to ensure update doesn't conflict
+    const previousReturns = await this.dbService.query(
+      `SELECT sri.medicine_id, sri.medicine_name, SUM(sri.pills) as total_returned
+       FROM sale_return_items sri
+       INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+       WHERE sr.sale_id = ?
+       GROUP BY sri.medicine_id`,
       [saleId]
     );
-    if (existingReturns[0]?.count > 0) {
-      throw new Error('Cannot update a sale that has returns. Please process returns separately.');
-    }
+
+    const returnedQuantities = new Map<number, { name: string; pills: number }>();
+    previousReturns.forEach((ret: any) => {
+      returnedQuantities.set(ret.medicine_id, { name: ret.medicine_name, pills: ret.total_returned || 0 });
+    });
 
     const computedItems = payload.items.map((item) => this.computeSaleItem(item));
+
+    // Validate new quantities against returned quantities
+    for (const [medicineId, returned] of returnedQuantities.entries()) {
+      const newItem = computedItems.find(item => item.medicineId === medicineId);
+      const newPills = newItem ? newItem.pills : 0;
+      
+      if (newPills < returned.pills) {
+        throw new Error(
+          `Cannot reduce ${returned.name} to ${newPills} pills because ${returned.pills} pills have already been returned. ` +
+          `Please adjust the return records first.`
+        );
+      }
+    }
 
     // Calculate differences
     const originalItemsMap = new Map<number, number>();

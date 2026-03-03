@@ -467,11 +467,7 @@ const Dashboard_Layout: React.FC = () => {
                       : ''
                       }`}
                   >
-                    {customHeader?.actions && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {customHeader.actions}
-                      </div>
-                    )}
+
                     <div className="relative" ref={notificationMenuRef}>
                       <button
                         type="button"

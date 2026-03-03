@@ -33,6 +33,7 @@ export default function SaleReturn() {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const pageSize = 15;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -125,12 +126,49 @@ export default function SaleReturn() {
     }
   };
 
-  // Filter rows based on search
+  // Filter and Group rows
   const filteredRows = useMemo(() => {
-    if (!searchQuery.trim()) return reportRows;
+    // Step 1: Group flat rows by saleReturnId
+    const map = new Map<number, FlatSaleReturnRow & { itemDetails: string[]; items: FlatSaleReturnRow[] }>();
+
+    reportRows.forEach(row => {
+
+
+      // Improved formatting with a dot or colon between name and quantity
+      const itemDetail = `${row.medicineName} (${"Item: "+ row.pills} x ${"Price: "+row.unitPrice} = ${"Total: "+row.total})`;
+      
+      if (!map.has(row.saleReturnId)) {
+        map.set(row.saleReturnId, {
+          ...row,
+          itemDetails: [itemDetail],
+          items: [row]
+        });
+      } else {
+        const existing = map.get(row.saleReturnId)!;
+        existing.itemDetails.push(itemDetail);
+        existing.items.push(row);
+        
+        // Accumulate totals for the header row
+        existing.pills += row.pills;
+        existing.total += row.total;
+        existing.subtotal += row.subtotal;
+        existing.discountAmount += row.discountAmount;
+        existing.taxAmount += row.taxAmount;
+      }
+    });
+
+    const groupedData = Array.from(map.values()).map(row => ({
+      ...row,
+      displayMedicineName: row.itemDetails.join('\n'), // Use newline for vertical listing
+      isGrouped: row.itemDetails.length > 1,
+      children: row.items
+    }));
+
+    // Step 2: Filter based on search
+    if (!searchQuery.trim()) return groupedData;
     const q = searchQuery.toLowerCase();
-    return reportRows.filter(row =>
-      row.medicineName.toLowerCase().includes(q) ||
+    return groupedData.filter(row =>
+      row.displayMedicineName.toLowerCase().includes(q) ||
       (row.customerName && row.customerName.toLowerCase().includes(q)) ||
       row.saleId.toString().includes(q) ||
       row.saleReturnId.toString().includes(q) ||
@@ -376,35 +414,87 @@ export default function SaleReturn() {
                   No sale returns found for the selected range.
                 </div>
               ) : (
-                pagedRows.map((row, idx) => (
-                  <div key={`${row.saleReturnId}-${idx}`} className="grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                    <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
-                      <div className="text-[11px] text-gray-500 dark:text-gray-400">Return #{row.saleReturnId}</div>
-                      <div className="text-[10px] text-gray-400 dark:text-gray-500">Sale #{row.saleId}</div>
-                      {new Date(row.createdAt).toLocaleDateString()}
-                    </div>
-                    <div className="col-span-3">
-                      <div className="font-medium text-gray-900 dark:text-white truncate" title={row.medicineName}>{row.medicineName}</div>
-                      {row.reason && (
-                        <div className="text-[9px] text-gray-500 dark:text-gray-400 italic truncate" title={row.reason}>
-                          Reason: {row.reason}
+                pagedRows.map((row) => (
+                  <div key={row.saleReturnId} className="contents">
+                    <div 
+                      onClick={() => setExpandedId(expandedId === row.saleReturnId ? null : row.saleReturnId)}
+                      className={`grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center cursor-pointer transition-all duration-200 ${
+                        expandedId === row.saleReturnId 
+                          ? 'bg-blue-50/50 dark:bg-blue-900/10' 
+                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/30'
+                      }`}
+                    >
+                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                        <FaChevronDown className={`w-2.5 h-2.5 text-gray-400 transition-transform duration-200 ${expandedId === row.saleReturnId ? 'rotate-180' : ''}`} />
+                        <div>
+                          <div className="text-[11px] text-gray-500 dark:text-gray-400">Return #{row.saleReturnId}</div>
+                          <div className="text-[10px] text-gray-400 dark:text-gray-500">Sale #{row.saleId}</div>
+                          {new Date(row.createdAt).toLocaleDateString()}
                         </div>
-                      )}
+                      </div>
+                      <div className="col-span-3">
+                        <div className="font-medium text-gray-900 dark:text-white whitespace-pre-wrap leading-tight" title={row.displayMedicineName}>{row.displayMedicineName}</div>
+                        {row.reason && (
+                          <div className="text-[9px] text-gray-500 dark:text-gray-400 italic truncate" title={row.reason}>
+                            Reason: {row.reason}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
+                        {row.customerName || 'Walk-in'}
+                      </div>
+                      <div className="col-span-2 text-right text-gray-600 dark:text-gray-300">
+                        {row.isGrouped ? (
+                          <span className="text-gray-400 italic">Multiple</span>
+                        ) : (
+                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString()}</>
+                        )}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 font-semibold">
+                          {row.pills}
+                        </span>
+                      </div>
+                      <div className="col-span-2 text-right">
+                        <div className="font-bold text-red-600 dark:text-red-400">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                      </div>
                     </div>
-                    <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
-                      {row.customerName || 'Walk-in'}
-                    </div>
-                    <div className="col-span-2 text-right text-gray-600 dark:text-gray-300">
-                      {getCurrencySymbol()}{row.unitPrice.toLocaleString()}
-                    </div>
-                    <div className="col-span-1 text-center">
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 font-semibold">
-                        {row.pills}
-                      </span>
-                    </div>
-                    <div className="col-span-2 text-right">
-                      <div className="font-bold text-red-600 dark:text-red-400">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
-                    </div>
+                    
+                    {/* Expanded Details */}
+                    {expandedId === row.saleReturnId && (
+                      <div className="col-span-12 px-10 py-3 bg-gray-50/50 dark:bg-gray-800/20 border-b border-gray-100 dark:border-gray-700 animate-in slide-in-from-top-1">
+                        <div className="space-y-2">
+                          <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-700 pb-1 mb-2">Item Breakdown</div>
+                          {row.children.map((child, cIdx) => (
+                            <div key={cIdx} className="grid grid-cols-12 gap-3 items-center text-[10px] text-gray-600 dark:text-gray-400 py-1 border-b border-gray-50 dark:border-gray-800/50 last:border-0">
+                               <div className="col-span-4 font-medium text-gray-800 dark:text-gray-200">{child.medicineName}</div>
+                               <div className="col-span-2 text-center bg-gray-100 dark:bg-gray-700/50 rounded py-0.5">{child.pills} pills</div>
+                               <div className="col-span-2 text-right">{getCurrencySymbol()}{child.unitPrice.toFixed(2)}</div>
+                               <div className="col-span-2 text-right text-gray-400">-{getCurrencySymbol()}{child.discountAmount.toFixed(2)} disc</div>
+                               <div className="col-span-2 text-right font-bold text-gray-900 dark:text-white">{getCurrencySymbol()}{child.total.toLocaleString()}</div>
+                            </div>
+                          ))}
+                          <div className="mt-3 flex justify-end gap-6 text-[10px] bg-red-50/30 dark:bg-red-900/10 p-2 rounded-md border border-red-100/30">
+                             <div className="flex flex-col items-end">
+                                <span className="text-gray-400 font-bold uppercase text-[8px]">Net Subtotal</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-300">{getCurrencySymbol()}{row.subtotal.toLocaleString()}</span>
+                             </div>
+                             <div className="flex flex-col items-end">
+                                <span className="text-gray-400 font-bold uppercase text-[8px]">Total Discount</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-300">-{getCurrencySymbol()}{row.discountAmount.toLocaleString()}</span>
+                             </div>
+                             <div className="flex flex-col items-end">
+                                <span className="text-gray-400 font-bold uppercase text-[8px]">Tax Included</span>
+                                <span className="font-bold text-gray-700 dark:text-gray-300">+{getCurrencySymbol()}{row.taxAmount.toLocaleString()}</span>
+                             </div>
+                             <div className="flex flex-col items-end border-l border-gray-200 dark:border-gray-700 pl-6 ml-2">
+                                <span className="text-red-500 font-bold uppercase text-[8px]">Grand Total</span>
+                                <span className="font-black text-xs text-red-600 dark:text-red-400">{getCurrencySymbol()}{row.total.toLocaleString()}</span>
+                             </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))
               )}

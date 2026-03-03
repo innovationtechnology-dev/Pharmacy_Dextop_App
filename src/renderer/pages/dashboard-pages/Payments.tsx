@@ -144,6 +144,7 @@ const Payments: React.FC = () => {
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  console.log("Payment Summary",paymentSummary);
   
   // Filter state
   const [activeTab, setActiveTab] = useState<'payments' | 'records' | 'accounts'>('payments');
@@ -754,7 +755,7 @@ const Payments: React.FC = () => {
             </div>
             <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Cash</span>
           </div>
-          <div className="text-lg font-bold text-green-600 dark:text-green-400">{formatCurrency(paymentSummary?.cashPayments || 0)}</div>
+          <div className="text-lg font-bold text-green-600 dark:text-green-400">{    formatCurrency(paymentSummary?.cashPayments || 0)}</div>
         </div>
         
         <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
