@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { getSalesFlatRowsByRange, FlatSaleRow, exportSalesPdf, exportSalesCsvByRange } from '../../utils/sales';
 import { useDashboardHeader } from './useDashboardHeader';
-import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
-import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown } from 'react-icons/fa';
+import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiUser, FiPhone, FiFileText } from 'react-icons/fi';
+import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown, FaUndo } from 'react-icons/fa';
+import ReportDetailModal from '../../components/common/DetailModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
@@ -27,6 +28,8 @@ export default function SalesReport() {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [selectedSale, setSelectedSale] = useState<any>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const pageSize = 15;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -116,12 +119,46 @@ export default function SalesReport() {
     }
   };
 
-  // Filter rows based on search
+  // Filter and Group rows
   const filteredRows = useMemo(() => {
-    if (!searchQuery.trim()) return reportRows;
+    // Step 1: Group flat rows by saleId
+    const map = new Map<number, FlatSaleRow & { itemDetails: string[]; items: FlatSaleRow[] }>();
+
+    reportRows.forEach(row => {
+      const itemDetail = `${row.medicineName}`;
+      
+      if (!map.has(row.saleId)) {
+        map.set(row.saleId, {
+          ...row,
+          itemDetails: [itemDetail],
+          items: [row]
+        });
+      } else {
+        const existing = map.get(row.saleId)!;
+        existing.itemDetails.push(itemDetail);
+        existing.items.push(row);
+        
+        // Accumulate totals for the header row
+        existing.pills += row.pills;
+        existing.total += row.total;
+        existing.subtotal += row.subtotal;
+        existing.discountAmount += row.discountAmount;
+        existing.taxAmount += row.taxAmount;
+      }
+    });
+
+    const groupedData = Array.from(map.values()).map(row => ({
+      ...row,
+      displayMedicineName: row.itemDetails.join(', '), 
+      isGrouped: row.itemDetails.length > 1,
+      children: row.items
+    }));
+
+    // Step 2: Filter based on search
+    if (!searchQuery.trim()) return groupedData;
     const q = searchQuery.toLowerCase();
-    return reportRows.filter(row =>
-      row.medicineName.toLowerCase().includes(q) ||
+    return groupedData.filter(row =>
+      row.displayMedicineName.toLowerCase().includes(q) ||
       (row.customerName && row.customerName.toLowerCase().includes(q)) ||
       row.saleId.toString().includes(q)
     );
@@ -344,9 +381,10 @@ export default function SalesReport() {
               <div className="col-span-2">Date / ID</div>
               <div className="col-span-3">Medicine</div>
               <div className="col-span-2">Customer</div>
-              <div className="col-span-2 text-right">Price</div>
+              <div className="col-span-1 text-right">Price</div>
               <div className="col-span-1 text-center">Qty</div>
               <div className="col-span-2 text-right">Total</div>
+              <div className="col-span-1 text-center">Actions</div>
             </div>
 
             {/* Table Body */}
@@ -365,29 +403,48 @@ export default function SalesReport() {
                   No sales found for the selected range.
                 </div>
               ) : (
-                pagedRows.map((row, idx) => (
-                  <div key={`${row.saleId}-${idx}`} className="grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                    <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
-                      <div className="text-[11px] text-gray-500 dark:text-gray-400">#{row.saleId}</div>
-                      {new Date(row.createdAt).toLocaleDateString()}
-
-                    </div>
-                    <div className="col-span-3">
-                      <div className="font-medium text-gray-900 dark:text-white truncate" title={row.medicineName}>{row.medicineName}</div>
-                    </div>
-                    <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
-                      {row.customerName || 'Walk-in'}
-                    </div>
-                    <div className="col-span-2 text-right text-gray-600 dark:text-gray-300">
-                      {getCurrencySymbol()}{row.unitPrice.toLocaleString()}
-                    </div>
-                    <div className="col-span-1 text-center">
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
-                        {row.pills}
-                      </span>
-                    </div>
-                    <div className="col-span-2 text-right">
-                      <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                pagedRows.map((row) => (
+                  <div key={row.saleId} className="contents border-b border-gray-100 dark:border-gray-700">
+                    <div 
+                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
+                    >
+                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400 font-bold">Sale #{row.saleId}</div>
+                        <div className="text-[9px] mt-1 text-gray-500">{new Date(row.createdAt).toLocaleDateString()}</div>
+                      </div>
+                      <div className="col-span-3">
+                        <div className="font-medium text-gray-900 dark:text-white truncate" title={row.displayMedicineName}>{row.displayMedicineName}</div>
+                      </div>
+                      <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
+                        {row.customerName || 'Walk-in'}
+                      </div>
+                      <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
+                        {row.isGrouped ? (
+                          <span className="text-gray-400 italic text-[9px]">Multiple</span>
+                        ) : (
+                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString()}</>
+                        )}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
+                          {row.pills}
+                        </span>
+                      </div>
+                      <div className="col-span-2 text-right">
+                        <div className="font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <button
+                          onClick={() => {
+                            setSelectedSale(row);
+                            setShowDetailModal(true);
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
+                          title="View Details"
+                        >
+                          View
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -432,6 +489,96 @@ export default function SalesReport() {
           </div>
         </div>
       </div>
+
+      {/* Detail Modal */}
+      <ReportDetailModal
+        isOpen={showDetailModal && !!selectedSale}
+        onClose={() => setShowDetailModal(false)}
+        title="Sale Transaction"
+        icon={FaShoppingCart}
+        colorTheme="emerald"
+        headerBadges={[
+          { label: 'Transaction #', value: String(selectedSale?.saleId || '') },
+          { label: 'Pharmacy Records', value: '', isItalic: true }
+        ]}
+        infoCards={[
+          { 
+            title: 'Customer', 
+            value: selectedSale?.customerName || 'Walk-in Customer', 
+            icon: FiUser, 
+            theme: 'blue' 
+          },
+          { 
+            title: 'Sale Info', 
+            value: selectedSale?.createdAt ? new Date(selectedSale.createdAt).toLocaleDateString() : 'N/A', 
+            icon: FiCalendar, 
+            theme: 'emerald',
+            badge: {
+              label: selectedSale?.paymentMethod || 'Cash',
+              color: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
+            }
+          },
+          { 
+            title: 'Contact Detail', 
+            value: selectedSale?.customerPhone || 'N/A', 
+            icon: FiPhone, 
+            theme: 'purple' 
+          }
+        ]}
+        tableTitle="Sold Products"
+        tableItemsCount={selectedSale?.children.length || 0}
+        tableHeaders={['#', 'Medicine Product', 'Qty', 'Unit Price', 'Disc.', 'Subtotal']}
+        items={selectedSale?.children || []}
+        renderTableRow={(item: any, idx: number) => (
+          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
+            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
+              {String(idx + 1).padStart(2, '0')}
+            </div>
+            <div className="col-span-5 translate-x-1">
+              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{item.medicineName}</div>
+              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal italic">ID: #{item.medicineId}</div>
+            </div>
+            <div className="col-span-1 text-right">
+              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {item.pills}
+              </span>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div className="col-span-1 text-right">
+              <div className="text-[11px] font-normal text-red-500">
+                -{getCurrencySymbol()}{item.discountAmount.toLocaleString()}
+              </div>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
+                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        )}
+        remarks={{
+          title: 'Remarks',
+          content: (
+            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+              {selectedSale?.notes || 'No customer remarks recorded.'}
+            </p>
+          )
+        }}
+        summaryItems={[
+          { label: 'Subtotal', value: `${getCurrencySymbol()}${selectedSale?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Net Amount', type: 'total', value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+        ]}
+        footerStatus={{
+          label: 'Transaction Finalized',
+          color: 'emerald'
+        }}
+      />
     </div>
   );
 }

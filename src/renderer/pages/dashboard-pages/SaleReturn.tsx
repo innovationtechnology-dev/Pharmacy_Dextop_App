@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { getSaleReturnsFlatRowsByRange, FlatSaleReturnRow, exportSaleReturnsPdf, exportSaleReturnsCsv } from '../../utils/sale-return';
 import { useDashboardHeader } from './useDashboardHeader';
-import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
+import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText } from 'react-icons/fi';
 import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown } from 'react-icons/fa';
+import ReportDetailModal from '../../components/common/DetailModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
@@ -27,7 +28,8 @@ export default function SaleReturn() {
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [selectedReturn, setSelectedReturn] = useState<any>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const pageSize = 15;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -126,7 +128,7 @@ export default function SaleReturn() {
 
 
       // Improved formatting with a dot or colon between name and quantity
-      const itemDetail = `${row.medicineName} (${"Item: "+ row.pills} x ${"Price: "+row.unitPrice} = ${"Total: "+row.total})`;
+      const itemDetail = `${row.medicineName}`;
       
       if (!map.has(row.saleReturnId)) {
         map.set(row.saleReturnId, {
@@ -188,12 +190,12 @@ export default function SaleReturn() {
 
         {/* Total Returned */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-md border border-red-200 dark:border-red-600/50 shadow-sm">
-            <FaUndo className="w-3.5 h-3.5 text-red-500" />
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-500 shadow-sm">
+            <FaUndo className="w-3.5 h-3.5 text-orange-500" />
             <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
               Returned
             </span>
-            <span className="text-xs font-bold text-red-600 dark:text-red-400 ml-1">
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
               {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
           </div>
@@ -227,12 +229,12 @@ export default function SaleReturn() {
 
         {/* Tax */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
-            <FaFileAlt className="w-3.5 h-3.5 text-orange-500" />
+          <div className="flex items-center gap-1.5 bg-yellow-50 dark:bg-yellow-900/20 px-2.5 py-1.5 rounded-md border border-yellow-200 dark:border-yellow-600/50 shadow-sm">
+            <FaFileAlt className="w-3.5 h-3.5 text-yellow-500" />
             <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
               Tax
             </span>
-            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+            <span className="text-xs font-bold text-yellow-600 dark:text-yellow-400 ml-1">
               {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </span>
           </div>
@@ -268,9 +270,9 @@ export default function SaleReturn() {
         <div className="flex-shrink-0">
           <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md">
             {/* Header */}
-            <div className="px-4 py-2 bg-gradient-to-r from-red-50 to-red-100/50 dark:from-red-900/20 dark:to-red-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+            <div className="px-4 py-2 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
               <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-gradient-to-br from-red-500 to-red-600">
+                <div className="p-1.5 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600">
                   <FiCalendar className="w-4 h-4 text-white" />
                 </div>
                 <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
@@ -289,7 +291,7 @@ export default function SaleReturn() {
                   type="date"
                   value={fromDate}
                   onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                 />
               </div>
               <div className="w-full sm:w-auto">
@@ -300,13 +302,13 @@ export default function SaleReturn() {
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
+                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none"
                 />
               </div>
               <button
                 onClick={fetchReport}
                 disabled={loading}
-                className="w-full sm:w-auto px-4 py-1.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded hover:from-red-700 hover:to-red-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full sm:w-auto px-4 py-1.5 bg-gradient-to-r from-orange-600 to-orange-500 text-white rounded hover:from-orange-700 hover:to-orange-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
                 Fetch Reports
@@ -320,7 +322,7 @@ export default function SaleReturn() {
           <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
 
             {/* Table Header / Actions */}
-            <div className="px-4 py-3 bg-gradient-to-r from-red-50 to-red-100/50 dark:from-red-900/20 dark:to-red-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex flex-col sm:flex-row items-center gap-3 justify-between">
                 <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap hidden sm:block">
@@ -335,7 +337,7 @@ export default function SaleReturn() {
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder="Search by medicine, customer, sale ID, or reason..."
-                      className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-red-500/30 focus:border-red-500 outline-none transition-all bg-white"
+                      className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all bg-white"
                     />
                   </div>
                 </div>
@@ -343,7 +345,7 @@ export default function SaleReturn() {
                 <div className="relative w-full sm:w-auto" ref={dropdownRef}>
                   <button
                     onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                    className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+                    className="w-full sm:w-auto px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 border border-orange-500 dark:border-orange-500 rounded hover:bg-orange-100 dark:hover:bg-orange-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
                   >
                     <FaArrowDown className="w-3.5 h-3.5" />
                     Download
@@ -355,9 +357,9 @@ export default function SaleReturn() {
                     <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
                       <button
                         onClick={handleDownloadPdf}
-                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
+                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
                       >
-                        <FaFilePdf className="w-4 h-4 text-red-500" />
+                        <FaFilePdf className="w-4 h-4 text-orange-500" />
                         <div>
                           <div className="font-bold">Export as PDF</div>
                           <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
@@ -384,16 +386,17 @@ export default function SaleReturn() {
               <div className="col-span-2">Date / IDs</div>
               <div className="col-span-3">Medicine</div>
               <div className="col-span-2">Customer</div>
-              <div className="col-span-2 text-right">Price</div>
+              <div className="col-span-1 text-right">Price</div>
               <div className="col-span-1 text-center">Qty</div>
               <div className="col-span-2 text-right">Total</div>
+              <div className="col-span-1 text-center">Actions</div>
             </div>
 
             {/* Table Body */}
             <div className="flex-1 overflow-visible md:overflow-y-auto">
               {loading ? (
                 <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                  <FiRefreshCw className="w-8 h-8 animate-spin mb-2 text-red-500" />
+                  <FiRefreshCw className="w-8 h-8 animate-spin mb-2 text-orange-500" />
                   <p className="text-xs">Loading sale return data...</p>
                 </div>
               ) : error ? (
@@ -406,21 +409,15 @@ export default function SaleReturn() {
                 </div>
               ) : (
                 pagedRows.map((row) => (
-                  <div key={row.saleReturnId} className="contents">
+                  <div key={row.saleReturnId} className="contents border-b border-gray-100 dark:border-gray-700">
                     <div 
-                      onClick={() => setExpandedId(expandedId === row.saleReturnId ? null : row.saleReturnId)}
-                      className={`grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center cursor-pointer transition-all duration-200 ${
-                        expandedId === row.saleReturnId 
-                          ? 'bg-blue-50/50 dark:bg-blue-900/10' 
-                          : 'hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
+                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
                     >
-                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white flex items-center gap-2">
-                        <FaChevronDown className={`w-2.5 h-2.5 text-gray-400 transition-transform duration-200 ${expandedId === row.saleReturnId ? 'rotate-180' : ''}`} />
+                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                         <div>
-                          <div className="text-[11px] text-gray-500 dark:text-gray-400">Return #{row.saleReturnId}</div>
+                          <div className="text-[11px] text-gray-500 dark:text-gray-400 font-bold">Return #{row.saleReturnId}</div>
                           <div className="text-[10px] text-gray-400 dark:text-gray-500">Sale #{row.saleId}</div>
-                          {new Date(row.createdAt).toLocaleDateString()}
+                          <div className="text-[9px] mt-1 text-gray-500">{new Date(row.createdAt).toLocaleDateString()}</div>
                         </div>
                       </div>
                       <div className="col-span-3">
@@ -434,7 +431,7 @@ export default function SaleReturn() {
                       <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
                         {row.customerName || 'Walk-in'}
                       </div>
-                      <div className="col-span-2 text-right text-gray-600 dark:text-gray-300">
+                      <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
                         {row.isGrouped ? (
                           <span className="text-gray-400 italic">Multiple</span>
                         ) : (
@@ -442,50 +439,26 @@ export default function SaleReturn() {
                         )}
                       </div>
                       <div className="col-span-1 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 font-semibold">
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 font-semibold">
                           {row.pills}
                         </span>
                       </div>
                       <div className="col-span-2 text-right">
-                        <div className="font-bold text-red-600 dark:text-red-400">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                        <div className="font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <button
+                          onClick={() => {
+                            setSelectedReturn(row);
+                            setShowDetailModal(true);
+                          }}
+                          className="p-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shadow-sm"
+                          title="View Details"
+                        >
+                          View 
+                        </button>
                       </div>
                     </div>
-                    
-                    {/* Expanded Details */}
-                    {expandedId === row.saleReturnId && (
-                      <div className="col-span-12 px-10 py-3 bg-gray-50/50 dark:bg-gray-800/20 border-b border-gray-100 dark:border-gray-700 animate-in slide-in-from-top-1">
-                        <div className="space-y-2">
-                          <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-700 pb-1 mb-2">Item Breakdown</div>
-                          {row.children.map((child, cIdx) => (
-                            <div key={cIdx} className="grid grid-cols-12 gap-3 items-center text-[10px] text-gray-600 dark:text-gray-400 py-1 border-b border-gray-50 dark:border-gray-800/50 last:border-0">
-                               <div className="col-span-4 font-medium text-gray-800 dark:text-gray-200">{child.medicineName}</div>
-                               <div className="col-span-2 text-center bg-gray-100 dark:bg-gray-700/50 rounded py-0.5">{child.pills} pills</div>
-                               <div className="col-span-2 text-right">{getCurrencySymbol()}{child.unitPrice.toFixed(2)}</div>
-                               <div className="col-span-2 text-right text-gray-400">-{getCurrencySymbol()}{child.discountAmount.toFixed(2)} disc</div>
-                               <div className="col-span-2 text-right font-bold text-gray-900 dark:text-white">{getCurrencySymbol()}{child.total.toLocaleString()}</div>
-                            </div>
-                          ))}
-                          <div className="mt-3 flex justify-end gap-6 text-[10px] bg-red-50/30 dark:bg-red-900/10 p-2 rounded-md border border-red-100/30">
-                             <div className="flex flex-col items-end">
-                                <span className="text-gray-400 font-bold uppercase text-[8px]">Net Subtotal</span>
-                                <span className="font-bold text-gray-700 dark:text-gray-300">{getCurrencySymbol()}{row.subtotal.toLocaleString()}</span>
-                             </div>
-                             <div className="flex flex-col items-end">
-                                <span className="text-gray-400 font-bold uppercase text-[8px]">Total Discount</span>
-                                <span className="font-bold text-gray-700 dark:text-gray-300">-{getCurrencySymbol()}{row.discountAmount.toLocaleString()}</span>
-                             </div>
-                             <div className="flex flex-col items-end">
-                                <span className="text-gray-400 font-bold uppercase text-[8px]">Tax Included</span>
-                                <span className="font-bold text-gray-700 dark:text-gray-300">+{getCurrencySymbol()}{row.taxAmount.toLocaleString()}</span>
-                             </div>
-                             <div className="flex flex-col items-end border-l border-gray-200 dark:border-gray-700 pl-6 ml-2">
-                                <span className="text-red-500 font-bold uppercase text-[8px]">Grand Total</span>
-                                <span className="font-black text-xs text-red-600 dark:text-red-400">{getCurrencySymbol()}{row.total.toLocaleString()}</span>
-                             </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ))
               )}
@@ -495,7 +468,7 @@ export default function SaleReturn() {
             {!loading && !error && filteredRows.length > 0 && (
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
                 <div className="col-span-10 text-right text-gray-600 dark:text-gray-300 pr-4">Grand Total</div>
-                <div className="col-span-2 text-right text-red-700 dark:text-red-400">
+                <div className="col-span-2 text-right text-orange-700 dark:text-orange-400">
                   {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </div>
               </div>
@@ -529,6 +502,96 @@ export default function SaleReturn() {
           </div>
         </div>
       </div>
+
+      {/* Detail Modal */}
+      <ReportDetailModal
+        isOpen={showDetailModal && !!selectedReturn}
+        onClose={() => setShowDetailModal(false)}
+        title="Return Details"
+        icon={FaUndo}
+        colorTheme="orange"
+        headerBadges={[
+          { label: 'Return #', value: String(selectedReturn?.saleReturnId || '') },
+          { label: 'Sale Reference', value: `#${selectedReturn?.saleId}`, isItalic: true }
+        ]}
+        infoCards={[
+          { 
+            title: 'Customer', 
+            value: selectedReturn?.customerName || 'Walk-in Customer', 
+            icon: FiUser, 
+            theme: 'blue' 
+          },
+          { 
+            title: 'Return Info', 
+            value: selectedReturn?.createdAt ? new Date(selectedReturn.createdAt).toLocaleDateString() : 'N/A', 
+            icon: FiCalendar, 
+            theme: 'orange',
+            badge: {
+              label: `REF #${selectedReturn?.saleId}`,
+              color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300'
+            }
+          },
+          { 
+            title: 'Contact Detail', 
+            value: selectedReturn?.customerPhone || 'N/A', 
+            icon: FiPhone, 
+            theme: 'purple' 
+          }
+        ]}
+        tableTitle="Returned Items"
+        tableItemsCount={selectedReturn?.children.length || 0}
+        tableHeaders={['#', 'Medicine Product', 'Qty', 'Unit Price', 'Disc.', 'Subtotal']}
+        items={selectedReturn?.children || []}
+        renderTableRow={(item: any, idx: number) => (
+          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
+            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
+              {String(idx + 1).padStart(2, '0')}
+            </div>
+            <div className="col-span-5 translate-x-1">
+              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">{item.medicineName}</div>
+              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal italic">ID: #{item.medicineId}</div>
+            </div>
+            <div className="col-span-1 text-right">
+              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {item.pills}
+              </span>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div className="col-span-1 text-right">
+              <div className="text-[11px] font-normal text-red-500">
+                 -{getCurrencySymbol()}{item.discountAmount.toLocaleString()}
+              </div>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
+                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        )}
+        remarks={{
+          title: 'Remarks',
+          content: (
+            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400 whitespace-pre-wrap">
+              {selectedReturn?.reason || 'No specific return reason Recorded.'}
+            </p>
+          )
+        }}
+        summaryItems={[
+          { label: 'Gross Value', value: `${getCurrencySymbol()}${selectedReturn?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Adjustment', type: 'discount', value: `${getCurrencySymbol()}${selectedReturn?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Tax Reversal', type: 'tax', value: `${getCurrencySymbol()}${selectedReturn?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Refund Amount', type: 'total', value: `${getCurrencySymbol()}${selectedReturn?.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+        ]}
+        footerStatus={{
+          label: 'Return Processed',
+          color: 'orange'
+        }}
+      />
     </div>
   );
 }

@@ -71,6 +71,7 @@ declare module 'react-icons/fi' {
   export const FiUsers: any;
   export const FiX: any;
   export const FiXCircle: any;
+  export const FiTruck: any;
 }
 
 declare module 'react-icons/fa' {
@@ -95,4 +96,7 @@ declare module 'react-icons/fa' {
   export const FaShoppingCart: any;
   export const FaTrashAlt: any;
   export const FaUndo: any;
+  export const FaPhone: any;
+  export const FaUser: any;
+  export const FaStickyNote: any;
 }
