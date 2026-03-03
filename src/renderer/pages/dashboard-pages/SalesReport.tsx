@@ -4,14 +4,8 @@ import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
 import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown } from 'react-icons/fa';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-};
 
 export default function SalesReport() {
   const [fromDate, setFromDate] = useState<string>(() => {
@@ -40,10 +34,7 @@ export default function SalesReport() {
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
 
   // Get currency symbol
-  const getCurrencySymbol = () => {
-    const currency = pharmacySettings.currency || 'USD';
-    return currencySymbols[currency] || currency;
-  };
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
 
   // Set header
   useEffect(() => {

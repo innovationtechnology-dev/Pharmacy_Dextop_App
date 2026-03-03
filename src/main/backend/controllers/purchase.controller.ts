@@ -1,5 +1,6 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { PurchaseService, Purchase } from '../services/purchase.service';
+import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 
 export class PurchaseController {
   private purchaseService: PurchaseService;
@@ -238,7 +239,7 @@ export class PurchaseController {
         const totalPaid = purchases.reduce((sum, p) => sum + p.paymentAmount, 0);
         const totalOutstanding = purchases.reduce((sum, p) => sum + p.remainingBalance, 0);
 
-        const currencySymbol = settings.currency === 'INR' ? '₹' : settings.currency === 'EUR' ? '€' : settings.currency === 'GBP' ? '£' : '$';
+        const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
 
         const html = `
           <html>

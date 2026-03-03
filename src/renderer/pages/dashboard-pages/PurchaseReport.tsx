@@ -4,14 +4,8 @@ import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
 import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown, FaArrowLeft } from 'react-icons/fa';
 import { exportPurchasesPdf, exportPurchasesCsv } from '../../utils/purchases';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: 'Rs.',
-  INR: 'Rs.',
-};
 
 interface PurchaseItem {
   medicineId: number;
@@ -76,10 +70,7 @@ export default function Purchases() {
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
 
   // Get currency symbol
-  const getCurrencySymbol = () => {
-    const currency = pharmacySettings.currency || 'USD';
-    return currencySymbols[currency] || currency;
-  };
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
   // Set header
   useEffect(() => {
     setHeader({

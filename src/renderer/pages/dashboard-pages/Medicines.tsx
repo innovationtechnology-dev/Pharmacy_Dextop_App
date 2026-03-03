@@ -14,15 +14,9 @@ import {
   FiClock,
 } from 'react-icons/fi';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-};
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -110,10 +104,7 @@ export default function MedicinesPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
 
   // Get currency symbol
-  const getCurrencySymbol = () => {
-    const currency = pharmacySettings.currency || 'USD';
-    return currencySymbols[currency] || currency;
-  };
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
   const loadMedicines = useCallback(() => {
     if (!window?.electron) {
       setLoadError('Electron bridge unavailable. Please restart the app.');

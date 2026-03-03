@@ -7,6 +7,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useToast, ToastContainer } from '../../components/common/Toast';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -602,17 +603,10 @@ const PurchasingPanel: React.FC = () => {
     }
   };
 
-  const currencySymbols: Record<string, string> = {
-    USD: 'Rs.',
-    EUR: 'Rs.',
-    GBP: 'Rs.',
-    PKR: 'Rs.',
-    INR: 'Rs.',
-  };
 
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || 'Rs.';
+    const symbol = getSymbol(currency);
     return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
@@ -887,7 +881,7 @@ const PurchasingPanel: React.FC = () => {
   }, [barcodeScanMode, handleBarcodeScan]);
 
   const currencyCode = pharmacySettings.currency || 'USD';
-  const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
+  const symbol = getSymbol(currencyCode);
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">

@@ -31,6 +31,7 @@ import {
 import { getSalesFlatRows, FlatSaleRow, updateSale } from '../../utils/sales';
 import { createSaleReturn, getSaleReturnsBySaleId, SaleReturnItem } from '../../utils/sale-return';
 import { Link } from 'react-router-dom';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -57,13 +58,6 @@ interface CartItem {
   finalPrice: number;
 }
 
-const currencySymbols: Record<string, string> = {
-  USD: 'Rs.',
-  EUR: 'Rs.',
-  GBP: 'Rs.',
-  PKR: 'Rs.',
-  INR: 'Rs.',
-};
 
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
@@ -833,7 +827,7 @@ const SellingPanel: React.FC = () => {
 
     const profile = pharmacyInfo;
     const currencyCode = profile.currency || 'USD';
-    const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
+    const symbol = getSymbol(currencyCode);
     const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = cart.reduce(
       (sum, item) => sum + (item.discountAmount || 0),
@@ -1045,7 +1039,7 @@ const SellingPanel: React.FC = () => {
 
   const formatCurrency = (value: number) => {
     const currency = pharmacyInfo.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
@@ -1316,7 +1310,7 @@ const SellingPanel: React.FC = () => {
   }, [selectedSaleId, returnItems, customerName, customerPhone, returnReason, returnNotes, loadMedicines, loadSalesHistory, refreshExpiringAlerts]);
 
   const currencyCode = pharmacyInfo.currency || 'USD';
-  const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
+  const symbol = getSymbol(currencyCode);
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">

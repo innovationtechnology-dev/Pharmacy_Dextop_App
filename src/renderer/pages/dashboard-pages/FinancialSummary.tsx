@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 interface FinancialData {
   purchasingTotal: number;
@@ -31,13 +32,6 @@ const renderIcon = (IconComponent: IconType, className?: string) =>
     { className } as any
   );
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-};
 
 const FinancialSummary: React.FC = () => {
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
@@ -152,7 +146,7 @@ const FinancialSummary: React.FC = () => {
 
   const formatCurrency = (amount: number): string => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     // For INR and PKR, use Indian/Pakistani number formatting
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

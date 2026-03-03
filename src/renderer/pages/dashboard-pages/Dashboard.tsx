@@ -27,6 +27,7 @@ import WelcomeNotification from '../../components/WelcomeNotification';
 import { invokeIpc } from '../../utils/ipcHelpers';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type SaleItemSummary = {
   medicineId: number;
@@ -77,14 +78,6 @@ type Metric = {
   color: string;
 };
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-  AED: 'د.إ',
-};
 
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatNumber = (value: number) => numberFormatter.format(value);
@@ -290,7 +283,7 @@ const Dashboard = () => {
 
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     // For INR and PKR, use Indian/Pakistani number formatting
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

@@ -26,6 +26,7 @@ import {
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 // Types
 type PaymentMethod = 'cash' | 'bank_transfer' | 'check' | 'online';
@@ -91,14 +92,6 @@ interface SupplierAccount {
   lastPaymentAmount?: number;
 }
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-  AED: 'د.إ',
-};
 
 const paymentMethodLabels: Record<string, string> = {
   cash: 'Cash',
@@ -191,7 +184,7 @@ const Payments: React.FC = () => {
   // Format helpers
   const formatCurrency = useCallback((value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }

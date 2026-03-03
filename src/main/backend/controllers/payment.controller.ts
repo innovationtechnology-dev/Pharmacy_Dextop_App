@@ -1,5 +1,6 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { PaymentService, Payment } from '../services/payment.service';
+import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 
 export class PaymentController {
     private paymentService: PaymentService;
@@ -190,7 +191,7 @@ export class PaymentController {
                 const payments = await this.paymentService.getPaymentRecords(filters, false);
                 const totalAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
 
-                const currencySymbol = settings.currency === 'INR' ? '₹' : settings.currency === 'PKR' ? '₨' : '$';
+                const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
 
                 const html = `
                     <html>
