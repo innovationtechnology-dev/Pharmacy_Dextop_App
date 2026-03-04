@@ -84,6 +84,18 @@ const formatNumber = (value: number) => numberFormatter.format(value);
 
 const getDateKey = (date: Date) => date.toISOString().slice(0, 10);
 
+// Helper function to check if a date is today
+const isToday = (dateString?: string): boolean => {
+  if (!dateString) return false;
+  const date = new Date(dateString);
+  const today = new Date();
+  return (
+    date.getDate() === today.getDate() &&
+    date.getMonth() === today.getMonth() &&
+    date.getFullYear() === today.getFullYear()
+  );
+};
+
 const MetricCard: React.FC<{ metric: Metric }> = ({ metric }) => (
   <div className="group bg-white dark:bg-gray-800 rounded-xl sm:rounded-2xl p-4 sm:rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm hover:shadow-lg transition-all duration-300 hover:-translate-y-1">
     <div className="flex items-center justify-between mb-3 sm:mb-4">
@@ -322,7 +334,13 @@ const Dashboard = () => {
     loadData();
   }, [loadData]);
 
-  const handleDeleteSale = async (saleId: number) => {
+  const handleDeleteSale = async (saleId: number, saleDate?: string) => {
+    // Check if sale is from today
+    if (!isToday(saleDate)) {
+      alert('Only sales from today can be deleted. This sale is from a previous date.');
+      return;
+    }
+
     if (!window.confirm(`Are you sure you want to delete sale #${saleId}? This action cannot be undone.`)) {
       return;
     }
@@ -708,9 +726,14 @@ const Dashboard = () => {
                       </div>
                       <div className="col-span-1 flex items-center gap-1">
                         <button
-                          onClick={() => handleDeleteSale(order.id)}
-                          className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                          title="Delete Sale"
+                          onClick={() => handleDeleteSale(order.id, order.createdAt)}
+                          disabled={!isToday(order.createdAt)}
+                          className={`p-1.5 rounded transition-colors ${
+                            isToday(order.createdAt)
+                              ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer'
+                              : 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                          }`}
+                          title={isToday(order.createdAt) ? 'Delete Sale' : 'Only today\'s sales can be deleted'}
                         >
                           <FiTrash2 className="w-4 h-4" />
                         </button>
@@ -733,9 +756,14 @@ const Dashboard = () => {
                           Completed
                         </span>
                         <button
-                          onClick={() => handleDeleteSale(order.id)}
-                          className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                          title="Delete Sale"
+                          onClick={() => handleDeleteSale(order.id, order.createdAt)}
+                          disabled={!isToday(order.createdAt)}
+                          className={`p-1.5 rounded transition-colors ${
+                            isToday(order.createdAt)
+                              ? 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 cursor-pointer'
+                              : 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                          }`}
+                          title={isToday(order.createdAt) ? 'Delete Sale' : 'Only today\'s sales can be deleted'}
                         >
                           <FiTrash2 className="w-4 h-4" />
                         </button>

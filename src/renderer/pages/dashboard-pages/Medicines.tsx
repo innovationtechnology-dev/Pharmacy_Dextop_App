@@ -95,6 +95,7 @@ export default function MedicinesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [editingMedicineId, setEditingMedicineId] = useState<number | null>(null);
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -299,14 +300,22 @@ export default function MedicinesPage() {
       status: medicine.status,
     });
     setEditingMedicineId(medicine.id);
+    setEditingMedicine(medicine);
   }, []);
 
   const resetForm = useCallback(() => {
     setNewMedicine(emptyMedicineForm);
     setEditingMedicineId(null);
+    setEditingMedicine(null);
     setFormError(null);
     setFormSuccess(null);
   }, []);
+
+  // Check if editing medicine has been used in transactions
+  const isEditingMedicineUsed = useMemo(() => {
+    if (!editingMedicine) return false;
+    return editingMedicine.totalAvailablePills > 0 || editingMedicine.sellablePills > 0;
+  }, [editingMedicine]);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
     try {
@@ -471,6 +480,17 @@ export default function MedicinesPage() {
 
             {/* Form Content */}
             <form onSubmit={handleAddMedicine} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Warning for editing used medicine */}
+              {isEditingMedicineUsed && (
+                <div className="p-3 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded border border-orange-200 dark:border-orange-800 flex items-start gap-2">
+                  <FiAlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold mb-1">Limited Editing</div>
+                    <div>This medicine has been used in transactions. You can only change its status. Name, barcode, and pills/packet are read-only to preserve data integrity.</div>
+                  </div>
+                </div>
+              )}
+              
               {/* Success & Error */}
               {formError && (
                 <div className="p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded border border-red-200 dark:border-red-800">
@@ -489,13 +509,21 @@ export default function MedicinesPage() {
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
                   Medicine Name <span className="text-red-500">*</span>
+                  {isEditingMedicineUsed && (
+                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
+                  )}
                 </label>
                 <input
                   id="medicine-name"
                   type="text"
                   value={newMedicine.name}
                   onChange={(e) => handleNewMedicineChange('name', e.target.value)}
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  disabled={isEditingMedicineUsed}
+                  className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                    isEditingMedicineUsed
+                      ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                  }`}
                   required
                   placeholder="Enter medicine name"
                 />
@@ -508,13 +536,21 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Barcode <span className="text-red-500">*</span>
+                    {isEditingMedicineUsed && (
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                    )}
                   </label>
                   <input
                     id="medicine-barcode"
                     type="text"
                     value={newMedicine.barcode}
                     onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    disabled={isEditingMedicineUsed}
+                    className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                      isEditingMedicineUsed
+                        ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                    }`}
                     placeholder="Scan or enter"
                     required
                   />
@@ -525,13 +561,21 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Pills/Packet <span className="text-red-500">*</span>
+                    {isEditingMedicineUsed && (
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                    )}
                   </label>
                   <input
                     id="medicine-pill-quantity"
                     type="number"
                     value={newMedicine.pillQuantity}
                     onChange={(e) => handleNewMedicineChange('pillQuantity', e.target.value)}
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    disabled={isEditingMedicineUsed}
+                    className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                      isEditingMedicineUsed
+                        ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                    }`}
                     placeholder="e.g. 10"
                     required
                   />
@@ -751,10 +795,24 @@ export default function MedicinesPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            // Check if medicine has any stock (has been purchased)
+                            if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
+                              alert('Cannot edit medicine with existing stock. This medicine has been used in transactions. You can only change its status (active/inactive).');
+                              return;
+                            }
                             handleEdit(medicine);
                           }}
-                          className="p-1.5 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                          title="Edit"
+                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
+                          className={`p-1.5 rounded transition-colors ${
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                              : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                          }`}
+                          title={
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'Cannot edit: Medicine has been used in transactions (you can only change status)'
+                              : 'Edit'
+                          }
                         >
                           <FiEdit2 className="w-3.5 h-3.5" />
                         </button>
@@ -763,11 +821,25 @@ export default function MedicinesPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (medicine.id) {
+                              // Check if medicine has any stock (has been purchased)
+                              if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
+                                alert('Cannot delete medicine with existing stock. This medicine has been used in transactions. You can mark it as inactive instead.');
+                                return;
+                              }
                               setDeleteConfirm({ id: medicine.id, name: medicine.name });
                             }
                           }}
-                          className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                          title="Delete"
+                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
+                          className={`p-1.5 rounded transition-colors ${
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                              : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'
+                          }`}
+                          title={
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'Cannot delete: Medicine has been used in transactions'
+                              : 'Delete'
+                          }
                         >
                           <FiTrash2 className="w-3.5 h-3.5" />
                         </button>

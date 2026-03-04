@@ -151,7 +151,7 @@ export class SalesService {
         total REAL NOT NULL,
         customer_name TEXT,
         customer_phone TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        created_at DATETIME DEFAULT (datetime('now', 'localtime'))
       )
     `);
 
@@ -288,8 +288,8 @@ export class SalesService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertSaleSql = `
-        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleResult = await this.dbService.execute(insertSaleSql, [
         subtotal,
@@ -374,7 +374,7 @@ export class SalesService {
   }
 
   /**
-   * Delete a sale and its items.
+   * Delete a sale and its items, restoring inventory.
    */
   public async deleteSale(saleId: number): Promise<void> {
     // Check if sale exists
@@ -383,8 +383,16 @@ export class SalesService {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
+    // Get sale items to restore inventory
+    const saleItems = await this.dbService.query('SELECT medicine_id, pills FROM sale_items WHERE sale_id = ?', [saleId]);
+
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
+      // Restore inventory for each item
+      for (const item of saleItems) {
+        await this.restoreInventory(item.medicine_id, item.pills);
+      }
+
       // Delete sale items first
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
       // Delete the sale
@@ -698,7 +706,11 @@ export class SalesService {
    */
   public async getFinancialSummaryByDateRange(fromDate: string, toDate: string): Promise<{
     purchasingTotal: number;
+    purchaseDiscountTotal: number;
+    purchaseTaxTotal: number;
     sellingTotal: number;
+    saleDiscountTotal: number;
+    saleTaxTotal: number;
     saleReturnsTotal: number;
     netRevenue: number;
     paymentTotal: number;
@@ -712,6 +724,8 @@ export class SalesService {
     const salesSql = `
       SELECT 
         COALESCE(SUM(total), 0) as selling_total,
+        COALESCE(SUM(discount_total), 0) as sale_discount_total,
+        COALESCE(SUM(tax_total), 0) as sale_tax_total,
         COALESCE(SUM(total), 0) as payment_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
@@ -719,6 +733,8 @@ export class SalesService {
     `;
     const salesResult = await this.dbService.queryOne(salesSql, [fromDateTime, toDateTime]);
     const sellingTotal = salesResult?.selling_total || 0;
+    const saleDiscountTotal = salesResult?.sale_discount_total || 0;
+    const saleTaxTotal = salesResult?.sale_tax_total || 0;
     const paymentTotal = salesResult?.payment_total || 0;
 
     // Get sale returns total for this date range
@@ -727,7 +743,20 @@ export class SalesService {
     // Calculate net revenue (sales - returns)
     const netRevenue = sellingTotal - saleReturnsTotal;
 
-    const purchasingTotal = await this.getPurchasingTotalByRange(fromDateTime, toDateTime);
+    // Get purchase totals with discount and tax breakdown
+    const purchasingSql = `
+      SELECT 
+        COALESCE(SUM(grand_total), 0) as purchasing_total,
+        COALESCE(SUM(discount_total), 0) as purchase_discount_total,
+        COALESCE(SUM(tax_total), 0) as purchase_tax_total
+      FROM purchases 
+      WHERE datetime(created_at) >= datetime(?) 
+        AND datetime(created_at) <= datetime(?)
+    `;
+    const purchasingResult = await this.dbService.queryOne(purchasingSql, [fromDateTime, toDateTime]);
+    const purchasingTotal = purchasingResult?.purchasing_total || 0;
+    const purchaseDiscountTotal = purchasingResult?.purchase_discount_total || 0;
+    const purchaseTaxTotal = purchasingResult?.purchase_tax_total || 0;
 
     // Get remaining payments (debt) for purchases in this date range
     const remainingPaymentSql = `
@@ -783,7 +812,11 @@ export class SalesService {
 
     return {
       purchasingTotal,
+      purchaseDiscountTotal,
+      purchaseTaxTotal,
       sellingTotal,
+      saleDiscountTotal,
+      saleTaxTotal,
       saleReturnsTotal,
       netRevenue,
       paymentTotal,

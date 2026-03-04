@@ -17,7 +17,11 @@ import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common
 
 interface FinancialData {
   purchasingTotal: number;
+  purchaseDiscountTotal: number;
+  purchaseTaxTotal: number;
   sellingTotal: number;
+  saleDiscountTotal: number;
+  saleTaxTotal: number;
   saleReturnsTotal: number;
   netRevenue: number;
   paymentTotal: number;
@@ -49,7 +53,11 @@ const FinancialSummary: React.FC = () => {
 
   const [financialData, setFinancialData] = useState<FinancialData>({
     purchasingTotal: 0,
+    purchaseDiscountTotal: 0,
+    purchaseTaxTotal: 0,
     sellingTotal: 0,
+    saleDiscountTotal: 0,
+    saleTaxTotal: 0,
     saleReturnsTotal: 0,
     netRevenue: 0,
     paymentTotal: 0,
@@ -85,7 +93,11 @@ const FinancialSummary: React.FC = () => {
           // Set default values on error
           setFinancialData({
             purchasingTotal: 0,
+            purchaseDiscountTotal: 0,
+            purchaseTaxTotal: 0,
             sellingTotal: 0,
+            saleDiscountTotal: 0,
+            saleTaxTotal: 0,
             saleReturnsTotal: 0,
             netRevenue: 0,
             paymentTotal: 0,
@@ -340,6 +352,44 @@ const FinancialSummary: React.FC = () => {
                 color="text-orange-600 dark:text-orange-400"
                 bgColor="bg-orange-50 dark:bg-orange-900/30"
               />
+              
+              {/* Discount & Tax Section */}
+              <div className="sm:col-span-2 lg:col-span-3">
+                <div className="bg-gradient-to-r from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700 rounded-xl p-4 border border-gray-200 dark:border-gray-600">
+                  <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 uppercase tracking-wide">Discounts & Taxes Breakdown</h3>
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Purchase Discounts</div>
+                      <div className="text-lg font-bold text-green-600 dark:text-green-400">
+                        {formatCurrency(financialData.purchaseDiscountTotal)}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Saved from suppliers</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Purchase Taxes</div>
+                      <div className="text-lg font-bold text-red-600 dark:text-red-400">
+                        {formatCurrency(financialData.purchaseTaxTotal)}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Paid on purchases</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Sale Discounts</div>
+                      <div className="text-lg font-bold text-orange-600 dark:text-orange-400">
+                        {formatCurrency(financialData.saleDiscountTotal)}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Given to customers</div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-600">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Sale Taxes</div>
+                      <div className="text-lg font-bold text-blue-600 dark:text-blue-400">
+                        {formatCurrency(financialData.saleTaxTotal)}
+                      </div>
+                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Collected from sales</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="sm:col-span-2 lg:col-span-3">
                 <StatCard
                   title="Net Profit"

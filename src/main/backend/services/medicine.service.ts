@@ -182,6 +182,18 @@ export class MedicineService {
    * Create a new medicine.
    */
   public async createMedicine(medicine: Medicine): Promise<number> {
+    // Check if barcode already exists
+    if (medicine.barcode) {
+      const existingMedicine = await this.dbService.queryOne(
+        'SELECT id, name FROM medicines WHERE barcode = ?',
+        [medicine.barcode]
+      );
+      
+      if (existingMedicine) {
+        throw new Error(`Barcode "${medicine.barcode}" already exists for medicine "${existingMedicine.name}". Please use a different barcode.`);
+      }
+    }
+
     const sql = `
       INSERT INTO medicines (barcode, name, pill_quantity, status)
       VALUES (?, ?, ?, ?)
@@ -193,14 +205,51 @@ export class MedicineService {
       medicine.status || 'active',
     ];
     
-    const result = await this.dbService.execute(sql, params);
-    return (result as any).lastID;
+    try {
+      const result = await this.dbService.execute(sql, params);
+      return (result as any).lastID;
+    } catch (error: any) {
+      // Handle any other database errors
+      if (error.message && error.message.includes('UNIQUE constraint failed')) {
+        throw new Error('A medicine with this barcode already exists. Please use a different barcode.');
+      }
+      throw error;
+    }
   }
 
   /**
    * Update medicine metadata (name, barcode, pills per packet, status).
+   * Only allows status updates for medicines used in transactions.
    */
   public async updateMedicine(id: number, medicine: Partial<Medicine>): Promise<void> {
+    // Check if medicine has been used in transactions
+    const hasTransactions = await this.hasMedicineBeenUsed(id);
+    
+    // If medicine has transactions, only allow status updates
+    if (hasTransactions) {
+      // Check if trying to update anything other than status
+      const hasNonStatusUpdates = 
+        medicine.name !== undefined || 
+        medicine.barcode !== undefined || 
+        medicine.pillQuantity !== undefined;
+      
+      if (hasNonStatusUpdates) {
+        throw new Error('Cannot edit medicine details: This medicine has been used in transactions. You can only change its status (active/inactive/discontinued).');
+      }
+    }
+
+    // Check if barcode is being updated and if it already exists
+    if (medicine.barcode !== undefined) {
+      const existingMedicine = await this.dbService.queryOne(
+        'SELECT id, name FROM medicines WHERE barcode = ? AND id != ?',
+        [medicine.barcode, id]
+      );
+      
+      if (existingMedicine) {
+        throw new Error(`Barcode "${medicine.barcode}" already exists for medicine "${existingMedicine.name}". Please use a different barcode.`);
+      }
+    }
+
     const updates: string[] = [];
     const params: any[] = [];
 
@@ -225,13 +274,82 @@ export class MedicineService {
 
     params.push(id);
     const sql = `UPDATE medicines SET ${updates.join(', ')} WHERE id = ?`;
-    await this.dbService.execute(sql, params);
+    
+    try {
+      await this.dbService.execute(sql, params);
+    } catch (error: any) {
+      // Handle any other database errors
+      if (error.message && error.message.includes('UNIQUE constraint failed')) {
+        throw new Error('A medicine with this barcode already exists. Please use a different barcode.');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Check if medicine has been used in any transactions
+   */
+  private async hasMedicineBeenUsed(id: number): Promise<boolean> {
+    // Check purchase items
+    const purchaseCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM purchase_items WHERE medicine_id = ?',
+      [id]
+    );
+    if (purchaseCheck && purchaseCheck.count > 0) return true;
+
+    // Check sale items
+    const saleCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM sale_items WHERE medicine_id = ?',
+      [id]
+    );
+    if (saleCheck && saleCheck.count > 0) return true;
+
+    // Check sale return items
+    const returnCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM sale_return_items WHERE medicine_id = ?',
+      [id]
+    );
+    if (returnCheck && returnCheck.count > 0) return true;
+
+    return false;
   }
 
   /**
    * Delete medicine metadata.
+   * Only allows deletion if medicine has never been used in any transactions.
    */
   public async deleteMedicine(id: number): Promise<void> {
+    // Check if medicine is used in any purchase items
+    const purchaseCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM purchase_items WHERE medicine_id = ?',
+      [id]
+    );
+    
+    if (purchaseCheck && purchaseCheck.count > 0) {
+      throw new Error('Cannot delete medicine: It has been used in purchase transactions. You can mark it as inactive instead.');
+    }
+
+    // Check if medicine is used in any sale items
+    const saleCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM sale_items WHERE medicine_id = ?',
+      [id]
+    );
+    
+    if (saleCheck && saleCheck.count > 0) {
+      throw new Error('Cannot delete medicine: It has been used in sale transactions. You can mark it as inactive instead.');
+    }
+
+    // Check if medicine is used in any sale return items
+    const returnCheck = await this.dbService.queryOne(
+      'SELECT COUNT(*) as count FROM sale_return_items WHERE medicine_id = ?',
+      [id]
+    );
+    
+    if (returnCheck && returnCheck.count > 0) {
+      throw new Error('Cannot delete medicine: It has been used in return transactions. You can mark it as inactive instead.');
+    }
+
+    // If no transactions found, safe to delete
     const sql = `DELETE FROM medicines WHERE id = ?`;
     await this.dbService.execute(sql, [id]);
   }

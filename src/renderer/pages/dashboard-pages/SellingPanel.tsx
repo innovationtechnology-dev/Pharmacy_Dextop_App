@@ -64,9 +64,8 @@ const recalculateSaleItem = (item: CartItem): CartItem => {
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
   const subtotal = item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
-  const taxableBase = subtotal - discountAmount;
-  const taxAmount = (taxableBase * taxPercent) / 100;
-  const finalPrice = taxableBase + taxAmount;
+  const taxAmount = (subtotal * taxPercent) / 100; // Tax calculated on original subtotal
+  const finalPrice = subtotal - discountAmount + taxAmount;
 
   return {
     ...item,
@@ -154,6 +153,7 @@ const SellingPanel: React.FC = () => {
   const [returnNotes, setReturnNotes] = useState('');
   const [processingReturn, setProcessingReturn] = useState(false);
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
+  const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -398,6 +398,7 @@ const SellingPanel: React.FC = () => {
     setSelectedSaleId(null);
     setCart([]);
     setReturnedQuantities(new Map());
+    setCurrentSaleReturnTotal(0);
     setCustomerName('');
     setCustomerPhone('');
     const timestamp = Date.now();
@@ -418,6 +419,8 @@ const SellingPanel: React.FC = () => {
   }, []);
 
   // Group sales by saleId for history display
+  const [saleReturnsMap, setSaleReturnsMap] = useState<Map<number, number>>(new Map());
+
   const salesHistoryList = useMemo(() => {
     const groupedSales = salesHistory.reduce((acc, sale) => {
       if (!acc[sale.saleId]) {
@@ -441,27 +444,55 @@ const SellingPanel: React.FC = () => {
     );
   }, [salesHistory]);
 
+  // Load returns for all sales in history to show net totals
+  useEffect(() => {
+    const loadReturnsForAllSales = async () => {
+      const returnsMap = new Map<number, number>();
+      
+      for (const sale of salesHistoryList) {
+        const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
+        if (returnsResponse.success && returnsResponse.data) {
+          const returnTotal = returnsResponse.data.reduce((sum, ret) => sum + ret.total, 0);
+          returnsMap.set(sale.saleId, returnTotal);
+        }
+      }
+      
+      setSaleReturnsMap(returnsMap);
+    };
+    
+    if (salesHistoryList.length > 0) {
+      loadReturnsForAllSales();
+    }
+  }, [salesHistoryList.length]); // Only re-run when the number of sales changes
+
   // Reset to new bill when sales history is loaded and no bill is selected
   useEffect(() => {
     if (
       salesHistoryList.length > 0 &&
       currentBillIndex === -1 &&
-      selectedSaleId === null
+      selectedSaleId === null &&
+      cart.length === 0
     ) {
-      // Ensure we're on new bill state
-      clearFormForNewBill();
+      // Ensure date is today when starting fresh
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = now.toLocaleString('default', { month: 'short' });
+      const year = now.getFullYear();
+      setCurrentDate(`${day}/${month}/${year}`);
     }
   }, [
     salesHistoryList.length,
     currentBillIndex,
     selectedSaleId,
-    clearFormForNewBill,
+    cart.length,
   ]);
 
-  // Update time every second
+  // Update time every second and date when it changes
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateDateTime = () => {
       const now = new Date();
+      
+      // Update time
       setCurrentTime(
         now.toLocaleTimeString('en-US', {
           hour12: true,
@@ -470,9 +501,28 @@ const SellingPanel: React.FC = () => {
           second: '2-digit',
         })
       );
-    }, 1000);
+      
+      // Update date (only when creating new sale, not viewing old ones)
+      if (currentBillIndex === -1) {
+        const day = String(now.getDate()).padStart(2, '0');
+        const month = now.toLocaleString('default', { month: 'short' });
+        const year = now.getFullYear();
+        const newDate = `${day}/${month}/${year}`;
+        
+        // Only update if date has changed
+        if (currentDate !== newDate) {
+          setCurrentDate(newDate);
+        }
+      }
+    };
+    
+    // Update immediately
+    updateDateTime();
+    
+    // Then update every second
+    const timer = setInterval(updateDateTime, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [currentBillIndex, currentDate]);
 
   // Check if medicines exist after loading, show seed button if empty
   useEffect(() => {
@@ -846,9 +896,7 @@ const SellingPanel: React.FC = () => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
-      const itemDiscount = (itemSubtotal * item.discount) / 100;
-      const taxableBase = itemSubtotal - itemDiscount;
-      return sum + ((taxableBase * item.tax) / 100);
+      return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
     }, 0);
 
     const grandTotal = subtotal - discountTotal + taxTotal;
@@ -864,9 +912,8 @@ const SellingPanel: React.FC = () => {
           const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
           const itemSubtotal = item.unitPrice * netPills;
           const itemDiscount = (itemSubtotal * item.discount) / 100;
-          const taxableBase = itemSubtotal - itemDiscount;
-          const itemTax = (taxableBase * item.tax) / 100;
-          const finalPrice = taxableBase + itemTax;
+          const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
+          const finalPrice = itemSubtotal - itemDiscount + itemTax;
 
           return `
                 <tr>
@@ -1074,9 +1121,7 @@ const SellingPanel: React.FC = () => {
     const returned = returnedQuantities.get(item.medicine.id) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
-    const itemDiscount = (itemSubtotal * item.discount) / 100;
-    const taxableBase = itemSubtotal - itemDiscount;
-    return sum + ((taxableBase * item.tax) / 100);
+    return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
   }, 0);
 
   const grandTotal = subtotalValue - discountValue + taxValue;
@@ -1118,9 +1163,11 @@ const SellingPanel: React.FC = () => {
         // Fetch returns for this sale to show returned quantities
         const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
         const returnedByMedicine = new Map<number, number>();
+        let totalReturned = 0;
 
         if (returnsResponse.success && returnsResponse.data) {
           returnsResponse.data.forEach((ret) => {
+            totalReturned += ret.total;
             ret.items.forEach((item) => {
               const current = returnedByMedicine.get(item.medicineId) || 0;
               returnedByMedicine.set(item.medicineId, current + item.pills);
@@ -1171,6 +1218,7 @@ const SellingPanel: React.FC = () => {
 
         setCart(cartItems);
         setReturnedQuantities(returnedByMedicine);
+        setCurrentSaleReturnTotal(totalReturned);
 
         // Set current bill index if provided
         if (index !== undefined) {
@@ -1370,6 +1418,59 @@ const SellingPanel: React.FC = () => {
       setProcessingReturn(false);
     }
   }, [selectedSaleId, returnItems, customerName, customerPhone, returnReason, returnNotes, loadMedicines, loadSalesHistory, refreshExpiringAlerts]);
+
+  // Helper function to check if a date is today
+  const isToday = (dateString: string): boolean => {
+    try {
+      const date = new Date(dateString);
+      const today = new Date();
+      
+      // Compare year, month, and day
+      return (
+        date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate()
+      );
+    } catch (error) {
+      console.error('Error checking if date is today:', error);
+      return false;
+    }
+  };
+
+  // Handle delete sale
+  const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
+    if (!isToday(saleDate)) {
+      alert('You can only delete sales created today');
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      window.electron.ipcRenderer.once('sale-delete-reply', (response: any) => {
+        if (response.success) {
+          alert('Sale deleted successfully!');
+          // If the deleted sale was selected, clear the form
+          if (selectedSaleId === saleId) {
+            clearFormForNewBill();
+            setCurrentBillIndex(-1);
+            setSelectedSaleId(null);
+          }
+          loadMedicines(); // Reload medicines to update stock
+          loadSalesHistory(); // Reload sales history
+          refreshExpiringAlerts();
+        } else {
+          alert(`Error deleting sale: ${response.error || 'Unknown error'}`);
+        }
+      });
+      window.electron.ipcRenderer.sendMessage('sale-delete', [saleId]);
+    } catch (error) {
+      console.error('Error deleting sale:', error);
+      alert('Error deleting sale. Please try again.');
+    }
+  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -2006,11 +2107,11 @@ const SellingPanel: React.FC = () => {
                       <div className="col-span-1">Sr#</div>
                       <div className="col-span-3">Product</div>
                       <div className="col-span-1 text-center">Qty</div>
-                      <div className="col-span-1 text-center">Price</div>
+                      <div className="col-span-2 text-center">Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-2 text-center">Amount</div>
-                      <div className="col-span-1 text-center">Action</div>
+                      <div className="col-span-1 text-center">Remove</div>
                     </div>
                     {/* Cart Items */}
                     {cart.map((item, index) => (
@@ -2030,74 +2131,63 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         <div className="col-span-1">
-                          {currentBillIndex >= 0 ? (
-                            // Read-only display for old sales
-                            <div className="text-center">
-                              <div className="text-[11px] font-semibold text-gray-900 dark:text-white">
-                                {item.pills - (returnedQuantities.get(item.medicine.id) || 0)}
-                              </div>
-                              {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
-                                <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold">
-                                  Original: {item.pills}
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            // Editable for new sales
-                            <div className="flex items-center gap-0.5 justify-center">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQuantity(item.medicine.id, -1)
+                          <div className="flex items-center gap-0.5 justify-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCartQuantity(item.medicine.id, -1)
+                              }
+                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                              disabled={item.pills <= 1}
+                            >
+                              <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={
+                                typeof item.medicine.sellablePills === 'number'
+                                  ? item.medicine.sellablePills + item.pills
+                                  : undefined
+                              }
+                              value={item.pills}
+                              onChange={(
+                                e: React.ChangeEvent<HTMLInputElement>
+                              ) => {
+                                let val = parseInt(e.target.value, 10);
+                                if (Number.isNaN(val) || val < 1) val = 1;
+                                const maxAvailable = typeof item.medicine.sellablePills === 'number'
+                                  ? item.medicine.sellablePills + item.pills
+                                  : Infinity;
+                                if (val > maxAvailable) {
+                                  val = maxAvailable;
                                 }
-                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                                disabled={item.pills <= 1}
-                              >
-                                <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                              </button>
-                              <input
-                                type="number"
-                                min={1}
-                                max={
-                                  typeof item.medicine.sellablePills === 'number'
-                                    ? item.medicine.sellablePills
-                                    : undefined
-                                }
-                                value={item.pills}
-                                onChange={(
-                                  e: React.ChangeEvent<HTMLInputElement>
-                                ) => {
-                                  let val = parseInt(e.target.value, 10);
-                                  if (Number.isNaN(val) || val < 1) val = 1;
-                                  if (
-                                    typeof item.medicine.sellablePills ===
-                                    'number' &&
-                                    val > item.medicine.sellablePills
-                                  ) {
-                                    val = item.medicine.sellablePills;
-                                  }
-                                  setCartItemQuantity(item.medicine.id, val);
-                                }}
-                                className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQuantity(item.medicine.id, 1)
-                                }
-                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                                disabled={
-                                  typeof item.medicine.sellablePills === 'number'
-                                    ? item.pills >= item.medicine.sellablePills
-                                    : false
-                                }
-                              >
-                                <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                              </button>
+                                setCartItemQuantity(item.medicine.id, val);
+                              }}
+                              className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCartQuantity(item.medicine.id, 1)
+                              }
+                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                              disabled={
+                                typeof item.medicine.sellablePills === 'number'
+                                  ? item.pills >= (item.medicine.sellablePills + item.pills)
+                                  : false
+                              }
+                            >
+                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            </button>
+                          </div>
+                          {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
+                            <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold text-center mt-1">
+                              {returnedQuantities.get(item.medicine.id)} returned
                             </div>
                           )}
                         </div>
-                        <div className="col-span-1 text-center">
+                        <div className="col-span-2 text-center">
 
                           <input
                             type="number"
@@ -2154,16 +2244,14 @@ const SellingPanel: React.FC = () => {
                             const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
-                            const taxableBase = itemSubtotal - itemDiscount;
-                            const itemTax = (taxableBase * item.tax) / 100;
-                            return (taxableBase + itemTax).toFixed(2);
+                            const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
+                            return (itemSubtotal - itemDiscount + itemTax).toFixed(2);
                           })()}
                         </div>
                         <div className="col-span-1 text-center">
                           <button
                             type="button"
                             onClick={() => {
-                              // Always allow removal - works for both new sale and viewing old sale
                               removeFromCart(item.medicine.id);
                             }}
                             className="p-1.5 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded transition-all border border-transparent hover:border-red-300 dark:hover:border-red-700"
@@ -2204,136 +2292,172 @@ const SellingPanel: React.FC = () => {
                     </div>
                   </div>
                   <div className="text-2xl font-bold text-white tracking-tight">
-                    {formatCurrency(calculateTotal())}
+                    {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
                   </div>
+                  {currentSaleReturnTotal > 0 && (
+                    <div className="mt-2 pt-2 border-t border-white/20">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-white/80">Original Total:</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(calculateTotal())}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-1">
+                        <span className="text-white/80">Returned:</span>
+                        <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
+                      </div>
+                      {calculateTotal() < currentSaleReturnTotal && (
+                        <div className="mt-2 pt-2 border-t border-red-300/30">
+                          <p className="text-xs text-red-200">
+                            ⚠️ Data inconsistency detected
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Summary Breakdown Grid */}
-                <div className="space-y-2">
-                  {/* Subtotal Row */}
-                  <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg border border-gray-200 dark:border-gray-600">
-                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-                      Subtotal
-                    </span>
-                    <span className="text-sm font-bold text-gray-900 dark:text-white">
-                      {formatCurrency(subtotalValue)}
-                    </span>
-                  </div>
-
-                  {/* Discount and Tax Row */}
+                {/* Summary Breakdown - Show only when creating new sale */}
+                {currentBillIndex === -1 && cart.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center justify-between py-2 px-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
-                      <span className="text-[10px] font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">
-                        Discount
-                      </span>
-                      <span className="text-sm font-bold text-orange-600 dark:text-orange-400">
-                        -{formatCurrency(discountValue)}
-                      </span>
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
+                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                        Subtotal
+                      </div>
+                      <div className="text-sm font-bold text-gray-900 dark:text-white">
+                        {formatCurrency(subtotalValue)}
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between py-2 px-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                      <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
+                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                        Discount
+                      </div>
+                      <div className="text-sm font-bold text-red-600 dark:text-red-400">
+                        -{formatCurrency(discountValue)}
+                      </div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
+                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
                         Tax
-                      </span>
-                      <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
+                      </div>
+                      <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
                         +{formatCurrency(taxValue)}
-                      </span>
+                      </div>
+                    </div>
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
+                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
+                        Total
+                      </div>
+                      <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(grandTotal)}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Action Buttons Section */}
                 <div className="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700 space-y-2">
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
-                      {/* Primary Action: Update Sale */}
+                      {currentSaleReturnTotal > 0 && (
+                        <div className="px-3 py-2 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+                          <p className="text-xs text-orange-700 dark:text-orange-400 text-center">
+                            This sale has returns and cannot be modified
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Update and Delete buttons in one row - Only show if no returns */}
+                      {currentSaleReturnTotal === 0 && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={handleCheckout}
+                            disabled={processing || cart.length === 0}
+                            className="py-2.5 bg-blue-600 dark:bg-blue-700 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
+                          >
+                            {processing ? (
+                              <>
+                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Updating...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FiCheck className="w-3.5 h-3.5" />
+                                <span>Update</span>
+                              </>
+                            )}
+                          </button>
+
+                          {(() => {
+                            const sale = salesHistoryList.find(s => s.saleId === selectedSaleId);
+                            const canDelete = sale && isToday(sale.createdAt);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sale) {
+                                    handleDeleteSale(sale.saleId, sale.createdAt);
+                                  }
+                                }}
+                                disabled={!canDelete}
+                                className={`py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 ${
+                                  canDelete
+                                    ? 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
+                                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
+                                }`}
+                                title={canDelete ? 'Delete this sale' : 'Can only delete today\'s sales'}
+                              >
+                                <FiTrash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            );
+                          })()}
+                        </div>
+                      )}
+
                       <button
                         type="button"
-                        onClick={handleCheckout}
-                        disabled={processing || cart.length === 0}
-                        className="w-full py-3 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        onClick={handleOpenReturnModal}
+                        className="w-full py-3 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
                       >
-                        {processing ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Updating Sale...</span>
-                          </>
-                        ) : (
-                          <>
-                              <FiCheck className="w-4 h-4" />
-                            <span>Update Sale</span>
-                          </>
-                        )}
+                        <FiRotateCcw className="w-4 h-4" />
+                        <span>Return Items</span>
                       </button>
 
-                      {/* Secondary Actions Grid */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={handleOpenReturnModal}
-                          className="py-2.5 bg-gradient-to-r from-red-600 to-red-500 dark:from-red-700 dark:to-red-600 text-white rounded-lg text-xs font-semibold hover:from-red-700 hover:to-red-600 dark:hover:from-red-800 dark:hover:to-red-700 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
-                        >
-                          <FiRotateCcw className="w-3.5 h-3.5" />
-                          <span>Return</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (window.confirm('Start a new sale? This will clear the current cart.')) {
-                              clearFormForNewBill();
-                              setCurrentBillIndex(-1);
-                              setSelectedSaleId(null);
-                            }
-                          }}
-                          className="py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600"
-                        >
-                          <FiPlus className="w-3.5 h-3.5" />
-                          <span>New Sale</span>
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearFormForNewBill();
+                          setCurrentBillIndex(-1);
+                          setSelectedSaleId(null);
+                        }}
+                        className="w-full py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600"
+                      >
+                        <FiX className="w-4 h-4" />
+                        <span>Cancel / New Sale</span>
+                      </button>
                     </>
                   ) : (
-                      // When creating new sale
+                    // When creating new sale - Show Complete Sale button
                     <button
                       type="button"
                       onClick={handleCheckout}
                       disabled={processing || cart.length === 0}
-                        className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                      >
-                        {processing ? (
-                          <>
-                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Processing Sale...</span>
-                          </>
-                        ) : (
-                          <>
-                              <FiCheck className="w-5 h-5" />
-                              <span>Complete Sale</span>
+                      className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                      {processing ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Processing Sale...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FiCheck className="w-5 h-5" />
+                          <span>Complete Sale</span>
                         </>
                       )}
                     </button>
                   )}
-
-                  {/* Utility Actions */}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handlePrintInvoice}
-                      disabled={cart.length === 0}
-                      className="flex-1 py-2 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <FiPrinter className="w-3.5 h-3.5" />
-                      <span>Print</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearCart}
-                      className="flex-1 py-2 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600"
-                    >
-                      <FiRotateCcw className="w-3.5 h-3.5" />
-                      <span>Reset</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -2486,7 +2610,7 @@ const SellingPanel: React.FC = () => {
                                   }`}
                               >
                                 {symbol}
-                                {sale.total.toFixed(2)}
+                                {Math.max(0, sale.total - (saleReturnsMap.get(sale.saleId) || 0)).toFixed(2)}
                               </span>
                             </div>
                           </div>

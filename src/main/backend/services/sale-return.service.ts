@@ -49,7 +49,7 @@ export class SaleReturnService {
         customer_phone TEXT,
         reason TEXT,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (sale_id) REFERENCES sales(id)
       )
     `);
@@ -252,9 +252,10 @@ export class SaleReturnService {
           customer_name,
           customer_phone,
           reason,
-          notes
+          notes,
+          created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleReturnResult = await this.dbService.execute(insertSaleReturnSql, [
         payload.saleId,

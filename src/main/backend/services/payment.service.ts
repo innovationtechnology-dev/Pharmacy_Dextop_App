@@ -29,8 +29,8 @@ export class PaymentService {
         payment_method TEXT NOT NULL,
         reference TEXT,
         notes TEXT,
-        payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        payment_date DATETIME DEFAULT (datetime('now', 'localtime')),
+        created_at DATETIME DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE
       )
     `);
@@ -61,8 +61,8 @@ export class PaymentService {
         await this.dbService.execute('BEGIN TRANSACTION');
         try {
             const sql = `
-        INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date, created_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))
       `;
             const result = await this.dbService.execute(sql, [
                 payment.purchaseId,
@@ -70,7 +70,6 @@ export class PaymentService {
                 payment.paymentMethod,
                 payment.reference || null,
                 payment.notes || null,
-                payment.paymentDate || new Date().toISOString()
             ]);
             const paymentId = (result as any).lastID;
 

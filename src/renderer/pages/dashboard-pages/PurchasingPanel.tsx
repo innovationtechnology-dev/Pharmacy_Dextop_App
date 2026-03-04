@@ -39,8 +39,9 @@ interface PurchaseItem {
   packetQuantity: number;
   pillsPerPacket: number;
   totalPills: number;
-  pricePerPacket: number;
-  pricePerPill: number;
+  totalAmount: number; // NEW: Total amount paid for all packets
+  pricePerPacket: number; // Calculated from totalAmount
+  pricePerPill: number; // Calculated from totalAmount
   discount: number;
   tax: number;
   discountAmount?: number;
@@ -53,12 +54,18 @@ interface PurchaseItem {
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
   const packetQuantity = Math.max(0, item.packetQuantity || 0);
   const pillsPerPacket = Math.max(1, item.pillsPerPacket || 1);
-  const pricePerPacket = Math.max(0, item.pricePerPacket || 0);
+  const totalAmount = Math.max(0, item.totalAmount || 0);
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
+  
+  // Calculate price per packet from total amount
+  const pricePerPacket = packetQuantity > 0 ? totalAmount / packetQuantity : 0;
+  
   const totalPills = packetQuantity * pillsPerPacket;
-  const pricePerPill = pillsPerPacket > 0 ? pricePerPacket / pillsPerPacket : 0;
-  const lineSubtotal = packetQuantity * pricePerPacket;
+  const pricePerPill = totalPills > 0 ? totalAmount / totalPills : 0;
+  
+  // Line subtotal is the total amount entered
+  const lineSubtotal = totalAmount;
   const discountAmount = (lineSubtotal * discountPercent) / 100;
   const taxableBase = lineSubtotal - discountAmount;
   const taxAmount = (taxableBase * taxPercent) / 100;
@@ -68,6 +75,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
     ...item,
     packetQuantity,
     pillsPerPacket,
+    totalAmount,
     pricePerPacket,
     discount: discountPercent,
     tax: taxPercent,
@@ -287,6 +295,7 @@ const PurchasingPanel: React.FC = () => {
         packetQuantity: 1,
         pillsPerPacket: medicine.pillQuantity || 1,
         totalPills: 0,
+        totalAmount: 0,
         pricePerPacket: 0,
         pricePerPill: 0,
         discount: 0,
@@ -648,6 +657,10 @@ const PurchasingPanel: React.FC = () => {
             // Calculate tax percentage (tax is applied to taxable base after discount)
             const taxPercent = taxableBase > 0 ? (taxAmount / taxableBase) * 100 : 0;
 
+            // Calculate totalAmount from existing data
+            // For old purchases, totalAmount = packetQuantity * pricePerPacket
+            const totalAmount = item.totalAmount || (item.packetQuantity * item.pricePerPacket);
+
             return recalculatePurchaseItem({
               medicine: {
                 id: item.medicineId,
@@ -659,6 +672,7 @@ const PurchasingPanel: React.FC = () => {
               },
               packetQuantity: item.packetQuantity,
               pillsPerPacket: item.pillsPerPacket,
+              totalAmount: totalAmount,
               pricePerPacket: item.pricePerPacket,
               discount: discountPercent,
               tax: taxPercent,
@@ -1559,7 +1573,7 @@ const PurchasingPanel: React.FC = () => {
                       <div className="col-span-3">Medicine</div>
                       <div className="col-span-1 text-center">Pkts</div>
                       <div className="col-span-1 text-center">Pills/Pkt</div>
-                      <div className="col-span-1 text-center">Price/Pkt</div>
+                      <div className="col-span-1 text-center">Total Amt</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-2 text-center">Expiry</div>
@@ -1641,31 +1655,31 @@ const PurchasingPanel: React.FC = () => {
                           />
                         </div>
 
-                        {/* Price / Packet */}
+                        {/* Total Amount (for all packets) */}
                         <div className="col-span-1 text-center">
                           <input
                             type="number"
                             min="0"
                             step="0.01"
-                            value={item.pricePerPacket || ''}
+                            value={item.totalAmount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
                               const val = e.target.value;
                               if (val === '') {
-                                updateCartItemField(item.medicine.id, 'pricePerPacket', '' as any);
+                                updateCartItemField(item.medicine.id, 'totalAmount', '' as any);
                               } else {
                                 const numVal = parseFloat(val);
                                 if (!isNaN(numVal) && numVal >= 0) {
-                                  updateCartItemField(item.medicine.id, 'pricePerPacket', numVal);
+                                  updateCartItemField(item.medicine.id, 'totalAmount', numVal);
                                 }
                               }
                             }}
                             onBlur={(e) => {
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
-                                updateCartItemField(item.medicine.id, 'pricePerPacket', 0);
+                                updateCartItemField(item.medicine.id, 'totalAmount', 0);
                               }
                             }}
                             placeholder="0.00"
