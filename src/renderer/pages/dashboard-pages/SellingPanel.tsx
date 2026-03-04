@@ -143,6 +143,7 @@ const SellingPanel: React.FC = () => {
     medicineId: number;
     medicineName: string;
     originalPills: number;
+    availableToReturn: number;
     returnPills: number;
     unitPrice: number;
     discountAmount: number;
@@ -738,7 +739,7 @@ const SellingPanel: React.FC = () => {
   };
 
   const calculateTotal = () => {
-    return cart.reduce((sum, item) => sum + item.finalPrice, 0);
+    return grandTotal;
   };
 
   const handleCheckout = async () => {
@@ -828,12 +829,28 @@ const SellingPanel: React.FC = () => {
     const profile = pharmacyInfo;
     const currencyCode = profile.currency || 'USD';
     const symbol = getSymbol(currencyCode);
-    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    const discountTotal = cart.reduce(
-      (sum, item) => sum + (item.discountAmount || 0),
-      0
-    );
-    const taxTotal = cart.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
+    const subtotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+
+    const discountTotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+
+    const taxTotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      const itemDiscount = (itemSubtotal * item.discount) / 100;
+      const taxableBase = itemSubtotal - itemDiscount;
+      return sum + ((taxableBase * item.tax) / 100);
+    }, 0);
+
     const grandTotal = subtotal - discountTotal + taxTotal;
     const printInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
     const now = new Date();
@@ -842,18 +859,29 @@ const SellingPanel: React.FC = () => {
 
     const rows = cart
       .map(
-        (item, index) => `
+        (item, index) => {
+          const returned = returnedQuantities.get(item.medicine.id) || 0;
+          const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+          const itemSubtotal = item.unitPrice * netPills;
+          const itemDiscount = (itemSubtotal * item.discount) / 100;
+          const taxableBase = itemSubtotal - itemDiscount;
+          const itemTax = (taxableBase * item.tax) / 100;
+          const finalPrice = taxableBase + itemTax;
+
+          return `
                 <tr>
                     <td>${index + 1}</td>
                     <td>
                         <strong>${item.medicine.name}</strong><br/>
                         <small>${item.medicine.barcode || '—'}</small>
+                        ${currentBillIndex >= 0 && returned > 0 ? `<br/><small style="color:#ef4444;">Returned: ${returned}</small>` : ''}
                     </td>
-                    <td>${item.pills}</td>
+                    <td>${netPills}</td>
                     <td>${symbol}${item.unitPrice.toFixed(2)}</td>
-                    <td>${symbol}${item.subtotal.toFixed(2)}</td>
+                    <td>${symbol}${finalPrice.toFixed(2)}</td>
                 </tr>
-            `
+            `;
+        }
       )
       .join('');
 
@@ -1029,12 +1057,28 @@ const SellingPanel: React.FC = () => {
     }
   };
 
-  const subtotalValue = cart.reduce((sum, item) => sum + item.subtotal, 0);
-  const discountValue = cart.reduce(
-    (sum, item) => sum + (item.discountAmount || 0),
-    0
-  );
-  const taxValue = cart.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
+  const subtotalValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    return sum + (item.unitPrice * netPills);
+  }, 0);
+
+  const discountValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    const itemSubtotal = item.unitPrice * netPills;
+    return sum + ((itemSubtotal * item.discount) / 100);
+  }, 0);
+
+  const taxValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    const itemSubtotal = item.unitPrice * netPills;
+    const itemDiscount = (itemSubtotal * item.discount) / 100;
+    const taxableBase = itemSubtotal - itemDiscount;
+    return sum + ((taxableBase * item.tax) / 100);
+  }, 0);
+
   const grandTotal = subtotalValue - discountValue + taxValue;
 
   const formatCurrency = (value: number) => {
@@ -1217,18 +1261,19 @@ const SellingPanel: React.FC = () => {
         // Initialize return items from cart (all items, but not pre-selected)
         const items = cart.map((item) => {
           const alreadyReturned = returnedByMedicine.get(item.medicine.id) || 0;
-          const availableToReturn = item.pills - alreadyReturned;
+          const availableToReturn = Math.max(0, item.pills - alreadyReturned);
           return {
             medicineId: item.medicine.id,
             medicineName: item.medicine.name,
             originalPills: item.pills,
+            availableToReturn,
             returnPills: 0, // Start with 0 - user will select which items to return
             unitPrice: item.unitPrice,
             discountAmount: item.discountAmount || 0,
             taxAmount: item.taxAmount || 0,
             reason: '',
           };
-        }).filter(item => item.originalPills > 0);
+        }).filter(item => item.availableToReturn > 0);
 
         if (items.length === 0) {
           alert('No items available to return from this sale');
@@ -1245,6 +1290,7 @@ const SellingPanel: React.FC = () => {
         medicineId: item.medicine.id,
         medicineName: item.medicine.name,
         originalPills: item.pills,
+        availableToReturn: item.pills,
         returnPills: 0, // Start with 0 - user will select which items to return
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount || 0,
@@ -1295,8 +1341,24 @@ const SellingPanel: React.FC = () => {
         setReturnItems([]);
         setReturnReason('');
         setReturnNotes('');
-        loadMedicines(); // Reload medicines to update quantities
-        loadSalesHistory(); // Reload sales history
+        
+        // Refresh local returned quantities for the current sale immediately
+        if (selectedSaleId) {
+          const returnsResp = await getSaleReturnsBySaleId(selectedSaleId);
+          if (returnsResp.success && returnsResp.data) {
+            const returnedByMed = new Map<number, number>();
+            returnsResp.data.forEach((ret) => {
+              ret.items.forEach((it) => {
+                const cur = returnedByMed.get(it.medicineId) || 0;
+                returnedByMed.set(it.medicineId, cur + it.pills);
+              });
+            });
+            setReturnedQuantities(returnedByMed);
+          }
+        }
+
+        loadMedicines(); // Reload medicines to update stock
+        loadSalesHistory(); // Reload sales history list
         refreshExpiringAlerts();
       } else {
         alert(`Error processing return: ${result.error || 'Unknown error'}`);
@@ -1972,11 +2034,11 @@ const SellingPanel: React.FC = () => {
                             // Read-only display for old sales
                             <div className="text-center">
                               <div className="text-[11px] font-semibold text-gray-900 dark:text-white">
-                                {item.pills}
+                                {item.pills - (returnedQuantities.get(item.medicine.id) || 0)}
                               </div>
                               {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
                                 <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold">
-                                  -{returnedQuantities.get(item.medicine.id)} ret
+                                  Original: {item.pills}
                                 </div>
                               )}
                             </div>
@@ -2087,7 +2149,15 @@ const SellingPanel: React.FC = () => {
                           />
                         </div>
                         <div className="col-span-2 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs">
-                          {symbol}{item.finalPrice.toFixed(2)}
+                          {symbol}{(() => {
+                            const returned = returnedQuantities.get(item.medicine.id) || 0;
+                            const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+                            const itemSubtotal = item.unitPrice * netPills;
+                            const itemDiscount = (itemSubtotal * item.discount) / 100;
+                            const taxableBase = itemSubtotal - itemDiscount;
+                            const itemTax = (taxableBase * item.tax) / 100;
+                            return (taxableBase + itemTax).toFixed(2);
+                          })()}
                         </div>
                         <div className="col-span-1 text-center">
                           <button
@@ -2493,7 +2563,7 @@ const SellingPanel: React.FC = () => {
                       onClick={() => {
                         const newItems = returnItems.map(item => ({
                           ...item,
-                          returnPills: item.originalPills
+                          returnPills: item.availableToReturn
                         }));
                         setReturnItems(newItems);
                       }}
@@ -2536,7 +2606,7 @@ const SellingPanel: React.FC = () => {
                             checked={isSelected}
                             onChange={(e) => {
                               const newItems = [...returnItems];
-                              newItems[index].returnPills = e.target.checked ? item.originalPills : 0;
+                              newItems[index].returnPills = e.target.checked ? item.availableToReturn : 0;
                               setReturnItems(newItems);
                             }}
                             className="mt-1 w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500 focus:ring-2 cursor-pointer"
@@ -2546,7 +2616,11 @@ const SellingPanel: React.FC = () => {
                               {item.medicineName}
                             </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Original: {item.originalPills} pills | Unit Price: {symbol}{item.unitPrice.toFixed(2)}
+                              Available to Return: <span className="font-bold text-gray-700 dark:text-gray-200">{item.availableToReturn} pills</span>
+                              {item.availableToReturn < item.originalPills && (
+                                <span className="ml-2 text-[10px] text-red-500 italic">({item.originalPills - item.availableToReturn} already returned)</span>
+                              )}
+                              {" | "} Unit Price: {symbol}{item.unitPrice.toFixed(2)}
                             </div>
                             {isSelected && (
                               <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
@@ -2564,17 +2638,17 @@ const SellingPanel: React.FC = () => {
                               <input
                                 type="number"
                                 min={1}
-                                max={item.originalPills}
+                                max={item.availableToReturn}
                                 value={item.returnPills}
                                 onChange={(e) => {
                                   const newItems = [...returnItems];
-                                  newItems[index].returnPills = Math.max(1, Math.min(item.originalPills, parseInt(e.target.value) || 1));
+                                  newItems[index].returnPills = Math.max(1, Math.min(item.availableToReturn, parseInt(e.target.value) || 1));
                                   setReturnItems(newItems);
                                 }}
                                 className="w-full px-2 py-1 text-sm border border-red-300 dark:border-red-700 rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
                               />
                               <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-                                Max: {item.originalPills}
+                                Max: {item.availableToReturn}
                               </div>
                             </div>
                             <div>
