@@ -13,6 +13,7 @@ const Signup: React.FC<SignupProps> = ({ onSignup }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    role: 'cashier', // Default to cashier for safety
     password: '',
     confirmPassword: '',
   });
@@ -75,7 +76,8 @@ const Signup: React.FC<SignupProps> = ({ onSignup }) => {
       const result = await signup(
         formData.name,
         formData.email,
-        formData.password
+        formData.password,
+        formData.role
       );
 
       if (result.success) {
@@ -190,6 +192,37 @@ const Signup: React.FC<SignupProps> = ({ onSignup }) => {
                       {errors.email}
                     </p>
                   )}
+                </div>
+
+                {/* Role Selection */}
+                <div>
+                  <label className="block text-xs xs:text-sm sm:text-base md:text-lg lg:text-base xl:text-lg 2xl:text-xl 3xl:text-2xl 4k:text-3xl 5k:text-4xl font-medium text-gray-600 mb-1">
+                    Select Role
+                  </label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="role"
+                        value="admin"
+                        checked={formData.role === 'admin'}
+                        onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value }))}
+                        className="w-4 h-4 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700">Admin</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="role"
+                        value="cashier"
+                        checked={formData.role === 'cashier'}
+                        onChange={(e) => setFormData(prev => ({ ...prev, role: e.target.value }))}
+                        className="w-4 h-4 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700">Cashier</span>
+                    </label>
+                  </div>
                 </div>
 
                 {/* Password Field */}

@@ -95,7 +95,13 @@ const Dashboard_Layout: React.FC = () => {
 
     setUser(authUser);
     setToken(authToken);
-  }, [navigate]);
+
+    // Route Guarding for Cashier
+    const prohibitedRoutes = ['/settings', '/dashboard', '/payments', '/financial-summary'];
+    if (authUser.role === 'cashier' && prohibitedRoutes.some(route => location.pathname.startsWith(route))) {
+      navigate('/main-menu');
+    }
+  }, [navigate, location.pathname]);
 
   const handleLogout = () => {
     authLogout();
@@ -641,7 +647,7 @@ const Dashboard_Layout: React.FC = () => {
                               </div>
                               <div className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                                Administrator
+                                {user?.role === 'admin' ? 'Administrator' : 'Cashier'}
                               </div>
                             </div>
                           )}

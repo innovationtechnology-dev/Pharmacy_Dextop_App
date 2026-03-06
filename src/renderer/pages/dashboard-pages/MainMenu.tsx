@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { logout as authLogout } from '../../utils/auth';
+import { logout as authLogout, getAuthUser } from '../../utils/auth';
 import {
   FiUsers,
   FiPackage,
@@ -109,6 +109,8 @@ const MainMenu: React.FC = () => {
     { id: 'reports', label: 'Reports', icon: FiBarChart2, shortcut: 'Ctrl+3' },
     { id: 'settings', label: 'Settings', icon: FiSettings, shortcut: 'Ctrl+4' },
   ];
+ 
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   const operationsModules: MenuItem[] = [
     {
@@ -178,6 +180,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-violet-500/10 to-violet-600/10',
       description: 'Transaction Management',
       route: '/payments',
+      // disabled: isCashier,
     },
     {
       id: 'alerts',
@@ -201,6 +204,7 @@ const MainMenu: React.FC = () => {
       description: 'Overview & Analytics',
       route: '/dashboard',
       shortcut: 'Ctrl+D',
+      disabled: isCashier,
     },
     {
       id: 'financial-summary',
@@ -211,6 +215,7 @@ const MainMenu: React.FC = () => {
       description: 'Finance Overview',
       route: '/financial-summary',
       shortcut: 'Ctrl+F',
+      disabled: isCashier,
     },
     {
       id: 'sale-report',
@@ -233,6 +238,7 @@ const MainMenu: React.FC = () => {
     },
   ];
 
+
   const settingsModules: MenuItem[] = [
     {
       id: 'license',
@@ -242,6 +248,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-blue-500/10 to-indigo-600/10',
       description: 'License Management',
       route: '/license',
+      // disabled: isCashier,
     },
     {
       id: 'settings',
@@ -252,10 +259,15 @@ const MainMenu: React.FC = () => {
       description: 'System Configuration',
       route: '/settings',
       shortcut: 'Ctrl+,',
+      disabled: isCashier,
     },
   ];
 
-  const allModules = [...operationsModules, ...reportModules, ...settingsModules];
+  const allModules = [
+    ...operationsModules.map(m => (isCashier && m.id === 'payments') ? { ...m, disabled: true } : m),
+    ...reportModules.map(m => (isCashier && (m.id === 'dashboard' || m.id === 'financial-summary')) ? { ...m, disabled: true } : m),
+    ...settingsModules
+  ];
 
   const filteredModules = allModules.filter((module) => {
     const matchesCategory =

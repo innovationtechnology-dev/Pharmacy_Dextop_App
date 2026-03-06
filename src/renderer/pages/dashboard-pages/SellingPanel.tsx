@@ -31,6 +31,7 @@ import {
 import { getSalesFlatRows, FlatSaleRow, updateSale } from '../../utils/sales';
 import { createSaleReturn, getSaleReturnsBySaleId, SaleReturnItem } from '../../utils/sale-return';
 import { Link } from 'react-router-dom';
+import { getAuthUser } from '../../utils/auth';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
@@ -154,6 +155,7 @@ const SellingPanel: React.FC = () => {
   const [processingReturn, setProcessingReturn] = useState(false);
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -1439,6 +1441,11 @@ const SellingPanel: React.FC = () => {
 
   // Handle delete sale
   const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
+    if (isCashier) {
+      alert('Cashiers are not allowed to delete sales');
+      return;
+    }
+
     if (!isToday(saleDate)) {
       alert('You can only delete sales created today');
       return;
@@ -2138,7 +2145,7 @@ const SellingPanel: React.FC = () => {
                                 updateCartQuantity(item.medicine.id, -1)
                               }
                               className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                              disabled={item.pills <= 1}
+                              disabled={item.pills <= 1 || (isCashier && currentBillIndex >= 0)}
                             >
                               <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
@@ -2151,9 +2158,11 @@ const SellingPanel: React.FC = () => {
                                   : undefined
                               }
                               value={item.pills}
+                              readOnly={isCashier && currentBillIndex >= 0}
                               onChange={(
                                 e: React.ChangeEvent<HTMLInputElement>
                               ) => {
+                                if (isCashier && currentBillIndex >= 0) return;
                                 let val = parseInt(e.target.value, 10);
                                 if (Number.isNaN(val) || val < 1) val = 1;
                                 const maxAvailable = typeof item.medicine.sellablePills === 'number'
@@ -2164,7 +2173,7 @@ const SellingPanel: React.FC = () => {
                                 }
                                 setCartItemQuantity(item.medicine.id, val);
                               }}
-                              className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                             <button
                               type="button"
@@ -2173,9 +2182,10 @@ const SellingPanel: React.FC = () => {
                               }
                               className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
                               disabled={
-                                typeof item.medicine.sellablePills === 'number'
+                                (isCashier && currentBillIndex >= 0) ||
+                                (typeof item.medicine.sellablePills === 'number'
                                   ? item.pills >= (item.medicine.sellablePills + item.pills)
-                                  : false
+                                  : false)
                               }
                             >
                               <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
@@ -2252,10 +2262,16 @@ const SellingPanel: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => {
+                              if (isCashier && currentBillIndex >= 0) return;
                               removeFromCart(item.medicine.id);
                             }}
-                            className="p-1.5 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded transition-all border border-transparent hover:border-red-300 dark:hover:border-red-700"
-                            title="Remove from cart"
+                            disabled={isCashier && currentBillIndex >= 0}
+                            className={`p-1.5 transition-all border border-transparent ${
+                              isCashier && currentBillIndex >= 0
+                                ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                                : 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded hover:border-red-300 dark:hover:border-red-700'
+                            }`}
+                            title={isCashier && currentBillIndex >= 0 ? 'Cashiers cannot modify old sales' : 'Remove from cart'}
                           >
                             <FiTrash2 className="w-4 h-4" />
                           </button>
@@ -2358,16 +2374,16 @@ const SellingPanel: React.FC = () => {
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
-                      {currentSaleReturnTotal > 0 && (
-                        <div className="px-3 py-2 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
-                          <p className="text-xs text-orange-700 dark:text-orange-400 text-center">
-                            This sale has returns and cannot be modified
+                      {((currentSaleReturnTotal > 0) || isCashier) && (
+                        <div className={`px-3 py-2 border rounded-lg ${isCashier ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'}`}>
+                          <p className={`text-xs text-center ${isCashier ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400'}`}>
+                            {isCashier ? 'Cashiers cannot modify existing sales' : 'This sale has returns and cannot be modified'}
                           </p>
                         </div>
                       )}
 
-                      {/* Update and Delete buttons in one row - Only show if no returns */}
-                      {currentSaleReturnTotal === 0 && (
+                      {/* Update and Delete buttons in one row - Only show if no returns AND not cashier */}
+                      {currentSaleReturnTotal === 0 && !isCashier && (
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"

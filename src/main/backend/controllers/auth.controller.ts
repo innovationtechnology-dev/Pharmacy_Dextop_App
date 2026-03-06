@@ -31,13 +31,14 @@ export class AuthController {
     // Handle user signup
     ipcMain.on('auth-signup', async (event: IpcMainEvent, args: any[]) => {
       try {
-        const data = args[0] as { name: string; email: string; password: string };
-        const result = await this.authService.signup(data.name, data.email, data.password);
+        const data = args[0] as { name: string; email: string; password: string; role?: string };
+        const role = data.role || 'admin';
+        const result = await this.authService.signup(data.name, data.email, data.password, role);
         
         // Log to verify data storage
         if (result.success) {
-          console.log(`✅ User registered successfully: ${data.email} (ID: ${result.user?.id})`);
-          console.log(`📊 Stored in database: name=${data.name}, email=${data.email}`);
+          console.log(`✅ User registered successfully: ${data.email} as ${role} (ID: ${result.user?.id})`);
+          console.log(`📊 Stored in database: name=${data.name}, email=${data.email}, role=${role}`);
         }
         
         event.reply('auth-signup-reply', result);

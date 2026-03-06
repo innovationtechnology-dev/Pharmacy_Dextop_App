@@ -9,7 +9,7 @@ export interface User {
   email: string;
   phone?: string;
   address?: string;
-  role?: string;
+  role: string;
   firstName?: string;
   lastName?: string;
 }
@@ -96,7 +96,7 @@ export const login = async (email: string, password: string): Promise<AuthRespon
 /**
  * Signup user
  */
-export const signup = async (name: string, email: string, password: string): Promise<AuthResponse> => {
+export const signup = async (name: string, email: string, password: string, role: string = 'admin'): Promise<AuthResponse> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('auth-signup-reply', (response: any) => {
       if (response.success && response.token && response.user) {
@@ -106,7 +106,7 @@ export const signup = async (name: string, email: string, password: string): Pro
       resolve(response);
     });
 
-    window.electron.ipcRenderer.sendMessage('auth-signup', [{ name, email, password }] as any);
+    window.electron.ipcRenderer.sendMessage('auth-signup', [{ name, email, password, role }] as any);
   });
 };
 
