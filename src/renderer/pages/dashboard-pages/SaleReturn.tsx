@@ -25,6 +25,15 @@ export default function SaleReturn() {
     return `${d.getFullYear()}-${mm}-${dd}`;
   });
 
+  // Calculate limit for cashier (1 month ago)
+  const minFromDate = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
   const [reportRows, setReportRows] = useState<FlatSaleReturnRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -293,13 +302,9 @@ export default function SaleReturn() {
                 <input
                   type="date"
                   value={fromDate}
+                  min={isCashier ? minFromDate : undefined}
                   onChange={(e) => setFromDate(e.target.value)}
-                  readOnly={isCashier}
-                  className={`w-full sm:w-40 px-3 py-1.5 text-xs border rounded outline-none transition-all ${
-                    isCashier 
-                      ? 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 cursor-not-allowed' 
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-orange-500 focus:border-orange-500'
-                  }`}
+                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
                 />
               </div>
               <div className="w-full sm:w-auto">
@@ -310,12 +315,7 @@ export default function SaleReturn() {
                   type="date"
                   value={toDate}
                   onChange={(e) => setToDate(e.target.value)}
-                  readOnly={isCashier}
-                  className={`w-full sm:w-40 px-3 py-1.5 text-xs border rounded outline-none transition-all ${
-                    isCashier 
-                      ? 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-400 cursor-not-allowed' 
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-orange-500 focus:border-orange-500'
-                  }`}
+                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
                 />
               </div>
               <button

@@ -6,6 +6,7 @@ import ReportDetailModal from '../../components/common/DetailModal';
 import { exportPurchasesPdf, exportPurchasesCsv } from '../../utils/purchases';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { getAuthUser } from '../../utils/auth';
 
 
 interface PurchaseItem {
@@ -46,7 +47,6 @@ const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
 export default function Purchases() {
   const [fromDate, setFromDate] = useState<string>(() => {
     const d = new Date();
-    // d.setDate(d.getDate() - 30); // Default to last 30 days
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${mm}-${dd}`;
@@ -57,6 +57,15 @@ export default function Purchases() {
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${mm}-${dd}`;
   });
+
+  // Calculate limit for cashier (1 month ago)
+  const minFromDate = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
 
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,6 +80,7 @@ export default function Purchases() {
 
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   // Get currency symbol
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
@@ -502,6 +512,7 @@ export default function Purchases() {
                 <input
                   type="date"
                   value={fromDate}
+                  min={isCashier ? minFromDate : undefined}
                   onChange={(e) => setFromDate(e.target.value)}
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                 />
@@ -553,43 +564,45 @@ export default function Purchases() {
                     />
                   </div>
                 </div>
-                {/* Download Dropdown */}
-                <div className="relative w-full sm:w-auto" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                    className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
-                    Download
-                    {renderIcon(FaChevronDown, { className: `w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}` })}
-                  </button>
+                {/* Download Dropdown - Hidden for Cashiers */}
+                {!isCashier && (
+                  <div className="relative w-full sm:w-auto" ref={dropdownRef}>
+                    <button
+                      onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
+                      className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+                    >
+                      {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
+                      Download
+                      {renderIcon(FaChevronDown, { className: `w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}` })}
+                    </button>
 
-                  {/* Dropdown Menu */}
-                  {showDownloadDropdown && (
-                    <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
-                      <button
-                        onClick={() => { setShowDownloadDropdown(false); setShowPdfOptions(true); }}
-                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
-                      >
-                        {renderIcon(FaFilePdf, { className: "w-4 h-4 text-red-500" })}
-                        <div>
-                          <div className="font-bold">Export as PDF</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
-                        </div>
-                      </button>
-                      <button
-                        onClick={handleDownloadCsv}
-                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
-                      >
-                        {renderIcon(FaFileExcel, { className: "w-4 h-4 text-green-500" })}
-                        <div>
-                          <div className="font-bold">Export as CSV</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
-                        </div>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    {/* Dropdown Menu */}
+                    {showDownloadDropdown && (
+                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
+                        <button
+                          onClick={() => { setShowDownloadDropdown(false); setShowPdfOptions(true); }}
+                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
+                        >
+                          {renderIcon(FaFilePdf, { className: "w-4 h-4 text-red-500" })}
+                          <div>
+                            <div className="font-bold">Export as PDF</div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={handleDownloadCsv}
+                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
+                        >
+                          {renderIcon(FaFileExcel, { className: "w-4 h-4 text-green-500" })}
+                          <div>
+                            <div className="font-bold">Export as CSV</div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

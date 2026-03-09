@@ -8,6 +8,7 @@ import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useToast, ToastContainer } from '../../components/common/Toast';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { getAuthUser } from '../../utils/auth';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -141,6 +142,8 @@ const PurchasingPanel: React.FC = () => {
       minute: '2-digit',
     });
   });
+  
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   // Update time every minute
   useEffect(() => {
@@ -623,7 +626,7 @@ const PurchasingPanel: React.FC = () => {
     value ? new Date(value).toLocaleDateString() : '—';
 
   const isWithin24Hours = (dateString?: string): boolean => {
-    if (!dateString) return false;
+    if (!dateString) return true;
     const purchaseDate = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - purchaseDate.getTime();
@@ -1296,7 +1299,7 @@ const PurchasingPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={handlePurchase}
-                  disabled={processing || cart.length === 0}
+                  disabled={processing || cart.length === 0 || (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))}
                   className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-xs font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-md"
                 >
                   {processing ? (
@@ -1619,10 +1622,12 @@ const PurchasingPanel: React.FC = () => {
                               min="1"
                               value={item.packetQuantity || ''}
                               onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                                e.currentTarget.select();
-                              }}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               e.currentTarget.select();
+                             }}
+                             onChange={(e) => {
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               const val = e.target.value;
                                 if (val === '') {
                                   // Allow empty during typing
                                   updateCartItemField(item.medicine.id, 'packetQuantity', '' as any);
@@ -1634,13 +1639,15 @@ const PurchasingPanel: React.FC = () => {
                                 }
                               }}
                               onBlur={(e) => {
+                                if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                                 const val = e.target.value;
                                 if (val === '' || parseInt(val) < 1 || isNaN(parseInt(val))) {
                                   // Set to 1 if empty or invalid when leaving field
                                   updateCartItemField(item.medicine.id, 'packetQuantity', 1);
                                 }
                               }}
-                              className="w-full px-2 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                              readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                              className={`w-full px-2 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                           </div>
                         </div>
@@ -1663,9 +1670,11 @@ const PurchasingPanel: React.FC = () => {
                             step="0.01"
                             value={item.totalAmount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
                                 updateCartItemField(item.medicine.id, 'totalAmount', '' as any);
@@ -1677,13 +1686,15 @@ const PurchasingPanel: React.FC = () => {
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
                                 updateCartItemField(item.medicine.id, 'totalAmount', 0);
                               }
                             }}
                             placeholder="0.00"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1696,9 +1707,11 @@ const PurchasingPanel: React.FC = () => {
                             step="0.1"
                             value={item.discount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
                                 updateCartItemField(item.medicine.id, 'discount', '' as any);
@@ -1710,13 +1723,15 @@ const PurchasingPanel: React.FC = () => {
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
                                 updateCartItemField(item.medicine.id, 'discount', 0);
                               }
                             }}
                             placeholder="0"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1729,9 +1744,11 @@ const PurchasingPanel: React.FC = () => {
                             step="0.1"
                             value={item.tax || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
                                 updateCartItemField(item.medicine.id, 'tax', '' as any);
@@ -1743,13 +1760,15 @@ const PurchasingPanel: React.FC = () => {
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
                                 updateCartItemField(item.medicine.id, 'tax', 0);
                               }
                             }}
                             placeholder="0"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1760,11 +1779,16 @@ const PurchasingPanel: React.FC = () => {
                             value={item.expiryDate}
                             min={minExpiryDate}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                              e.currentTarget.select();
-                            }}
-                            onChange={(e) => updateCartItemField(item.medicine.id, 'expiryDate', e.target.value)}
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
-                          />
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               e.currentTarget.select();
+                             }}
+                             onChange={(e) => {
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               updateCartItemField(item.medicine.id, 'expiryDate', e.target.value);
+                             }}
+                             readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                             className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                           />
                         </div>
 
                         {/* Line Total */}

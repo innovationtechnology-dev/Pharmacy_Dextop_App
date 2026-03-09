@@ -157,6 +157,15 @@ const SellingPanel: React.FC = () => {
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
   const isCashier = getAuthUser()?.role === 'cashier';
 
+  const isWithin24Hours = useCallback((dateString?: string): boolean => {
+    if (!dateString) return true;
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    return diffHours <= 24;
+  }, []);
+
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -445,6 +454,11 @@ const SellingPanel: React.FC = () => {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
   }, [salesHistory]);
+
+  const selectedSale = useMemo(() => {
+    if (selectedSaleId === null) return null;
+    return salesHistoryList.find((s) => s.saleId === selectedSaleId);
+  }, [selectedSaleId, salesHistoryList]);
 
   // Load returns for all sales in history to show net totals
   useEffect(() => {
@@ -2145,7 +2159,7 @@ const SellingPanel: React.FC = () => {
                                 updateCartQuantity(item.medicine.id, -1)
                               }
                               className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                              disabled={item.pills <= 1 || (isCashier && currentBillIndex >= 0)}
+                              disabled={item.pills <= 1 || (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt))}
                             >
                               <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
@@ -2158,11 +2172,11 @@ const SellingPanel: React.FC = () => {
                                   : undefined
                               }
                               value={item.pills}
-                              readOnly={isCashier && currentBillIndex >= 0}
+                              readOnly={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
                               onChange={(
                                 e: React.ChangeEvent<HTMLInputElement>
                               ) => {
-                                if (isCashier && currentBillIndex >= 0) return;
+                                if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                                 let val = parseInt(e.target.value, 10);
                                 if (Number.isNaN(val) || val < 1) val = 1;
                                 const maxAvailable = typeof item.medicine.sellablePills === 'number'
@@ -2173,7 +2187,7 @@ const SellingPanel: React.FC = () => {
                                 }
                                 setCartItemQuantity(item.medicine.id, val);
                               }}
-                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                             <button
                               type="button"
@@ -2182,7 +2196,7 @@ const SellingPanel: React.FC = () => {
                               }
                               className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
                               disabled={
-                                (isCashier && currentBillIndex >= 0) ||
+                                (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ||
                                 (typeof item.medicine.sellablePills === 'number'
                                   ? item.pills >= (item.medicine.sellablePills + item.pills)
                                   : false)
@@ -2262,16 +2276,16 @@ const SellingPanel: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => {
-                              if (isCashier && currentBillIndex >= 0) return;
+                              if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                               removeFromCart(item.medicine.id);
                             }}
                             disabled={isCashier && currentBillIndex >= 0}
                             className={`p-1.5 transition-all border border-transparent ${
-                              isCashier && currentBillIndex >= 0
+                              isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)
                                 ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
                                 : 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded hover:border-red-300 dark:hover:border-red-700'
                             }`}
-                            title={isCashier && currentBillIndex >= 0 ? 'Cashiers cannot modify old sales' : 'Remove from cart'}
+                            title={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'Cashiers cannot modify old sales' : 'Remove from cart'}
                           >
                             <FiTrash2 className="w-4 h-4" />
                           </button>
@@ -2374,16 +2388,16 @@ const SellingPanel: React.FC = () => {
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
-                      {((currentSaleReturnTotal > 0) || isCashier) && (
-                        <div className={`px-3 py-2 border rounded-lg ${isCashier ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'}`}>
-                          <p className={`text-xs text-center ${isCashier ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400'}`}>
-                            {isCashier ? 'Cashiers cannot modify existing sales' : 'This sale has returns and cannot be modified'}
+                      {((currentSaleReturnTotal > 0) || (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt))) && (
+                        <div className={`px-3 py-2 border rounded-lg ${(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'}`}>
+                          <p className={`text-xs text-center ${(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400'}`}>
+                            {(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'Cashiers cannot modify existing sales after 24 hours' : 'This sale has returns and cannot be modified'}
                           </p>
                         </div>
                       )}
 
                       {/* Update and Delete buttons in one row - Only show if no returns AND not cashier */}
-                      {currentSaleReturnTotal === 0 && !isCashier && (
+                      {currentSaleReturnTotal === 0 && (!isCashier || currentBillIndex === -1 || isWithin24Hours(selectedSale?.createdAt)) && (
                         <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"

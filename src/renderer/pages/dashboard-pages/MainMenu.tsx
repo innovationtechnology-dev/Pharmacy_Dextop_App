@@ -111,6 +111,7 @@ const MainMenu: React.FC = () => {
   ];
  
   const isCashier = getAuthUser()?.role === 'cashier';
+  const isAdmin = getAuthUser()?.role === 'admin';
 
   const operationsModules: MenuItem[] = [
     {
@@ -122,6 +123,7 @@ const MainMenu: React.FC = () => {
       description: 'Point of Sale',
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
+      disabled: isAdmin,
     },
     {
       id: 'medicines',
@@ -142,6 +144,7 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Management',
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
+      disabled: isAdmin,
     },
     {
       id: 'customers',
@@ -171,6 +174,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-pink-500/10 to-pink-600/10',
       description: 'Process Returns',
       route: '/sale-return',
+      disabled: isAdmin,
     },
     {
       id: 'payments',
@@ -180,7 +184,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-violet-500/10 to-violet-600/10',
       description: 'Transaction Management',
       route: '/payments',
-      // disabled: isCashier,
+      disabled: isCashier,
     },
     {
       id: 'alerts',
@@ -191,6 +195,7 @@ const MainMenu: React.FC = () => {
       description: 'System Notifications',
       route: '/alerts',
       shortcut: 'Ctrl+A',
+      disabled: isAdmin,
     },
   ];
 
@@ -248,7 +253,6 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-blue-500/10 to-indigo-600/10',
       description: 'License Management',
       route: '/license',
-      // disabled: isCashier,
     },
     {
       id: 'settings',
@@ -264,8 +268,8 @@ const MainMenu: React.FC = () => {
   ];
 
   const allModules = [
-    ...operationsModules.map(m => (isCashier && m.id === 'payments') ? { ...m, disabled: true } : m),
-    ...reportModules.map(m => (isCashier && (m.id === 'dashboard' || m.id === 'financial-summary')) ? { ...m, disabled: true } : m),
+    ...operationsModules,
+    ...reportModules,
     ...settingsModules
   ];
 
@@ -282,9 +286,9 @@ const MainMenu: React.FC = () => {
   });
 
   const quickAccessModules = [
-    allModules.find((m) => m.id === 'selling-panel'),
+    !isAdmin ? allModules.find((m) => m.id === 'selling-panel') : null,
     allModules.find((m) => m.id === 'medicines'),
-    allModules.find((m) => m.id === 'dashboard'),
+    !isCashier ? allModules.find((m) => m.id === 'dashboard') : null,
   ].filter(Boolean) as MenuItem[];
 
   const handleModuleClick = (module: MenuItem) => {
@@ -441,14 +445,16 @@ const MainMenu: React.FC = () => {
           <FiHome className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
-        <button
-          type="button"
-          onClick={() => navigate('/selling-panel')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Selling Panel (Ctrl+S)"
-        >
-          <FiShoppingCart className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={() => navigate('/selling-panel')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Selling Panel (Ctrl+S)"
+          >
+            <FiShoppingCart className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => navigate('/medicines')}
@@ -457,14 +463,16 @@ const MainMenu: React.FC = () => {
         >
           <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
-        <button
-          type="button"
-          onClick={() => navigate('/dashboard')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Dashboard (Ctrl+D)"
-        >
-          <FiBarChart2 className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
+        {!isCashier && (
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Dashboard (Ctrl+D)"
+          >
+            <FiBarChart2 className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
         <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
         <button
           type="button"
@@ -474,15 +482,17 @@ const MainMenu: React.FC = () => {
           <FiRefreshCw className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => navigate('/alerts')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors relative"
-          title="Alerts"
-        >
-          <FiAlertTriangle className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
-        </button>
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={() => navigate('/alerts')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors relative"
+            title="Alerts"
+          >
+            <FiAlertTriangle className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
+          </button>
+        )}
       </div>
 
       {/* Main Content */}

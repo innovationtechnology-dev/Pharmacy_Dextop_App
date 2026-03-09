@@ -96,9 +96,13 @@ const Dashboard_Layout: React.FC = () => {
     setUser(authUser);
     setToken(authToken);
 
-    // Route Guarding for Cashier
-    const prohibitedRoutes = ['/settings', '/dashboard', '/payments', '/financial-summary'];
-    if (authUser.role === 'cashier' && prohibitedRoutes.some(route => location.pathname.startsWith(route))) {
+    // Route Guarding
+    const cashierProhibitedRoutes = ['/settings', '/dashboard', '/payments', '/financial-summary'];
+    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/sale-return', '/alerts'];
+    
+    if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
+      navigate('/main-menu');
+    } else if (authUser.role === 'admin' && adminProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
       navigate('/main-menu');
     }
   }, [navigate, location.pathname]);
@@ -474,7 +478,8 @@ const Dashboard_Layout: React.FC = () => {
                       }`}
                   >
 
-                    <div className="relative" ref={notificationMenuRef}>
+                    {user?.role !== 'admin' && (
+                      <div className="relative" ref={notificationMenuRef}>
                       <button
                         type="button"
                         className={`relative ${location.pathname.includes('/selling-panel') ||
@@ -578,6 +583,7 @@ const Dashboard_Layout: React.FC = () => {
                         </div>
                       )}
                     </div>
+                    )}
 
                     <div className="relative" ref={profileMenuRef}>
                       <button
