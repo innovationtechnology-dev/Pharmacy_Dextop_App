@@ -39,8 +39,15 @@ export interface ActivationCode {
 
 export class SuperAdminService {
   private dbService = getDatabaseService();
-  private readonly SUPER_ADMIN_EMAIL = 'admin@pharmacy.com';
-  private readonly SUPER_ADMIN_PASSWORD = 'admin123'; // Default password
+  private readonly SUPER_ADMIN_EMAIL = 'superadmin@pharmacy.com';
+  private readonly SUPER_ADMIN_PASSWORD = 'superadmin@123'; // Default super admin password
+
+  // Default seeded users for core roles
+  private readonly DEFAULT_ADMIN_EMAIL = 'admin@pharmacy.com';
+  private readonly DEFAULT_ADMIN_PASSWORD = 'admin@123'; // Default admin password
+
+  private readonly DEFAULT_CASHIER_EMAIL = 'cashier@pharmacy.com';
+  private readonly DEFAULT_CASHIER_PASSWORD = 'cashier@123'; // Default cashier password
 
   constructor() {
     this.initializeSuperAdmin();
@@ -51,15 +58,71 @@ export class SuperAdminService {
    */
   private async initializeSuperAdmin(): Promise<void> {
     try {
-      const existingAdmin = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}'`
+      const superAdminEmailEscaped = this.SUPER_ADMIN_EMAIL.replace(/'/g, "''");
+
+      // Ensure Super Admin user exists and has admin role
+      const existingSuperAdmin = await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${superAdminEmailEscaped}'`
       );
 
-      if (!existingAdmin) {
+      if (!existingSuperAdmin) {
         const passwordHash = this.hashPassword(this.SUPER_ADMIN_PASSWORD);
         await this.dbService.execute(
-          `INSERT INTO users (name, email, password_hash) VALUES ('Super Admin', '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}', '${passwordHash}')`
+          `INSERT INTO users (name, email, password_hash, role) VALUES ('Super Admin', '${superAdminEmailEscaped}', '${passwordHash}', 'admin')`
         );
+      } else {
+        // Make sure Super Admin is marked as admin role
+        await this.dbService.execute(
+          `UPDATE users SET role = 'admin' WHERE email = '${superAdminEmailEscaped}'`
+        );
+      }
+
+      // Ensure there is at least one additional admin user (non super-admin)
+      const adminCountRow = (await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND email != '${superAdminEmailEscaped}'`
+      )) as { count?: number } | null;
+
+      const adminCount =
+        adminCountRow && typeof (adminCountRow as any).count !== 'undefined'
+          ? Number((adminCountRow as any).count)
+          : 0;
+
+      if (adminCount === 0) {
+        const adminEmailEscaped = this.DEFAULT_ADMIN_EMAIL.replace(/'/g, "''");
+        const existingAdminUser = await this.dbService.queryOne(
+          `SELECT * FROM users WHERE email = '${adminEmailEscaped}'`
+        );
+
+        if (!existingAdminUser) {
+          const adminPasswordHash = this.hashPassword(this.DEFAULT_ADMIN_PASSWORD);
+          await this.dbService.execute(
+            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Admin', '${adminEmailEscaped}', '${adminPasswordHash}', 'admin')`
+          );
+        }
+      }
+
+      // Ensure there is at least one cashier user
+      const cashierCountRow = (await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM users WHERE role = 'cashier'`
+      )) as { count?: number } | null;
+
+      const cashierCount =
+        cashierCountRow && typeof (cashierCountRow as any).count !== 'undefined'
+          ? Number((cashierCountRow as any).count)
+          : 0;
+
+      if (cashierCount === 0) {
+        const cashierEmailEscaped = this.DEFAULT_CASHIER_EMAIL.replace(/'/g, "''");
+        const existingCashierUser = await this.dbService.queryOne(
+          `SELECT * FROM users WHERE email = '${cashierEmailEscaped}'`
+        );
+
+        if (!existingCashierUser) {
+          const cashierPasswordHash = this.hashPassword(this.DEFAULT_CASHIER_PASSWORD);
+          await this.dbService.execute(
+            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Cashier', '${cashierEmailEscaped}', '${cashierPasswordHash}', 'cashier')`
+          );
+        }
       }
     } catch (error) {
       // Error initializing super admin

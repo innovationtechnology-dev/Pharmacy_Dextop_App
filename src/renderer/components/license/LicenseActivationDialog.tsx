@@ -7,7 +7,7 @@ import {
   resetAttempts,
 } from '../../utils/licenseAttempts';
 
-const MAX_ATTEMPTS_PER_DAY = 20; // Increased from 5 to 20
+const MAX_ATTEMPTS_PER_DAY = 40; // Daily activation attempts limit
 
 interface LicenseActivationDialogProps {
   onClose: () => void;

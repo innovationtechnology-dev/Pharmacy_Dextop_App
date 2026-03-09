@@ -110,8 +110,10 @@ const MainMenu: React.FC = () => {
     { id: 'settings', label: 'Settings', icon: FiSettings, shortcut: 'Ctrl+4' },
   ];
  
-  const isCashier = getAuthUser()?.role === 'cashier';
-  const isAdmin = getAuthUser()?.role === 'admin';
+  const currentUser = getAuthUser();
+  const isCashier = currentUser?.role === 'cashier';
+  const isAdmin = currentUser?.role === 'admin';
+  const roleLabel = isAdmin ? 'Admin' : isCashier ? 'Cashier' : 'User';
 
   const operationsModules: MenuItem[] = [
     {
@@ -563,16 +565,26 @@ const MainMenu: React.FC = () => {
         <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
           <div className="max-w-7xl mx-auto p-6">
             {/* Page Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                {categories.find((c) => c.id === activeCategory)?.label || 'All Modules'}
-              </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {activeCategory === 'all' && 'Access all your business management modules'}
-                {activeCategory === 'operations' && 'Daily operations and transaction management'}
-                {activeCategory === 'reports' && 'Analytics, reports and business insights'}
-                {activeCategory === 'settings' && 'System configuration and preferences'}
-              </p>
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                  {categories.find((c) => c.id === activeCategory)?.label || 'All Modules'}
+                </h1>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {activeCategory === 'all' && 'Access all your business management modules'}
+                  {activeCategory === 'operations' && 'Daily operations and transaction management'}
+                  {activeCategory === 'reports' && 'Analytics, reports and business insights'}
+                  {activeCategory === 'settings' && 'System configuration and preferences'}
+                </p>
+              </div>
+              {currentUser && (
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-medium shadow-sm">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>{currentUser.name || 'User'}</span>
+                  <span className="w-px h-3 bg-emerald-300/70 dark:bg-emerald-600/70" />
+                  <span className="uppercase tracking-wide">{roleLabel}</span>
+                </div>
+              )}
             </div>
 
             {/* Quick Access */}
@@ -727,6 +739,13 @@ const MainMenu: React.FC = () => {
           </span>
           <span>v2.0.1</span>
           <span>Build 2025.01</span>
+          {currentUser && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
+              <span className="font-semibold">{currentUser.name || 'User'}</span>
+              <span className="w-px h-3 bg-gray-400 dark:bg-gray-500" />
+              <span>{roleLabel}</span>
+            </span>
+          )}
         </div>
         <div>
           <span>© 2025 Pharmacy Management System</span>

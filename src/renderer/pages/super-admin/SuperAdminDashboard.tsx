@@ -377,7 +377,9 @@ const SuperAdminDashboard: React.FC = () => {
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-bold text-gray-900">Super Admin Panel</h1>
-              <p className="text-xs sm:text-sm text-gray-500 hidden sm:block">System Administration</p>
+              <p className="text-xs sm:text-sm text-gray-500 hidden sm:block">
+                Role: <span className="font-semibold text-red-600">Super Admin</span> · System Administration
+              </p>
             </div>
           </div>
           <button

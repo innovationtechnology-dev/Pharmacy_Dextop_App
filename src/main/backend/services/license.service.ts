@@ -232,15 +232,6 @@ export class LicenseService {
 
       console.log(`✓ Code found in database:`, codeData);
 
-      // Check if code is already used
-      if (codeData.is_used === 1) {
-        console.log(`❌ Code already used: ${activationCode}`);
-        return {
-          success: false,
-          error: 'This activation code has already been used.',
-        };
-      }
-
       // Check if code has expired (expiry date is in the past)
       const codeExpiryDate = new Date(codeData.expiry_date);
       const now = new Date();
@@ -264,14 +255,6 @@ export class LicenseService {
       )) as License | null;
 
       console.log(`Existing license for user ${userId}:`, existingLicense);
-
-      // Mark activation code as used
-      await this.dbService.execute(
-        `UPDATE activation_codes
-         SET is_used = 1, used_by_user_id = ?, used_at = CURRENT_TIMESTAMP
-         WHERE code = ?`,
-        [userId, activationCode.toUpperCase()]
-      );
 
       if (existingLicense) {
         // Update existing license
