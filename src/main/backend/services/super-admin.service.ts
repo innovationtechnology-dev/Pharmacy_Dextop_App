@@ -50,13 +50,12 @@ export class SuperAdminService {
   private readonly DEFAULT_CASHIER_PASSWORD = 'cashier@123'; // Default cashier password
 
   constructor() {
-    this.initializeSuperAdmin();
   }
 
   /**
    * Initialize super admin user if it doesn't exist
    */
-  private async initializeSuperAdmin(): Promise<void> {
+  public async initializeSuperAdmin(): Promise<void> {
     try {
       const superAdminEmailEscaped = this.SUPER_ADMIN_EMAIL.replace(/'/g, "''");
 
@@ -449,6 +448,98 @@ export class SuperAdminService {
         success: false,
         error: 'Failed to delete activation code',
       };
+    }
+  }
+  /**
+   * Import database file
+   */
+  public async importDatabase(filePath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'Source file does not exist' };
+      }
+
+      // 1. Basic SQLite Validation
+      const sqlite3 = require('sqlite3').verbose();
+      const tempDb = new sqlite3.Database(filePath);
+      
+      const schemaCheck = await new Promise<boolean>((resolve) => {
+        // Check for 'users' table as a proxy for a valid schema
+        tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
+          if (err || !row) {
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        });
+      });
+
+      // Close temp connection
+      await new Promise<void>((resolve) => tempDb.close(() => resolve()));
+
+      if (!schemaCheck) {
+        return { success: false, error: 'Incompatible database: Missing required tables' };
+      }
+
+      // 2. Rotate Database
+      const currentDbPath = this.getDatabasePath();
+      const backupPath = `${currentDbPath}.bak`;
+      const dbConnection = (require('../database/database.connection')).getDatabaseConnection();
+
+      // Close current connection
+      await dbConnection.close();
+
+      // Give Windows time to release the file handle
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Clean up sidecar files (WAL mode leftovers)
+      const walFile = `${currentDbPath}-wal`;
+      const shmFile = `${currentDbPath}-shm`;
+      if (fs.existsSync(walFile)) {
+        try { fs.unlinkSync(walFile); } catch (e) { console.error('Failed to unlink wal file:', e); }
+      }
+      if (fs.existsSync(shmFile)) {
+        try { fs.unlinkSync(shmFile); } catch (e) { console.error('Failed to unlink shm file:', e); }
+      }
+
+      try {
+        // Backup current (if it exists)
+        if (fs.existsSync(currentDbPath)) {
+          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+          fs.renameSync(currentDbPath, backupPath);
+        }
+
+        // Copy new database
+        fs.copyFileSync(filePath, currentDbPath);
+
+        // Reconnect
+        await dbConnection.connect();
+
+        return { success: true };
+      } catch (err: any) {
+        console.error('Error during database rotation:', err);
+        
+        // Detailed error for UI
+        let errorMessage = 'Failed to rotate database files';
+        if (err.code === 'EBUSY') {
+          errorMessage = 'Database file is currently in use by another process. Please close all other database tools and try again.';
+        }
+
+        // Rollback attempts
+        if (fs.existsSync(backupPath)) {
+          try {
+            if (fs.existsSync(currentDbPath)) fs.unlinkSync(currentDbPath);
+            fs.renameSync(backupPath, currentDbPath);
+            await dbConnection.connect();
+          } catch (rollbackErr) {
+            console.error('Critical: Rollback failed:', rollbackErr);
+          }
+        }
+        return { success: false, error: errorMessage };
+      }
+    } catch (error) {
+      console.error('Import database error:', error);
+      return { success: false, error: 'Database import failed' };
     }
   }
 }

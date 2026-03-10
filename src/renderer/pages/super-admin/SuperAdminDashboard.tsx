@@ -19,6 +19,7 @@ import {
   FiAlertCircle,
   FiLock,
   FiMenu,
+  FiUpload
 } from 'react-icons/fi';
 import {
   superAdminLogout,
@@ -35,6 +36,7 @@ import {
   updateActivationCode,
   deleteActivationCode,
   downloadDatabase,
+  importDatabase,
   User,
   License,
   ActivationCode,
@@ -138,6 +140,28 @@ const SuperAdminDashboard: React.FC = () => {
       }
     } catch (err) {
       error('Failed to download database');
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleImportDatabase = async () => {
+    if (!confirm('Warning: Importing a new database will replace your current data. It is highly recommended to download a backup of your current database first. Are you sure you want to proceed?')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await importDatabase();
+      if (result.success) {
+        success(`Database imported successfully! The application will reload to apply changes.`);
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        error(result.error || 'Failed to import database');
+      }
+    } catch (err) {
+      error('Failed to import database');
     } finally {
       setLoading(false);
     }
@@ -496,11 +520,32 @@ const SuperAdminDashboard: React.FC = () => {
                     type="button"
                     onClick={handleDownloadDatabase}
                     disabled={loading}
-                    className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base"
+                    className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base mb-4"
                   >
                     <FiDownload className="w-4 h-4 sm:w-5 sm:h-5" />
                     {loading ? 'Downloading...' : 'Download Database'}
                   </button>
+
+                  <div className="border-t border-gray-200 pt-6 mt-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-4">
+                      <FiUpload className="w-6 h-6 sm:w-8 sm:h-8 text-gray-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="text-base sm:text-lg font-semibold text-gray-900">Import Database</h3>
+                        <p className="text-xs sm:text-sm text-gray-600">
+                          Upload a valid SQLite database file. This will REPLACE the current data.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleImportDatabase}
+                      disabled={loading}
+                      className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base"
+                    >
+                      <FiUpload className="w-4 h-4 sm:w-5 sm:h-5" />
+                      {loading ? 'Processing...' : 'Import Database'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

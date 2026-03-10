@@ -62,6 +62,13 @@ export class Backend {
 
       // Initialize all tables SEQUENTIALLY to avoid SQLite concurrency issues
       console.log('Initializing database tables...');
+      
+      // Core tables MUST come first
+      await this.authController.initializeTables();
+      await this.superAdminController.initializeTables();
+      await this.licenseController.initializeTables();
+      
+      // Feature tables
       await this.medicineController.initializeTables();
       await this.supplierController.initializeTables();
       await this.customerController.initializeTables();

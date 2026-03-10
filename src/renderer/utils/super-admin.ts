@@ -281,4 +281,15 @@ export const downloadDatabase = async (): Promise<{ success: boolean; error?: st
     window.electron.ipcRenderer.sendMessage('super-admin-download-database', []);
   });
 };
+/**
+ * Import database
+ */
+export const importDatabase = async (): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('super-admin-import-database-reply', (response: any) => {
+      resolve(response);
+    });
 
+    window.electron.ipcRenderer.sendMessage('super-admin-import-database', []);
+  });
+};
