@@ -12,6 +12,7 @@ import {
   FiAlertCircle,
   FiCheckCircle,
   FiClock,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
@@ -357,7 +358,7 @@ export default function MedicinesPage() {
   }, [setHeader, headerActions]);
 
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirm !== null}
@@ -391,67 +392,75 @@ export default function MedicinesPage() {
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3 flex-shrink-0">
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiPackage className="w-4 h-4 text-white" />
-            </div>
-            <FiTrendingUp className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+      {/* Stats Header - Matching Sales Report Design */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
+        {/* Total Products */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiPackage className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Total Products
+            </span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {stats.totalProducts}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.totalProducts}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Total Products</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-green-50/50 dark:from-gray-800 dark:to-green-900/20 rounded-lg shadow-sm border border-green-100/50 dark:border-green-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-green-600 shadow-md">
-              <FiCheckCircle className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-green-400 dark:text-green-500" />
+        {/* Active */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiCheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Active
+            </span>
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+              {stats.active}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.active}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Active</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-yellow-50/50 dark:from-gray-800 dark:to-yellow-900/20 rounded-lg shadow-sm border border-yellow-100/50 dark:border-yellow-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-yellow-500 to-yellow-600 shadow-md">
-              <FiAlertCircle className="w-4 h-4 text-white" />
-            </div>
-            <FiAlertCircle className="w-4 h-4 text-yellow-400 dark:text-yellow-500" />
+        {/* Expiring Soon */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiAlertCircle className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Expiring Soon
+            </span>
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+              {stats.expiringSoon}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.inactive}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Inactive</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-red-50/50 dark:from-gray-800 dark:to-red-900/20 rounded-lg shadow-sm border border-red-100/50 dark:border-red-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-red-500 to-red-600 shadow-md">
-              <FiX className="w-4 h-4 text-white" />
-            </div>
-            <FiX className="w-4 h-4 text-red-400 dark:text-red-500" />
+        {/* Discontinued */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-md border border-red-200 dark:border-red-600/50 shadow-sm">
+            <FiX className="w-3.5 h-3.5 text-red-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Discontinued
+            </span>
+            <span className="text-xs font-bold text-red-600 dark:text-red-400 ml-1">
+              {stats.discontinued}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.discontinued}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Discontinued</p>
         </div>
+
+        <button
+          onClick={loadMedicines}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
       {/* Main Content: Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
         {/* Left Side: Medicine Form */}
-        <div className="lg:col-span-1 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+        <div className="lg:col-span-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Form Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-2 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
@@ -630,10 +639,10 @@ export default function MedicinesPage() {
         </div>
 
         {/* Right Side: Medicines List */}
-        <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+        <div className="lg:col-span-2 flex flex-col overflow-visible md:overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Search Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="medicine-search"

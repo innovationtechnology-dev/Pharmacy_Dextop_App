@@ -19,6 +19,7 @@ import {
   FiAlertCircle,
   FiLock,
   FiMenu,
+  FiUpload
 } from 'react-icons/fi';
 import {
   superAdminLogout,
@@ -35,6 +36,7 @@ import {
   updateActivationCode,
   deleteActivationCode,
   downloadDatabase,
+  importDatabase,
   User,
   License,
   ActivationCode,
@@ -47,6 +49,8 @@ const SuperAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Tab>('database');
   const [loading, setLoading] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(false);
+  const [loadingText, setLoadingText] = useState('Loading...');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { toasts, success, error, removeToast } = useToast();
 
@@ -78,6 +82,7 @@ const SuperAdminDashboard: React.FC = () => {
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
+    setLoadingText('Fetching users...');
     try {
       const data = await getAllUsers();
       setUsers(data);
@@ -90,6 +95,7 @@ const SuperAdminDashboard: React.FC = () => {
 
   const loadLicenses = useCallback(async () => {
     setLoading(true);
+    setLoadingText('Fetching licenses...');
     try {
       const data = await getAllLicenses();
       setLicenses(data);
@@ -102,6 +108,7 @@ const SuperAdminDashboard: React.FC = () => {
 
   const loadActivationCodes = useCallback(async () => {
     setLoading(true);
+    setLoadingText('Fetching activation codes...');
     try {
       const data = await getAllActivationCodes();
       setActivationCodes(data);
@@ -129,6 +136,8 @@ const SuperAdminDashboard: React.FC = () => {
 
   const handleDownloadDatabase = async () => {
     setLoading(true);
+    setShowOverlay(true);
+    setLoadingText('Preparing database download...');
     try {
       const result = await downloadDatabase();
       if (result.success) {
@@ -140,6 +149,34 @@ const SuperAdminDashboard: React.FC = () => {
       error('Failed to download database');
     } finally {
       setLoading(false);
+      setShowOverlay(false);
+    }
+  };
+  const handleImportDatabase = async () => {
+    if (!confirm('Warning: Importing a new database will replace your current data. It is highly recommended to download a backup of your current database first. Are you sure you want to proceed?')) {
+      return;
+    }
+
+    setLoading(true);
+    setShowOverlay(true);
+    setLoadingText('Importing database... Please do not close the application.');
+    try {
+      const result = await importDatabase();
+      if (result.success) {
+        setLoadingText('Import successful! Preparing to reload...');
+        success(`Database imported successfully! The application will reload to apply changes.`);
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        error(result.error || 'Failed to import database');
+        setLoading(false);
+        setShowOverlay(false);
+      }
+    } catch (err) {
+      error('Failed to import database');
+      setLoading(false);
+      setShowOverlay(false);
     }
   };
 
@@ -361,6 +398,64 @@ const SuperAdminDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <ToastContainer toasts={toasts} onClose={removeToast} />
+      
+      {/* Professional Loading Overlay */}
+      {showOverlay && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-md flex flex-col items-center justify-center z-[100] animate-in fade-in duration-300">
+          <div className="bg-white/95 dark:bg-gray-800/95 p-10 rounded-[2rem] shadow-[0_20px_50px_rgba(0,0,0,0.2)] flex flex-col items-center gap-8 max-w-[400px] w-full mx-4 border border-white/20">
+            <div className="relative flex items-center justify-center">
+              {/* Pulsating outer ring */}
+              <div className="absolute w-24 h-24 bg-red-500/10 rounded-full animate-ping"></div>
+              <div className="absolute w-20 h-20 bg-red-500/5 rounded-full animate-pulse decoration-8"></div>
+              
+              {/* Main Spinner */}
+              <div className="relative w-16 h-16">
+                <div className="absolute inset-0 border-[3px] border-gray-100 dark:border-gray-700 rounded-full"></div>
+                <div className="absolute inset-0 border-[3px] border-t-red-500 border-r-transparent border-b-transparent border-l-transparent rounded-full animate-spin"></div>
+                <div className="absolute inset-2 border-[2px] border-gray-50 dark:border-gray-700/50 rounded-full opacity-50"></div>
+                <div className="absolute inset-2 border-[2px] border-b-red-400 border-t-transparent border-r-transparent border-l-transparent rounded-full animate-[spin_1.5s_linear_infinite_reverse]"></div>
+              </div>
+              
+              {/* Action Icon */}
+              <div className="absolute">
+                <FiDatabase className="w-5 h-5 text-red-500/80 animate-pulse" />
+              </div>
+            </div>
+
+            <div className="text-center space-y-3">
+              <h3 className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
+                Processing
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400 font-medium leading-relaxed px-4">
+                {loadingText}
+              </p>
+            </div>
+
+            <div className="w-full space-y-2">
+              <div className="flex justify-between text-[10px] font-bold text-gray-400 uppercase tracking-widest px-1">
+                <span>System Task</span>
+                <span className="animate-pulse">Active</span>
+              </div>
+              <div className="w-full bg-gray-100 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                <div className="bg-gradient-to-r from-red-500 via-red-400 to-red-600 h-full w-[40%] animate-[premium-loading_2s_easeInOutQuad_infinite] rounded-full shadow-[0_0_10px_rgba(239,68,68,0.5)]"></div>
+              </div>
+            </div>
+            
+            <p className="text-[11px] text-gray-400 dark:text-gray-500 font-medium italic">
+              Please do not disconnect or refresh
+            </p>
+          </div>
+          
+          <style dangerouslySetInnerHTML={{ __html: `
+            @keyframes premium-loading {
+              0% { transform: translateX(-120%) scaleX(0.5); }
+              50% { transform: translateX(50%) scaleX(1.5); }
+              100% { transform: translateX(250%) scaleX(0.5); }
+            }
+          `}} />
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 shadow-sm">
         <div className="px-4 sm:px-6 py-4 flex items-center justify-between">
@@ -382,14 +477,6 @@ const SuperAdminDashboard: React.FC = () => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="px-3 sm:px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 text-sm sm:text-base"
-          >
-            <FiLogOut className="w-4 h-4" />
-            <span className="hidden sm:inline">Logout</span>
-          </button>
         </div>
       </header>
 
@@ -406,10 +493,10 @@ const SuperAdminDashboard: React.FC = () => {
 
         {/* Sidebar */}
         <aside
-          className={`fixed lg:static inset-y-0 left-0 z-50 lg:z-auto w-64 bg-white border-r border-gray-200 min-h-[calc(100vh-73px)] transform transition-transform duration-300 ease-in-out ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          className={`fixed lg:static inset-y-0 left-0 z-50 lg:z-auto w-64 bg-white border-r border-gray-200 min-h-[calc(100vh-73px)] transform transition-transform duration-300 ease-in-out flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
             }`}
         >
-          <nav className="p-4 space-y-2">
+          <nav className="p-4 space-y-2 flex-grow">
             <button
               type="button"
               onClick={() => {
@@ -471,6 +558,17 @@ const SuperAdminDashboard: React.FC = () => {
               Activation Codes
             </button>
           </nav>
+
+          <div className="p-4 border-t border-gray-200 mt-auto">
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-red-600 hover:bg-red-50 transition-colors font-semibold"
+            >
+              <FiLogOut className="w-5 h-5 transition-transform group-hover:scale-110" />
+              Logout
+            </button>
+          </div>
         </aside>
 
         {/* Main Content */}
@@ -496,11 +594,32 @@ const SuperAdminDashboard: React.FC = () => {
                     type="button"
                     onClick={handleDownloadDatabase}
                     disabled={loading}
-                    className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base"
+                    className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base mb-4"
                   >
                     <FiDownload className="w-4 h-4 sm:w-5 sm:h-5" />
                     {loading ? 'Downloading...' : 'Download Database'}
                   </button>
+
+                  <div className="border-t border-gray-200 pt-6 mt-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-4">
+                      <FiUpload className="w-6 h-6 sm:w-8 sm:h-8 text-gray-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="text-base sm:text-lg font-semibold text-gray-900">Import Database</h3>
+                        <p className="text-xs sm:text-sm text-gray-600">
+                          Upload a valid SQLite database file. This will REPLACE the current data.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleImportDatabase}
+                      disabled={loading}
+                      className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base"
+                    >
+                      <FiUpload className="w-4 h-4 sm:w-5 sm:h-5" />
+                      {loading ? 'Processing...' : 'Import Database'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1057,4 +1176,3 @@ const SuperAdminDashboard: React.FC = () => {
 };
 
 export default SuperAdminDashboard;
-

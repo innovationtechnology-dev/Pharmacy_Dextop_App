@@ -654,7 +654,7 @@ const Payments: React.FC = () => {
   const hasActiveFilters = selectedSupplierId || selectedPaymentMethod || periodType !== 'all' || searchTerm;
 
   return (
-    <div className="space-y-4 pb-16">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Tab navigation */}
       <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
         <div className="flex">
@@ -709,71 +709,52 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      {/* Summary Cards - Always visible */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <FiDollarSign className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Purchases</span>
-            </div>
-          <div className="text-xl font-bold text-gray-900 dark:text-white">{formatCurrency(paymentSummary?.totalPurchases || totalStats.totalPurchases)}</div>
-            </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
-              <FiTrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Paid</span>
-            </div>
-          <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(paymentSummary?.totalPaid || totalStats.totalPaid)}</div>
-          </div>
+      {/* Stats Header - Matching Sales Report Design */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+          <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
+          <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+            {formatCurrency(paymentSummary?.totalPurchases || 0)}
+          </span>
+        </div>
 
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30">
-              <FiTrendingDown className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Outstanding</span>
-          </div>
-          <div className="text-xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(paymentSummary?.totalRemaining || totalStats.totalRemaining)}</div>
+        <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+          <FiTrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Paid</span>
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+            {formatCurrency(paymentSummary?.totalPaid || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
-              <FiDollarSign className="w-4 h-4 text-green-600 dark:text-green-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Cash</span>
-          </div>
-          <div className="text-lg font-bold text-green-600 dark:text-green-400">{    formatCurrency(paymentSummary?.cashPayments || 0)}</div>
+
+        <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+          <FiTrendingDown className="w-3.5 h-3.5 text-orange-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Outstanding</span>
+          <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+            {formatCurrency(paymentSummary?.totalRemaining || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <FiCreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Bank Transfer</span>
-          </div>
-          <div className="text-lg font-bold text-blue-600 dark:text-blue-400">{formatCurrency(paymentSummary?.bankTransferPayments || 0)}</div>
+
+        <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-900/20 px-2.5 py-1.5 rounded-md border border-green-200 dark:border-green-600/50 shadow-sm">
+          <FiDollarSign className="w-3.5 h-3.5 text-green-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Cash</span>
+          <span className="text-xs font-bold text-green-600 dark:text-green-400 ml-1">
+            {formatCurrency(paymentSummary?.cashPayments || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
-              <FiFileText className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Check/Online</span>
-          </div>
-          <div className="text-lg font-bold text-amber-600 dark:text-amber-400">{formatCurrency((paymentSummary?.checkPayments || 0) + (paymentSummary?.onlinePayments || 0))}</div>
-        </div>
+
+        <button
+          onClick={loadAllData}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
+
       {/* Date Selection - Prominent */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4 shadow-sm">
+      <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md p-3 mb-2 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-2">
             <FiCalendar className="w-5 h-5 text-gray-500 dark:text-gray-400" />

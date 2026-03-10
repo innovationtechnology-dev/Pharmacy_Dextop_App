@@ -12,6 +12,13 @@ export class SuperAdminController {
   }
 
   /**
+   * Initialize super admin data
+   */
+  public async initializeTables(): Promise<void> {
+    await this.superAdminService.initializeSuperAdmin();
+  }
+
+  /**
    * Register all IPC handlers for super admin operations
    */
   private registerHandlers(): void {
@@ -252,8 +259,43 @@ export class SuperAdminController {
         });
       }
     });
+    // Handle import database
+    ipcMain.on('super-admin-import-database', async (event: IpcMainEvent) => {
+      try {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (!mainWindow) {
+          event.reply('super-admin-import-database-reply', {
+            success: false,
+            error: 'Main window not found',
+          });
+          return;
+        }
+
+        const result = await dialog.showOpenDialog(mainWindow, {
+          title: 'Select Database File to Import',
+          properties: ['openFile'],
+          filters: [{ name: 'SQLite Database', extensions: ['sqlite3', 'db'] }],
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+          event.reply('super-admin-import-database-reply', {
+            success: false,
+            error: 'Import cancelled',
+          });
+          return;
+        }
+
+        const importResult = await this.superAdminService.importDatabase(result.filePaths[0]);
+        event.reply('super-admin-import-database-reply', importResult);
+      } catch (error) {
+        console.error('Import database error:', error);
+        event.reply('super-admin-import-database-reply', {
+          success: false,
+          error: 'Failed to import database',
+        });
+      }
+    });
   }
 }
 
 export default SuperAdminController;
-

@@ -537,7 +537,6 @@ const Settings: React.FC = () => {
                                                 className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 flex-shrink-0"
                                                 style={{
                                                     backgroundColor: t.accent,
-                                                    ringColor: isActive ? t.accent : 'transparent',
                                                     boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${t.accent}` : 'none',
                                                 }}
                                             />

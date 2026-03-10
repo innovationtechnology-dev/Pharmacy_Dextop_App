@@ -9,13 +9,12 @@ export class AuthController {
   constructor() {
     this.authService = new AuthService();
     this.registerHandlers();
-    this.initializeAuth();
   }
 
   /**
    * Initialize authentication tables
    */
-  private async initializeAuth(): Promise<void> {
+  public async initializeTables(): Promise<void> {
     try {
       await this.authService.initializeTable();
       console.log('Authentication tables initialized');

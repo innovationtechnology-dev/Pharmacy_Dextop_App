@@ -7,13 +7,12 @@ export class LicenseController {
   constructor() {
     this.licenseService = new LicenseService();
     this.registerHandlers();
-    this.initializeLicense();
   }
 
   /**
    * Initialize license tables
    */
-  private async initializeLicense(): Promise<void> {
+  public async initializeTables(): Promise<void> {
     try {
       await this.licenseService.initializeTable();
       console.log('License tables initialized');
@@ -80,4 +79,3 @@ export class LicenseController {
 }
 
 export default LicenseController;
-
