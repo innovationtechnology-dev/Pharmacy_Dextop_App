@@ -30,11 +30,8 @@ import {
   updateUserPassword,
   deleteUser,
   getAllLicenses,
-  getAllActivationCodes,
   updateLicense,
   deleteLicense,
-  updateActivationCode,
-  deleteActivationCode,
   getAllGeneratedLicenses,
   revokeGeneratedLicense,
   deleteGeneratedLicense,
@@ -42,12 +39,11 @@ import {
   importDatabase,
   User,
   License,
-  ActivationCode,
   GeneratedLicense,
 } from '../../utils/super-admin';
 import { ToastContainer, useToast } from '../../components/common/Toast';
 
-type Tab = 'database' | 'users' | 'licenses' | 'activation-codes' | 'generated-keys';
+type Tab = 'database' | 'users' | 'licenses' | 'generated-keys';
 
 const SuperAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -79,11 +75,6 @@ const SuperAdminDashboard: React.FC = () => {
   const [editingLicense, setEditingLicense] = useState<License | null>(null);
   const [licenseForm, setLicenseForm] = useState({ expiryDate: '', isActive: true });
 
-  // Activation codes state
-  const [activationCodes, setActivationCodes] = useState<ActivationCode[]>([]);
-  const [editingCode, setEditingCode] = useState<ActivationCode | null>(null);
-  const [codeForm, setCodeForm] = useState({ code: '', expiryDate: '', isUsed: false });
-
   // Generated licenses state
   const [generatedLicenses, setGeneratedLicenses] = useState<GeneratedLicense[]>([]);
   const [glFilter, setGlFilter] = useState<'all' | 'used' | 'unused'>('all');
@@ -114,19 +105,6 @@ const SuperAdminDashboard: React.FC = () => {
     }
   }, []);
 
-  const loadActivationCodes = useCallback(async () => {
-    setLoading(true);
-    setLoadingText('Fetching activation codes...');
-    try {
-      const data = await getAllActivationCodes();
-      setActivationCodes(data);
-    } catch (error) {
-      // Error loading activation codes
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   const loadGeneratedLicenses = useCallback(async () => {
     setLoading(true);
     setLoadingText('Fetching generated license keys...');
@@ -145,12 +123,10 @@ const SuperAdminDashboard: React.FC = () => {
       loadUsers();
     } else if (activeTab === 'licenses') {
       loadLicenses();
-    } else if (activeTab === 'activation-codes') {
-      loadActivationCodes();
     } else if (activeTab === 'generated-keys') {
       loadGeneratedLicenses();
     }
-  }, [activeTab, loadUsers, loadLicenses, loadActivationCodes, loadGeneratedLicenses]);
+  }, [activeTab, loadUsers, loadLicenses, loadGeneratedLicenses]);
 
   const handleLogout = () => {
     superAdminLogout();
@@ -352,62 +328,6 @@ const SuperAdminDashboard: React.FC = () => {
     }
   };
 
-  // Activation Code Management Functions
-  const handleEditCode = (code: ActivationCode) => {
-    setEditingCode(code);
-    setCodeForm({
-      code: code.code,
-      expiryDate: code.expiry_date.split('T')[0],
-      isUsed: code.is_used === 1,
-    });
-  };
-
-  const handleUpdateCode = async () => {
-    if (!editingCode) return;
-
-    setLoading(true);
-    try {
-      const expiryDateTime = new Date(codeForm.expiryDate).toISOString();
-      const result = await updateActivationCode(
-        editingCode.id,
-        codeForm.code,
-        expiryDateTime,
-        codeForm.isUsed
-      );
-      if (result.success) {
-        setEditingCode(null);
-        setCodeForm({ code: '', expiryDate: '', isUsed: false });
-        loadActivationCodes();
-        success('Activation code updated successfully!');
-      } else {
-        error(result.error || 'Failed to update activation code');
-      }
-    } catch (err) {
-      error('Failed to update activation code');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteCode = async (codeId: number) => {
-    if (!confirm('Are you sure you want to delete this activation code?')) return;
-
-    setLoading(true);
-    try {
-      const result = await deleteActivationCode(codeId);
-      if (result.success) {
-        loadActivationCodes();
-        success('Activation code deleted successfully!');
-      } else {
-        error(result.error || 'Failed to delete activation code');
-      }
-    } catch (err) {
-      error('Failed to delete activation code');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Generated License Handlers
   const handleRevokeGeneratedLicense = async (id: number, code: string) => {
     if (!confirm(`Revoke key ${code}?\n\nThis will mark it as unused so the client can re-activate.`)) return;
@@ -601,21 +521,6 @@ const SuperAdminDashboard: React.FC = () => {
             >
               <FiKey className="w-5 h-5" />
               Licenses
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('activation-codes');
-                setSidebarOpen(false);
-              }}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                activeTab === 'activation-codes'
-                  ? 'bg-red-50 text-red-600 font-semibold'
-                  : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              <FiKey className="w-5 h-5" />
-              Activation Codes
             </button>
             <button
               type="button"
@@ -1124,173 +1029,6 @@ const SuperAdminDashboard: React.FC = () => {
             </div>
           )}
 
-          {/* Activation Codes Tab */}
-          {activeTab === 'activation-codes' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6">
-                <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Activation Codes</h2>
-                <button
-                  type="button"
-                  onClick={loadActivationCodes}
-                  className="w-full sm:w-auto px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
-                >
-                  <FiRefreshCw className="w-4 h-4" />
-                  Refresh
-                </button>
-              </div>
-
-              {loading && activationCodes.length === 0 ? (
-                <div className="flex justify-center py-12">
-                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500"></div>
-                </div>
-              ) : (
-                  <div className="overflow-x-auto -mx-4 sm:mx-0">
-                    <table className="w-full min-w-[640px]">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          ID
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Code
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Expiry Date
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Status
-                        </th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                          Used By
-                        </th>
-                        <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200">
-                      {activationCodes.map((code) => (
-                        <tr key={code.id} className="hover:bg-gray-50">
-                          <td className="px-4 py-3 text-sm text-gray-900">{code.id}</td>
-                          <td className="px-4 py-3 text-sm font-mono text-gray-900">{code.code}</td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {formatDate(code.expiry_date)}
-                          </td>
-                          <td className="px-4 py-3 text-sm">
-                            <span
-                              className={`px-2 py-1 rounded-full text-xs font-medium ${
-                                code.is_used === 1
-                                  ? 'bg-red-100 text-red-700'
-                                  : 'bg-emerald-100 text-emerald-700'
-                              }`}
-                            >
-                              {code.is_used === 1 ? 'Used' : 'Available'}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {code.used_by_user_id || '—'}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right">
-                            <div className="flex items-center justify-end gap-2">
-                              <button
-                                onClick={() => handleEditCode(code)}
-                                className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                title="Edit Code"
-                              >
-                                <FiEdit className="w-4 h-4" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteCode(code.id)}
-                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                title="Delete Code"
-                              >
-                                <FiTrash2 className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {/* Edit Code Modal */}
-              {editingCode && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                  <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-xl font-bold text-gray-900">Edit Activation Code</h3>
-                      <button
-                        onClick={() => {
-                          setEditingCode(null);
-                          setCodeForm({ code: '', expiryDate: '', isUsed: false });
-                        }}
-                        className="p-2 hover:bg-gray-100 rounded-lg"
-                      >
-                        <FiX className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Code</label>
-                        <input
-                          type="text"
-                          value={codeForm.code}
-                          onChange={(e) => setCodeForm({ ...codeForm, code: e.target.value })}
-                          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none font-mono"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                          Expiry Date
-                        </label>
-                        <input
-                          type="date"
-                          value={codeForm.expiryDate}
-                          onChange={(e) =>
-                            setCodeForm({ ...codeForm, expiryDate: e.target.value })
-                          }
-                          className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={codeForm.isUsed}
-                            onChange={(e) =>
-                              setCodeForm({ ...codeForm, isUsed: e.target.checked })
-                            }
-                            className="w-4 h-4"
-                          />
-                          <span className="text-sm text-gray-700">Mark as Used</span>
-                        </label>
-                      </div>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={handleUpdateCode}
-                          disabled={loading}
-                          className="flex-1 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50"
-                        >
-                          Save
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingCode(null);
-                            setCodeForm({ code: '', expiryDate: '', isUsed: false });
-                          }}
-                          className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
         </main>
       </div>
 

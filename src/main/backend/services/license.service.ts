@@ -55,9 +55,7 @@ export class LicenseService {
   // Characters that avoid visual confusion (no 0/O/1/I)
   private static readonly KEY_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-  /**
-   * Generate a random N-character license key using safe characters only.
-   */
+  /** Generate a random N-character license key using safe characters only. */
   private static generateShortCode(length = 14): string {
     let key = '';
     for (let i = 0; i < length; i += 1) {
@@ -68,11 +66,12 @@ export class LicenseService {
     return key;
   }
 
-  /**
-   * Initialize license tables
-   */
+  // ─────────────────────────────────────────────────────────────
+  // Table initialization
+  // ─────────────────────────────────────────────────────────────
+
   public async initializeTable(): Promise<void> {
-    // licenses — active licenses per user
+    // licenses — one active license per user
     await this.dbService.execute(`
       CREATE TABLE IF NOT EXISTS licenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -86,21 +85,7 @@ export class LicenseService {
       )
     `);
 
-    // activation_codes — legacy semi-annual on-prem codes
-    await this.dbService.execute(`
-      CREATE TABLE IF NOT EXISTS activation_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT NOT NULL UNIQUE,
-        expiry_date DATETIME NOT NULL,
-        is_used INTEGER DEFAULT 0,
-        used_by_user_id INTEGER,
-        used_at DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (used_by_user_id) REFERENCES users(id) ON DELETE SET NULL
-      )
-    `);
-
-    // generated_licenses — 14-char keys created by the admin desktop
+    // generated_licenses — 14-char keys created by the super-admin desktop
     await this.dbService.execute(`
       CREATE TABLE IF NOT EXISTS generated_licenses (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,21 +108,12 @@ export class LicenseService {
       `CREATE INDEX IF NOT EXISTS idx_licenses_user_id ON licenses(user_id)`
     );
     await this.dbService.execute(
-      `CREATE INDEX IF NOT EXISTS idx_activation_codes_code ON activation_codes(code)`
-    );
-    await this.dbService.execute(
-      `CREATE INDEX IF NOT EXISTS idx_activation_codes_is_used ON activation_codes(is_used)`
-    );
-    await this.dbService.execute(
       `CREATE INDEX IF NOT EXISTS idx_generated_licenses_code ON generated_licenses(code)`
     );
-
-    // Keep legacy semi-annual codes populated
-    await this.populateActivationCodes();
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Admin: generate a 14-char key, store locally
+  // Super-admin: generate a 14-char key, store locally
   // ─────────────────────────────────────────────────────────────
 
   /**
@@ -205,11 +181,16 @@ export class LicenseService {
   // ─────────────────────────────────────────────────────────────
 
   /**
-   * Activate a license key.
+   * Activate a 14-char generated key.
    *
-   * Priority order:
-   *  1. 14-char generated key → look up in generated_licenses (no web call)
-   *  2. Legacy PHARM-YYYY-A/B-XXXX or old JANMAY/JUNDEC → activation_codes table
+   * The license is SYSTEM-WIDE: one license covers every user on this installation
+   * (admin, cashier, etc.). Whoever activates the key, everyone benefits.
+   *
+   * - Normalises: strips non-alphanumeric chars, uppercases.
+   * - Looks up generated_licenses WHERE code=? AND is_used=0.
+   * - If found: validUntil = today + 6 months (from activation date).
+   * - Marks key as used so it cannot be reused.
+   * - No network call required.
    */
   public async activateLicense(
     userId: number,
@@ -217,33 +198,55 @@ export class LicenseService {
   ): Promise<ActivateLicenseResult> {
     try {
       console.log(
-        `🔑 Attempting to activate license for user ${userId} with code: ${activationCode}`
+        `🔑 Attempting to activate license (user ${userId}) with code: ${activationCode}`
       );
 
-      // Normalize: strip non-alphanumeric, uppercase
+      // Normalize: strip spaces/hyphens/special chars, uppercase
       const normalized = activationCode.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
-      // Detect legacy on-prem formats first
-      const isLegacy =
-        LicenseService.isOldFormatCode(normalized) ||
-        /^PHARM\d{4}[AB][A-Z0-9]{4}$/.test(normalized) ||
-        /^PHARM-\d{4}-[AB]-[A-Z0-9]{4}$/.test(activationCode.trim().toUpperCase());
-
-      // ── 14-char generated key (offline) ──────────────────────
-      if (!isLegacy && normalized.length === 14) {
-        return await this.activateGeneratedKey(userId, normalized);
+      if (normalized.length !== 14) {
+        return {
+          success: false,
+          error: 'Invalid license key format. Please enter a valid 14-character key.',
+        };
       }
 
-      // ── Legacy semi-annual code ───────────────────────────────
-      if (isLegacy) {
-        return await this.activateLegacyCode(userId, activationCode);
+      console.log(`🔐 Looking up key in generated_licenses: ${normalized}`);
+
+      const row = (await this.dbService.queryOne(
+        `SELECT * FROM generated_licenses WHERE code = ? AND is_used = 0`,
+        [normalized]
+      )) as { id: number; code: string; is_used: number } | null;
+
+      if (!row) {
+        const usedRow = await this.dbService.queryOne(
+          `SELECT id FROM generated_licenses WHERE code = ?`,
+          [normalized]
+        );
+        if (usedRow) {
+          console.log(`❌ Key already used: ${normalized}`);
+          return { success: false, error: 'This license key has already been used.' };
+        }
+        console.log(`❌ Key not found: ${normalized}`);
+        return { success: false, error: 'Invalid license key. Please check and try again.' };
       }
 
-      // Anything else is not recognized
-      return {
-        success: false,
-        error: 'Invalid activation code format. Please enter a valid 14-character license key.',
-      };
+      // validUntil = today + 6 months (from activation date, not generation date)
+      const now = new Date();
+      const validUntil = new Date(now);
+      validUntil.setMonth(validUntil.getMonth() + 6);
+
+      // Upsert the single system-wide license record (userId stored for audit only)
+      const license = await this.upsertSystemLicense(userId, normalized, validUntil.toISOString());
+
+      // Mark the key as used
+      await this.dbService.execute(
+        `UPDATE generated_licenses SET is_used = 1, used_at = ? WHERE code = ?`,
+        [now.toISOString(), normalized]
+      );
+
+      console.log(`✅ System license activated until ${validUntil.toISOString()}`);
+      return { success: true, license };
     } catch (error) {
       console.error('❌ Activate license error:', error);
       return {
@@ -254,101 +257,27 @@ export class LicenseService {
   }
 
   /**
-   * Activate a 14-char key from generated_licenses — no network required.
-   * validUntil = today + 6 months (from activation date, not generation date).
+   * Upsert the single system-wide license row.
+   * Looks for ANY existing active license (ignoring user_id) and updates it;
+   * or inserts a new one with the activating user's id for audit purposes.
    */
-  private async activateGeneratedKey(
-    userId: number,
-    code: string
-  ): Promise<ActivateLicenseResult> {
-    console.log(`🔐 Checking generated_licenses for key: ${code}`);
-
-    const row = (await this.dbService.queryOne(
-      `SELECT * FROM generated_licenses WHERE code = ? AND is_used = 0`,
-      [code]
-    )) as { id: number; code: string; is_used: number } | null;
-
-    if (!row) {
-      const used = await this.dbService.queryOne(
-        `SELECT id FROM generated_licenses WHERE code = ?`,
-        [code]
-      );
-      if (used) {
-        console.log(`❌ Key already used: ${code}`);
-        return { success: false, error: 'This license key has already been used.' };
-      }
-      console.log(`❌ Key not found: ${code}`);
-      return { success: false, error: 'Invalid license key. Please check and try again.' };
-    }
-
-    // Expiry = today + 6 months
-    const now = new Date();
-    const validUntil = new Date(now);
-    validUntil.setMonth(validUntil.getMonth() + 6);
-
-    // Upsert licenses row
-    const license = await this.upsertLicense(userId, code, validUntil.toISOString());
-
-    // Mark key as used
-    await this.dbService.execute(
-      `UPDATE generated_licenses SET is_used = 1, used_at = ? WHERE code = ?`,
-      [now.toISOString(), code]
-    );
-
-    console.log(`✅ Generated key activated for user ${userId}, valid until ${validUntil.toISOString()}`);
-    return { success: true, license };
-  }
-
-  /**
-   * Activate a legacy semi-annual code from activation_codes.
-   */
-  private async activateLegacyCode(
-    userId: number,
-    activationCode: string
-  ): Promise<ActivateLicenseResult> {
-    console.log('🔐 Using legacy activation code flow');
-
-    const codeData = await this.getActivationCodeFromDB(activationCode);
-
-    if (!codeData) {
-      return { success: false, error: 'Invalid activation code. Please enter a valid code.' };
-    }
-
-    const codeExpiryDate = new Date(codeData.expiry_date);
-    const now = new Date();
-
-    if (codeExpiryDate < now) {
-      return { success: false, error: 'This activation code has expired.' };
-    }
-
-    const license = await this.upsertLicense(
-      userId,
-      activationCode.toUpperCase(),
-      codeExpiryDate.toISOString()
-    );
-
-    return { success: true, license };
-  }
-
-  /**
-   * Insert or update a license row for a user.
-   */
-  private async upsertLicense(
-    userId: number,
+  private async upsertSystemLicense(
+    activatedByUserId: number,
     activationCode: string,
     expiryDateIso: string
   ): Promise<License> {
+    // Find the currently active system license (any user)
     const existing = (await this.dbService.queryOne(
-      `SELECT * FROM licenses WHERE user_id = ? AND is_active = 1 ORDER BY expiry_date DESC LIMIT 1`,
-      [userId]
+      `SELECT * FROM licenses WHERE is_active = 1 ORDER BY expiry_date DESC LIMIT 1`
     )) as License | null;
 
     if (existing) {
       await this.dbService.execute(
         `UPDATE licenses
-         SET activation_code = ?, expiry_date = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP
+         SET activation_code = ?, expiry_date = ?, is_active = 1,
+             user_id = ?, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
-        [activationCode, expiryDateIso, existing.id]
+        [activationCode, expiryDateIso, activatedByUserId, existing.id]
       );
       return LicenseService.mapRowToLicense(
         (await this.dbService.queryOne(
@@ -360,7 +289,7 @@ export class LicenseService {
 
     const result = await this.dbService.execute(
       `INSERT INTO licenses (user_id, activation_code, expiry_date, is_active) VALUES (?, ?, ?, 1)`,
-      [userId, activationCode, expiryDateIso]
+      [activatedByUserId, activationCode, expiryDateIso]
     );
     const licenseId = (result as sqlite3.RunResult).lastID;
     return LicenseService.mapRowToLicense(
@@ -372,95 +301,24 @@ export class LicenseService {
   }
 
   // ─────────────────────────────────────────────────────────────
-  // Legacy helpers
+  // Status / detail queries
   // ─────────────────────────────────────────────────────────────
 
-  private static generateProfessionalCode(year: number, period: 'A' | 'B'): string {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let randomPart = '';
-    for (let i = 0; i < 4; i += 1) {
-      randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return `PHARM-${year}-${period}-${randomPart}`;
-  }
-
-  private static isOldFormatCode(code: string): boolean {
-    return /^\d{4}(JANMAY|JUNDEC)$/.test(code);
-  }
-
-  private async populateActivationCodes(): Promise<void> {
+  public async getLicenseStatus(_userId: number): Promise<LicenseStatus> {
     try {
-      const existingCodes = await this.dbService.query('SELECT code FROM activation_codes');
-      const currentYear = new Date().getFullYear();
-      const expectedCount = 40;
-
-      const hasOldFormat = existingCodes.some((row: { code: string }) =>
-        LicenseService.isOldFormatCode(row.code)
-      );
-      const hasEnoughCodes = existingCodes.length >= expectedCount;
-
-      if (hasEnoughCodes && !hasOldFormat) return;
-
-      if (hasOldFormat || !hasEnoughCodes) {
-        await this.dbService.execute('DELETE FROM activation_codes');
-      }
-
-      const codes: Array<{ code: string; expiryDate: Date }> = [];
-      const usedCodes = new Set<string>();
-
-      for (let year = currentYear; year < currentYear + 20; year += 1) {
-        const janMayExpiry = new Date(year, 5, 1);
-        let codeA = LicenseService.generateProfessionalCode(year, 'A');
-        while (usedCodes.has(codeA)) codeA = LicenseService.generateProfessionalCode(year, 'A');
-        usedCodes.add(codeA);
-        codes.push({ code: codeA, expiryDate: janMayExpiry });
-
-        const junDecExpiry = new Date(year + 1, 0, 1);
-        let codeB = LicenseService.generateProfessionalCode(year, 'B');
-        while (usedCodes.has(codeB)) codeB = LicenseService.generateProfessionalCode(year, 'B');
-        usedCodes.add(codeB);
-        codes.push({ code: codeB, expiryDate: junDecExpiry });
-      }
-
-      const insertQueries = codes.map(
-        ({ code, expiryDate }) =>
-          `INSERT INTO activation_codes (code, expiry_date) VALUES ('${code}', '${expiryDate.toISOString()}')`
-      );
-      await this.dbService.transaction(insertQueries);
-    } catch (error) {
-      // Allow app to continue even if population fails
-    }
-  }
-
-  private async getActivationCodeFromDB(code: string): Promise<{
-    code: string;
-    expiry_date: string;
-    is_used: number;
-  } | null> {
-    try {
-      return await this.dbService.queryOne(
-        `SELECT code, expiry_date, is_used FROM activation_codes WHERE code = ?`,
-        [code.toUpperCase()]
-      );
-    } catch (error) {
-      console.error('❌ Error getting activation code from DB:', error);
-      return null;
-    }
-  }
-
-  // ─────────────────────────────────────────────────────────────
-  // Status / details queries
-  // ─────────────────────────────────────────────────────────────
-
-  public async getLicenseStatus(userId: number): Promise<LicenseStatus> {
-    try {
+      // System-wide check — one license covers all users on this installation
       const license = (await this.dbService.queryOne(
-        `SELECT * FROM licenses WHERE user_id = ? AND is_active = 1 ORDER BY expiry_date DESC LIMIT 1`,
-        [userId]
+        `SELECT * FROM licenses WHERE is_active = 1 ORDER BY expiry_date DESC LIMIT 1`
       )) as License | null;
 
       if (!license) {
-        return { isActive: false, expiryDate: null, daysUntilExpiry: null, isExpired: true, isExpiringSoon: false };
+        return {
+          isActive: false,
+          expiryDate: null,
+          daysUntilExpiry: null,
+          isExpired: true,
+          isExpiringSoon: false,
+        };
       }
 
       const expiryDate = new Date(license.expiry_date);
@@ -470,19 +328,32 @@ export class LicenseService {
       );
       const isExpired = daysUntilExpiry < 0;
       const isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
-      const isActiveInDb = (license.is_active as unknown) === 1 || license.is_active === true;
+      const isActiveInDb =
+        (license.is_active as unknown) === 1 || license.is_active === true;
 
-      return { isActive: isActiveInDb && !isExpired, expiryDate: license.expiry_date, daysUntilExpiry, isExpired, isExpiringSoon };
+      return {
+        isActive: isActiveInDb && !isExpired,
+        expiryDate: license.expiry_date,
+        daysUntilExpiry,
+        isExpired,
+        isExpiringSoon,
+      };
     } catch (error) {
-      return { isActive: false, expiryDate: null, daysUntilExpiry: null, isExpired: true, isExpiringSoon: false };
+      return {
+        isActive: false,
+        expiryDate: null,
+        daysUntilExpiry: null,
+        isExpired: true,
+        isExpiringSoon: false,
+      };
     }
   }
 
-  public async getLicense(userId: number): Promise<License | null> {
+  public async getLicense(_userId: number): Promise<License | null> {
     try {
+      // System-wide — return the single active license for the whole installation
       const license = (await this.dbService.queryOne(
-        `SELECT * FROM licenses WHERE user_id = ? AND is_active = 1 ORDER BY expiry_date DESC LIMIT 1`,
-        [userId]
+        `SELECT * FROM licenses WHERE is_active = 1 ORDER BY expiry_date DESC LIMIT 1`
       )) as License | null;
       return license ? LicenseService.mapRowToLicense(license) : null;
     } catch (error) {

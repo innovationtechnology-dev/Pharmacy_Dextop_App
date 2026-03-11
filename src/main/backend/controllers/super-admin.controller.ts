@@ -125,17 +125,6 @@ export class SuperAdminController {
       }
     });
 
-    // Handle get all activation codes
-    ipcMain.on('super-admin-get-activation-codes', async (event: IpcMainEvent) => {
-      try {
-        const codes = await this.superAdminService.getAllActivationCodes();
-        event.reply('super-admin-get-activation-codes-reply', codes);
-      } catch (error) {
-        console.error('Get activation codes error:', error);
-        event.reply('super-admin-get-activation-codes-reply', []);
-      }
-    });
-
     // Handle update license
     ipcMain.on('super-admin-update-license', async (event: IpcMainEvent, args: any[]) => {
       try {
@@ -164,44 +153,6 @@ export class SuperAdminController {
         event.reply('super-admin-delete-license-reply', {
           success: false,
           error: 'Failed to delete license',
-        });
-      }
-    });
-
-    // Handle update activation code
-    ipcMain.on('super-admin-update-activation-code', async (event: IpcMainEvent, args: any[]) => {
-      try {
-        const codeId = args[0] as number;
-        const code = args[1] as string;
-        const expiryDate = args[2] as string;
-        const isUsed = args[3] as boolean;
-        const result = await this.superAdminService.updateActivationCode(
-          codeId,
-          code,
-          expiryDate,
-          isUsed
-        );
-        event.reply('super-admin-update-activation-code-reply', result);
-      } catch (error) {
-        console.error('Update activation code error:', error);
-        event.reply('super-admin-update-activation-code-reply', {
-          success: false,
-          error: 'Failed to update activation code',
-        });
-      }
-    });
-
-    // Handle delete activation code
-    ipcMain.on('super-admin-delete-activation-code', async (event: IpcMainEvent, args: any[]) => {
-      try {
-        const codeId = args[0] as number;
-        const result = await this.superAdminService.deleteActivationCode(codeId);
-        event.reply('super-admin-delete-activation-code-reply', result);
-      } catch (error) {
-        console.error('Delete activation code error:', error);
-        event.reply('super-admin-delete-activation-code-reply', {
-          success: false,
-          error: 'Failed to delete activation code',
         });
       }
     });

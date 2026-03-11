@@ -27,16 +27,6 @@ export interface License {
   updated_at: string;
 }
 
-export interface ActivationCode {
-  id: number;
-  code: string;
-  expiry_date: string;
-  is_used: number;
-  used_by_user_id: number | null;
-  used_at: string | null;
-  created_at: string;
-}
-
 export interface GeneratedLicense {
   id: number;
   code: string;
@@ -370,20 +360,6 @@ export class SuperAdminService {
   }
 
   /**
-   * Get all activation codes
-   */
-  public async getAllActivationCodes(): Promise<ActivationCode[]> {
-    try {
-      const codes = await this.dbService.query(
-        'SELECT * FROM activation_codes ORDER BY code ASC'
-      );
-      return codes as ActivationCode[];
-    } catch (error) {
-      return [];
-    }
-  }
-
-  /**
    * Update license
    */
   public async updateLicense(
@@ -424,47 +400,6 @@ export class SuperAdminService {
     }
   }
 
-  /**
-   * Update activation code
-   */
-  public async updateActivationCode(
-    codeId: number,
-    code: string,
-    expiryDate: string,
-    isUsed: boolean
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.dbService.execute(
-        `UPDATE activation_codes SET code = '${code.replace(/'/g, "''")}', expiry_date = '${expiryDate}', is_used = ${isUsed ? 1 : 0} WHERE id = ${codeId}`
-      );
-
-      return {
-        success: true,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to update activation code',
-      };
-    }
-  }
-
-  /**
-   * Delete activation code
-   */
-  public async deleteActivationCode(codeId: number): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.dbService.execute(`DELETE FROM activation_codes WHERE id = ${codeId}`);
-      return {
-        success: true,
-      };
-    } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to delete activation code',
-      };
-    }
-  }
   // ── Generated Licenses (14-char keys) ────────────────────────────────────
 
   /**

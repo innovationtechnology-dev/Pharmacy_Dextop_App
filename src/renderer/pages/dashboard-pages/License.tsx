@@ -303,9 +303,12 @@ const License: React.FC = () => {
   const isExpired = licenseStatus?.isExpired ?? true;
   const isExpiringSoon = licenseStatus?.isExpiringSoon ?? false;
   const isActive = licenseStatus?.isActive ?? false;
-  // Only super_admin can generate keys for other pharmacies.
-  // Regular admin and cashier are clients — they only activate their own license.
-  const isAdmin = currentUserRole === 'super_admin';
+  // Both admin and super_admin can generate keys (fill the form + trigger generation).
+  // Cashier is a pure client — they only activate their own license.
+  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'super_admin';
+  // Only super_admin can see the generated key after creation.
+  // Regular admin should never see the raw key — they rely on super_admin to share it.
+  const canSeeGeneratedKey = currentUserRole === 'super_admin';
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -657,8 +660,14 @@ const License: React.FC = () => {
                         <p className="text-xs text-emerald-600 dark:text-emerald-400">
                           {requestSuccessMessage}
                         </p>
-                        {generatedKey && (
+                        {/* Only super_admin can see the raw key — admin submits but never views it */}
+                        {canSeeGeneratedKey && generatedKey && (
                           <GeneratedKeyCard licenseKey={generatedKey} />
+                        )}
+                        {!canSeeGeneratedKey && generatedKey && (
+                          <p className="text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-md px-3 py-2">
+                            Key saved and sent to the web admin. The super admin will share it with you via WhatsApp.
+                          </p>
                         )}
                       </div>
                     )}

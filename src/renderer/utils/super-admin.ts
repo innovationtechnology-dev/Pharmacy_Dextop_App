@@ -31,16 +31,6 @@ export interface License {
   updated_at: string;
 }
 
-export interface ActivationCode {
-  id: number;
-  code: string;
-  expiry_date: string;
-  is_used: number;
-  used_by_user_id: number | null;
-  used_at: string | null;
-  created_at: string;
-}
-
 export interface GeneratedLicense {
   id: number;
   code: string;
@@ -200,19 +190,6 @@ export const getAllLicenses = async (): Promise<License[]> => {
 };
 
 /**
- * Get all activation codes
- */
-export const getAllActivationCodes = async (): Promise<ActivationCode[]> => {
-  return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-get-activation-codes-reply', (codes: any) => {
-      resolve(codes);
-    });
-
-    window.electron.ipcRenderer.sendMessage('super-admin-get-activation-codes', []);
-  });
-};
-
-/**
  * Update license
  */
 export const updateLicense = async (
@@ -243,44 +220,6 @@ export const deleteLicense = async (licenseId: number): Promise<{ success: boole
     });
 
     window.electron.ipcRenderer.sendMessage('super-admin-delete-license', [licenseId] as any);
-  });
-};
-
-/**
- * Update activation code
- */
-export const updateActivationCode = async (
-  codeId: number,
-  code: string,
-  expiryDate: string,
-  isUsed: boolean
-): Promise<{ success: boolean; error?: string }> => {
-  return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-update-activation-code-reply', (response: any) => {
-      resolve(response);
-    });
-
-    window.electron.ipcRenderer.sendMessage('super-admin-update-activation-code', [
-      codeId,
-      code,
-      expiryDate,
-      isUsed,
-    ] as any);
-  });
-};
-
-/**
- * Delete activation code
- */
-export const deleteActivationCode = async (
-  codeId: number
-): Promise<{ success: boolean; error?: string }> => {
-  return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('super-admin-delete-activation-code-reply', (response: any) => {
-      resolve(response);
-    });
-
-    window.electron.ipcRenderer.sendMessage('super-admin-delete-activation-code', [codeId] as any);
   });
 };
 
