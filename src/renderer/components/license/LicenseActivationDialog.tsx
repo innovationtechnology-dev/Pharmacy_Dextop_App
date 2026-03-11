@@ -188,11 +188,11 @@ const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
                     Activation Code
                   </label>
                   <input
-                    id="activation-code"
-                    type="text"
-                    value={activationCode}
-                    onChange={(e) => {
-                      setActivationCode(e.target.value.toUpperCase());
+                  id="activation-code"
+                  type="text"
+                  value={activationCode}
+                  onChange={(e) => {
+                      setActivationCode(e.target.value);
                       setError(null);
                     }}
                     placeholder="Enter activation code"

@@ -27,14 +27,19 @@ export interface License {
   updated_at: string;
 }
 
-export interface ActivationCode {
+export interface GeneratedLicense {
   id: number;
   code: string;
-  expiry_date: string;
+  pharmacy_name: string | null;
+  doctor_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  generated_at: string;
   is_used: number;
-  used_by_user_id: number | null;
   used_at: string | null;
-  created_at: string;
 }
 
 export class SuperAdminService {
@@ -355,20 +360,6 @@ export class SuperAdminService {
   }
 
   /**
-   * Get all activation codes
-   */
-  public async getAllActivationCodes(): Promise<ActivationCode[]> {
-    try {
-      const codes = await this.dbService.query(
-        'SELECT * FROM activation_codes ORDER BY code ASC'
-      );
-      return codes as ActivationCode[];
-    } catch (error) {
-      return [];
-    }
-  }
-
-  /**
    * Update license
    */
   public async updateLicense(
@@ -409,47 +400,63 @@ export class SuperAdminService {
     }
   }
 
+  // ── Generated Licenses (14-char keys) ────────────────────────────────────
+
   /**
-   * Update activation code
+   * Get all generated license keys
    */
-  public async updateActivationCode(
-    codeId: number,
-    code: string,
-    expiryDate: string,
-    isUsed: boolean
-  ): Promise<{ success: boolean; error?: string }> {
+  public async getAllGeneratedLicenses(): Promise<GeneratedLicense[]> {
+    try {
+      const rows = await this.dbService.query(
+        'SELECT * FROM generated_licenses ORDER BY generated_at DESC'
+      );
+      return rows as GeneratedLicense[];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  /**
+   * Revoke a generated license (mark as unused so it can be re-activated)
+   */
+  public async revokeGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
     try {
       await this.dbService.execute(
-        `UPDATE activation_codes SET code = '${code.replace(/'/g, "''")}', expiry_date = '${expiryDate}', is_used = ${isUsed ? 1 : 0} WHERE id = ${codeId}`
+        `UPDATE generated_licenses SET is_used = 0, used_at = NULL WHERE id = ${id}`
       );
 
-      return {
-        success: true,
-      };
+      // Also deactivate any live license that was activated with this code
+      const row = (await this.dbService.queryOne(
+        `SELECT code FROM generated_licenses WHERE id = ${id}`
+      )) as { code: string } | null;
+
+      if (row) {
+        await this.dbService.execute(
+          `UPDATE licenses SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+           WHERE activation_code = '${row.code.replace(/'/g, "''")}'`
+        );
+      }
+
+      return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to update activation code',
-      };
+      return { success: false, error: 'Failed to revoke license key' };
     }
   }
 
   /**
-   * Delete activation code
+   * Delete a generated license key entirely
    */
-  public async deleteActivationCode(codeId: number): Promise<{ success: boolean; error?: string }> {
+  public async deleteGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.dbService.execute(`DELETE FROM activation_codes WHERE id = ${codeId}`);
-      return {
-        success: true,
-      };
+      await this.dbService.execute(
+        `DELETE FROM generated_licenses WHERE id = ${id}`
+      );
+      return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to delete activation code',
-      };
+      return { success: false, error: 'Failed to delete generated license key' };
     }
   }
+
   /**
    * Import database file
    */
@@ -462,7 +469,7 @@ export class SuperAdminService {
       // 1. Basic SQLite Validation
       const sqlite3 = require('sqlite3').verbose();
       const tempDb = new sqlite3.Database(filePath);
-      
+
       const schemaCheck = await new Promise<boolean>((resolve) => {
         // Check for 'users' table as a proxy for a valid schema
         tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
@@ -518,7 +525,7 @@ export class SuperAdminService {
         return { success: true };
       } catch (err: any) {
         console.error('Error during database rotation:', err);
-        
+
         // Detailed error for UI
         let errorMessage = 'Failed to rotate database files';
         if (err.code === 'EBUSY') {
