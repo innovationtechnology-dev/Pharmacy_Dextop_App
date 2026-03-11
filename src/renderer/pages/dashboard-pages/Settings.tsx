@@ -177,7 +177,12 @@ const Settings: React.FC = () => {
         { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
         { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
-    ];
+    ].filter(section => {
+        if (user?.role === 'cashier') {
+            return ['profile', 'pharmacy', 'appearance'].includes(section.id);
+        }
+        return true;
+    });
 
     // Toggle switch className - using template literal to properly escape quotes
     const toggleSwitchClass = `w-11 h-6 bg-gray-200 dark:bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-emerald-300 dark:peer-focus:ring-emerald-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600 dark:peer-checked:bg-emerald-500`;
@@ -905,15 +910,7 @@ const Settings: React.FC = () => {
                 {/* Left Sidebar - Fixed Width */}
                 <div className="w-64 flex-shrink-0 h-full flex flex-col">
                     <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 border-r border-gray-200 dark:border-gray-700 h-full flex flex-col overflow-hidden">
-                        <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
-                            <div className="flex items-center gap-2 mb-1">
-                                <div className="p-1.5 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-sm">
-                                    <FiSettings className="w-4 h-4 text-white" />
-                                </div>
-                                <h2 className="text-base font-bold text-gray-900 dark:text-white">Settings</h2>
-                            </div>
-                            <p className="text-xs text-gray-500 dark:text-gray-400">Manage your preferences</p>
-                        </div>
+
 
                         <nav className="flex-1 overflow-y-auto p-1.5 space-y-1 min-h-0">
                             {settingsSections.map((section) => {

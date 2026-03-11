@@ -209,8 +209,8 @@ const Dashboard_Layout: React.FC = () => {
             location.pathname.includes('/dashboard')
 
 
-            ? 'overflow-hidden'
-            : 'overflow-auto'
+            ? 'overflow-hidden flex flex-col'
+            : 'overflow-auto flex flex-col'
             }`}
         >
           <div
@@ -231,8 +231,8 @@ const Dashboard_Layout: React.FC = () => {
                 location.pathname.includes('/sale-return') ||
                 location.pathname.includes('/financial-summary') ||
                 location.pathname.includes('/dashboard')
-                ? 'p-0'
-                : 'p-6 md:p-8'
+                ? 'p-0 flex-1 flex flex-col min-h-0 overflow-hidden h-full'
+                : 'p-6 md:p-8 flex-1'
             }
           >
             { }
@@ -771,7 +771,9 @@ const Dashboard_Layout: React.FC = () => {
             )}
 
             {/* Scrollable Content */}
-            <Outlet context={outletContextValue} />
+            <div className="flex-1 overflow-hidden min-h-0">
+              <Outlet context={outletContextValue} />
+            </div>
           </div>
         </main>
       </div>
