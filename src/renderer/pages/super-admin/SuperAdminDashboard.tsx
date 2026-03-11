@@ -396,7 +396,7 @@ const SuperAdminDashboard: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="h-screen bg-gray-50 flex flex-col overflow-hidden">
       <ToastContainer toasts={toasts} onClose={removeToast} />
       
       {/* Professional Loading Overlay */}
@@ -480,7 +480,7 @@ const SuperAdminDashboard: React.FC = () => {
         </div>
       </header>
 
-      <div className="flex relative">
+      <div className="flex flex-1 relative overflow-hidden" style={{ height: 'calc(100vh - 73px)' }}>
         {/* Sidebar Overlay for Mobile */}
         {sidebarOpen && (
           <button
@@ -493,7 +493,7 @@ const SuperAdminDashboard: React.FC = () => {
 
         {/* Sidebar */}
         <aside
-          className={`fixed lg:static inset-y-0 left-0 z-50 lg:z-auto w-64 bg-white border-r border-gray-200 min-h-[calc(100vh-73px)] transform transition-transform duration-300 ease-in-out flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
+          className={`fixed lg:static inset-y-0 left-0 z-50 lg:z-auto w-64 bg-white border-r border-gray-200 h-full overflow-y-auto transform transition-transform duration-300 ease-in-out flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
             }`}
         >
           <nav className="p-4 space-y-2 flex-grow">
@@ -572,7 +572,7 @@ const SuperAdminDashboard: React.FC = () => {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-4 sm:p-6 w-full lg:w-auto">
+        <main className="flex-1 p-4 sm:p-6 w-full lg:w-auto overflow-y-auto">
           {/* Database Tab */}
           {activeTab === 'database' && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">

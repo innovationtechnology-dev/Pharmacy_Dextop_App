@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
   FiPlus,
@@ -97,6 +97,7 @@ export default function MedicinesPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [editingMedicineId, setEditingMedicineId] = useState<number | null>(null);
   const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -136,6 +137,10 @@ export default function MedicinesPage() {
 
   useEffect(() => {
     loadMedicines();
+    // Focus barcode input on mount
+    setTimeout(() => {
+      barcodeInputRef.current?.focus();
+    }, 100);
   }, [loadMedicines]);
 
   const handleNewMedicineChange = (
@@ -206,6 +211,7 @@ export default function MedicinesPage() {
           setNewMedicine(emptyMedicineForm);
           setEditingMedicineId(null);
           loadMedicines();
+          barcodeInputRef.current?.focus();
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-update', [editingMedicineId, payload]);
@@ -229,6 +235,7 @@ export default function MedicinesPage() {
           setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           loadMedicines();
+          barcodeInputRef.current?.focus();
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-create', [payload]);
@@ -310,6 +317,7 @@ export default function MedicinesPage() {
     setEditingMedicine(null);
     setFormError(null);
     setFormSuccess(null);
+    barcodeInputRef.current?.focus();
   }, []);
 
   // Check if editing medicine has been used in transactions
@@ -514,54 +522,55 @@ export default function MedicinesPage() {
 
               <div>
                 <label
-                  htmlFor="medicine-name"
+                  htmlFor="medicine-barcode"
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
-                  Medicine Name <span className="text-red-500">*</span>
+                  Barcode <span className="text-red-500">*</span>
                   {isEditingMedicineUsed && (
-                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
+                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
                   )}
                 </label>
                 <input
-                  id="medicine-name"
+                  id="medicine-barcode"
                   type="text"
-                  value={newMedicine.name}
-                  onChange={(e) => handleNewMedicineChange('name', e.target.value)}
+                  ref={barcodeInputRef}
+                  value={newMedicine.barcode}
+                  onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
                   disabled={isEditingMedicineUsed}
                   className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                     isEditingMedicineUsed
                       ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                       : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                   }`}
+                  placeholder="Scan or enter"
                   required
-                  placeholder="Enter medicine name"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label
-                    htmlFor="medicine-barcode"
+                    htmlFor="medicine-name"
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
-                    Barcode <span className="text-red-500">*</span>
+                    Medicine Name <span className="text-red-500">*</span>
                     {isEditingMedicineUsed && (
-                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
                     )}
                   </label>
                   <input
-                    id="medicine-barcode"
+                    id="medicine-name"
                     type="text"
-                    value={newMedicine.barcode}
-                    onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
+                    value={newMedicine.name}
+                    onChange={(e) => handleNewMedicineChange('name', e.target.value)}
                     disabled={isEditingMedicineUsed}
                     className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                       isEditingMedicineUsed
                         ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                         : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                     }`}
-                    placeholder="Scan or enter"
                     required
+                    placeholder="Enter medicine name"
                   />
                 </div>
                 <div>
@@ -611,20 +620,18 @@ export default function MedicinesPage() {
               </div>
 
               <div className="flex gap-2 pt-2">
-                {editingMedicineId && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
-                  >
-                    <FiX className="w-4 h-4" />
-                    Cancel
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
+                >
+                  <FiRefreshCw className="w-4 h-4" />
+                  {editingMedicineId ? 'Cancel' : 'Clear'}
+                </button>
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-[2] flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FiSave className="w-4 h-4" />
                   {isSubmitting
@@ -731,8 +738,8 @@ export default function MedicinesPage() {
                   {/* Table Header */}
                   <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
                     <div className="col-span-1">#</div>
-                    <div className="col-span-2">Barcode</div>
                     <div className="col-span-3">Medicine</div>
+                    <div className="col-span-2">Barcode</div>
                     <div className="col-span-1 text-center">Pills/Pack</div>
                     <div className="col-span-2 text-center">Stock</div>
                     <div className="col-span-2 text-center">Status</div>
@@ -752,20 +759,20 @@ export default function MedicinesPage() {
                       <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                         {index + 1}
                       </div>
-                      <div className="col-span-2">
-                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
-                          {medicine.barcode || '—'}
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                          {formatNumericId(medicine.id)}
-                        </div>
-                      </div>
                       <div className="col-span-3">
                         <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
                           {medicine.name}
                         </div>
                         <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
                           Avg: {medicine.averageSellablePricePerPill ? `${getCurrencySymbol()}${medicine.averageSellablePricePerPill.toFixed(2)}` : '—'}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
+                          {medicine.barcode || '—'}
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+                          {formatNumericId(medicine.id)}
                         </div>
                       </div>
                       <div className="col-span-1 text-center">

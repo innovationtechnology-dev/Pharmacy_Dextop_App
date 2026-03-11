@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useTheme } from '../../contexts/ThemeContext';
 import { login } from '../../utils/auth';
 import { superAdminLogin } from '../../utils/super-admin';
 import pharmacist_1 from '../../public/images/pharmacist-1.jpg';
@@ -9,6 +10,7 @@ interface LoginProps {
 }
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const navigate = useNavigate();
+  const { theme } = useTheme();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -73,6 +75,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           } else {
             localStorage.removeItem('rememberedEmail');
           }
+          // Show welcome notification on next page
+          sessionStorage.setItem('shouldShowWelcome', 'true');
           // Navigate to super admin dashboard
           navigate('/super-admin/dashboard');
           return;
@@ -94,6 +98,9 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         } else {
           localStorage.removeItem('rememberedEmail');
         }
+
+        // Show welcome notification on next page
+        sessionStorage.setItem('shouldShowWelcome', 'true');
 
         // Navigate to main menu after successful login
         navigate('/main-menu');
@@ -128,9 +135,13 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
     return (
-    <div className="h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center p-2 overflow-hidden">
+    <div className={`h-screen flex items-center justify-center p-2 overflow-hidden transition-colors duration-300 ${
+      theme === 'dark' ? 'bg-gray-950' : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
+    }`}>
       {/* Main Container */}
-      <div className="w-full max-w-6xl bg-white shadow-xl rounded-2xl overflow-hidden max-h-[95vh]">
+      <div className={`w-full max-w-6xl shadow-2xl rounded-2xl overflow-hidden max-h-[95vh] border transition-colors duration-300 ${
+        theme === 'dark' ? 'bg-gray-900 border-gray-700' : 'bg-white border-transparent'
+      }`}>
         <div className="flex flex-col lg:flex-row h-full">
           {/* Left Side - Form Section */}
           <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-8 lg:p-12 xl:p-16 overflow-y-auto">
@@ -158,10 +169,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     Pharmacy Management System
                   </h1>
                 </div>
-                <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-0.5">
+                <h2 className={`text-xl sm:text-2xl lg:text-3xl font-bold mb-0.5 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                   Welcome Back
                 </h2>
-                <p className="text-[10px] sm:text-xs text-gray-500">
+                <p className={`text-[10px] sm:text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
                   Sign in to your Pharmacy Management System
                 </p>
               </div>
@@ -190,7 +201,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div>
                   <label
                     htmlFor="email"
-                    className="block text-sm font-semibold text-gray-700 mb-2"
+                    className={`block text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}
                   >
                     Email Address
                   </label>
@@ -201,7 +212,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     value={formData.email}
                     onChange={handleChange}
                     placeholder="admin@pharmacy.com"
-                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all duration-200 hover:border-gray-300"
+                    className={`w-full border-2 rounded-xl px-4 py-3 text-base outline-none transition-all duration-200 ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
                   />
                   {errors.email && (
                     <p className="text-red-600 text-sm mt-2 flex items-center gap-1">
@@ -225,7 +240,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div>
                   <label
                     htmlFor="password"
-                    className="block text-sm font-semibold text-gray-700 mb-2"
+                    className={`block text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}
                   >
                     Password
                   </label>
@@ -237,7 +252,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       value={formData.password}
                       onChange={handleChange}
                       placeholder="Enter your password"
-                      className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 pr-12 text-base text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all duration-200 hover:border-gray-300"
+                      className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-base outline-none transition-all duration-200 ${
+                        theme === 'dark'
+                          ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                          : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                      }`}
                     />
                     <button
                       type="button"
@@ -309,7 +328,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       onChange={(e) => setRememberMe(e.target.checked)}
                       className="h-4 w-4 border-gray-300 rounded text-emerald-600 focus:ring-emerald-500 focus:ring-2 cursor-pointer"
                     />
-                    <span className="ml-2 text-sm text-gray-700 group-hover:text-gray-900 transition-colors">
+                    <span className={`ml-2 text-sm transition-colors ${theme === 'dark' ? 'text-gray-300 group-hover:text-white' : 'text-gray-700 group-hover:text-gray-900'}`}>
                       Remember me
                     </span>
                   </label>
@@ -392,11 +411,15 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </div>
 
           {/* Right Side - Image Section */}
-          <div className="hidden lg:flex w-full lg:w-1/2 bg-gradient-to-br from-gray-50 via-white to-gray-50 items-center justify-center p-2 xl:p-4 relative overflow-hidden">
+          <div className={`hidden lg:flex w-full lg:w-1/2 items-center justify-center p-2 xl:p-4 relative overflow-hidden transition-colors duration-300 ${
+            theme === 'dark'
+              ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-slate-900'
+              : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
+          }`}>
             {/* Decorative Background Elements */}
             <div className="absolute inset-0 overflow-hidden">
-              <div className="absolute top-0 right-0 w-96 h-96 bg-gray-100/40 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-              <div className="absolute bottom-0 left-0 w-96 h-96 bg-gray-100/40 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+              <div className={`absolute top-0 right-0 w-96 h-96 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 ${theme === 'dark' ? 'bg-emerald-900/30' : 'bg-gray-100/40'}`}></div>
+              <div className={`absolute bottom-0 left-0 w-96 h-96 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 ${theme === 'dark' ? 'bg-slate-700/30' : 'bg-gray-100/40'}`}></div>
             </div>
 
             {/* Image Container */}

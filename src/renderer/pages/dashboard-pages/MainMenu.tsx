@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../../contexts/ThemeContext';
 import { logout as authLogout, getAuthUser } from '../../utils/auth';
 import {
   FiUsers,
@@ -34,7 +35,9 @@ import {
   FiDownload,
   FiUpload,
   FiPrinter,
-  FiX
+  FiX,
+  FiMail,
+  FiPhone
 } from 'react-icons/fi';
 
 interface MenuItem {
@@ -63,6 +66,7 @@ interface MenuBarItem {
 
 const MainMenu: React.FC = () => {
   const navigate = useNavigate();
+  const { theme } = useTheme();
   const [currentTime, setCurrentTime] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -731,24 +735,46 @@ const MainMenu: React.FC = () => {
       </div>
 
       {/* Status Bar */}
-      <div className="flex-shrink-0 bg-gray-100 dark:bg-gray-800 border-t border-gray-300 dark:border-gray-700 px-4 py-1.5 flex items-center justify-between text-xs text-gray-600 dark:text-gray-400">
+      <div 
+        className={`flex-shrink-0 border-t px-4 py-1.5 flex items-center justify-between text-[10px] font-semibold transition-all duration-300 ${
+          theme === 'light' 
+            ? 'bg-black border-gray-700 text-white' 
+            : 'bg-white/90 border-gray-300 text-black'
+        }`}
+      >
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-2">
-            <div className="w-2 h-2 bg-green-500 rounded-full" />
-            <span className="font-medium">System Online</span>
+            <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${theme === 'light' ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.7)]' : 'bg-green-600 shadow-[0_0_8px_rgba(22,163,74,0.7)]'}`} />
+            <span >System Online</span>
           </span>
-          <span>v2.0.1</span>
-          <span>Build 2025.01</span>
-          {currentUser && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
-              <span className="font-semibold">{currentUser.name || 'User'}</span>
-              <span className="w-px h-3 bg-gray-400 dark:bg-gray-500" />
-              <span>{roleLabel}</span>
-            </span>
-          )}
+          <span >v2.0.1</span>
         </div>
-        <div>
-          <span>© 2025 Pharmacy Management System</span>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4">
+            <span>Developed By</span>
+            <span className={`w-px h-3 ${theme === 'light' ? 'bg-white' : 'bg-black'}` } />
+            <span>Innovation Technology</span>
+            <a 
+              href="mailto:innovationtechnology.dev@gmail.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open Email"
+              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${theme === 'light' ? 'hover:text-emerald-400' : 'hover:text-emerald-600'}`}
+            >
+              <FiMail className="w-3" />
+              innovationtechnology.dev@gmail.com
+            </a>
+            <a 
+              href="https://wa.me/923205720774" 
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${theme === 'light' ? 'hover:text-emerald-400' : 'hover:text-emerald-600'}`}
+              title="Open WhatsApp"
+            >
+              <FiPhone className="w-3" />
+              (+92) 3205720-774
+            </a>
+          </div>
         </div>
       </div>
     </div>

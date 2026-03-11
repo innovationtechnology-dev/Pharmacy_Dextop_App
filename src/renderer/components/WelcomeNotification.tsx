@@ -22,19 +22,18 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
     };
 
     const handleWhatsAppClick = () => {
-        // Replace with your actual WhatsApp number (format: country code + number without +)
-        const phoneNumber = '15551234567'; // Example: +1 (555) 123-4567
+        const phoneNumber = '923205720774'; // +92 3205720774
         const message = encodeURIComponent('Hello! I have a question about the Pharmacy Management System.');
         const whatsappUrl = `https://wa.me/${phoneNumber}?text=${message}`;
         window.open(whatsappUrl, '_blank');
     };
 
     const handleEmailClick = () => {
-        window.location.href = 'mailto:info@innovationtechnology.com';
+        window.location.href = 'mailto:innovationtechnology.dev@gmail.com';
     };
 
     const handlePhoneClick = () => {
-        window.location.href = 'tel:+15551234567';
+        window.location.href = 'tel:+923205720774';
     };
 
     return (
@@ -127,7 +126,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <div className="flex-1 text-left">
                                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Email</p>
                                             <p className="text-base font-bold text-gray-800 group-hover:text-emerald-600 transition-colors">
-                                                info@innovationtechnology.com
+                                                innovationtechnology.dev@gmail.com
                                             </p>
                                         </div>
                                     </button>
@@ -144,7 +143,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <div className="flex-1 text-left">
                                             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Contact Number</p>
                                             <p className="text-base font-bold text-gray-800 group-hover:text-emerald-600 transition-colors">
-                                                +1 (555) 123-4567
+                                                (+92) 3205720-774
                                             </p>
                                         </div>
                                     </button>
