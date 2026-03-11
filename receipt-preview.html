@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Thermal Receipt Preview</title>
+  <style>
+    body {
+      background: #e5e7eb;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 32px 16px;
+      font-family: sans-serif;
+    }
+    .preview-label {
+      text-align: center;
+      color: #6b7280;
+      font-size: 12px;
+      margin-bottom: 16px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* ── Reset ────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Page / Body ──────────────────────────────── */
+    .slip {
+      width: 302px; /* 80mm ≈ 302px at 96dpi */
+      background: #fff;
+      color: #0a0a0a;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 9pt;
+      line-height: 1.35;
+      padding: 22px 15px 30px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.15), 0 1px 4px rgba(0,0,0,0.08);
+      /* Paper curl at top */
+      border-radius: 0 0 2px 2px;
+      position: relative;
+    }
+    .slip::before {
+      content: '';
+      position: absolute;
+      top: -6px; left: 0; right: 0;
+      height: 6px;
+      background: repeating-linear-gradient(
+        90deg,
+        #fff 0px, #fff 10px,
+        #e5e7eb 10px, #e5e7eb 20px
+      );
+    }
+
+    /* ── Dividers ─────────────────────────────────── */
+    .rule-solid { border: none; border-top: 1.5px solid #0a0a0a; margin: 10px 0; }
+    .rule-dash  { border: none; border-top: 1px dashed #777;     margin: 8px 0; }
+    .rule-eq    { border: none; border-top: 2px double #0a0a0a;  margin: 10px 0; }
+
+    /* ── Header ───────────────────────────────────── */
+    .hdr { text-align: center; }
+    .logo-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: #0a0a0a;
+      color: #fff;
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      overflow: hidden;
+    }
+    .pharmacy-name {
+      font-size: 14pt;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .tagline {
+      font-size: 7.5pt;
+      color: #555;
+      margin-top: 2px;
+      font-style: italic;
+    }
+    .contact-line {
+      font-size: 7.5pt;
+      color: #444;
+      margin-top: 4px;
+      line-height: 1.6;
+    }
+
+    /* ── Invoice Meta ─────────────────────────────── */
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3px 6px;
+      font-size: 8pt;
+    }
+    .meta-grid .label { color: #666; }
+    .meta-grid .value { font-weight: 600; text-align: right; }
+    .inv-num { font-size: 9pt; font-weight: 700; }
+
+    /* ── Customer ─────────────────────────────────── */
+    .cust-line {
+      font-size: 8.5pt;
+      display: flex;
+      justify-content: space-between;
+    }
+    .cust-line .cust-label { color: #666; }
+    .cust-line .cust-val   { font-weight: 600; max-width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ── Table ────────────────────────────────────── */
+    table { width: 100%; border-collapse: collapse; }
+    thead tr {
+      border-top: 1.5px solid #0a0a0a;
+      border-bottom: 1.5px solid #0a0a0a;
+    }
+    th {
+      font-size: 7.5pt;
+      font-weight: 700;
+      padding: 5px 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    td {
+      font-size: 8pt;
+      padding: 6px 2px;
+      vertical-align: top;
+      border-bottom: 0.5px dashed #ccc;
+    }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .col-num  { width: 6%;  text-align: center; }
+    .col-name { width: 36%; }
+    .col-qty  { width: 10%; text-align: center; }
+    .col-rate { width: 16%; text-align: right; }
+    .col-disc { width: 12%; text-align: center; }
+    .col-amt  { width: 20%; text-align: right; font-weight: 600; }
+
+    .med-name    { display: block; font-weight: 700; font-size: 8pt; }
+    .med-barcode { display: block; font-size: 6.5pt; color: #888; letter-spacing: 0.5px; margin-top: 1px; }
+    .med-return  { display: block; font-size: 7pt; color: #b91c1c; margin-top: 1px; }
+    .row-returned td { opacity: 0.75; }
+
+    /* ── Totals ───────────────────────────────────── */
+    .totals { margin-top: 2px; }
+    .tot-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 8.5pt;
+      padding: 2px 0;
+    }
+    .tot-row .tot-label { color: #444; }
+    .tot-row .tot-val   { font-weight: 600; min-width: 68px; text-align: right; }
+    .tot-row.savings .tot-label { color: #166534; }
+    .tot-row.savings .tot-val   { color: #166534; }
+    .tot-row.tax-row .tot-val   { color: #92400e; }
+
+    .grand-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 5px 0 2px;
+      border-top: 1.5px solid #0a0a0a;
+    }
+    .grand-label { font-size: 11pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+    .grand-val   { font-size: 13pt; font-weight: 700; }
+
+    .items-summary {
+      font-size: 7.5pt;
+      color: #888;
+      text-align: right;
+      margin-top: 2px;
+    }
+
+    /* ── Footer ───────────────────────────────────── */
+    .footer {
+      text-align: center;
+      font-size: 7.5pt;
+      color: #555;
+      line-height: 1.7;
+    }
+    .footer .note {
+      font-style: italic;
+      color: #666;
+      margin-bottom: 5px;
+    }
+    .footer .powered {
+      font-size: 6.5pt;
+      color: #bbb;
+      margin-top: 6px;
+      letter-spacing: 0.8px;
+    }
+    .thank-you {
+      font-size: 11pt;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      text-align: center;
+      margin: 6px 0 4px;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <p class="preview-label">📄 80mm Thermal Receipt Preview</p>
+    <div class="slip">
+
+      <!-- HEADER -->
+      <div class="hdr">
+        <div class="logo-wrap">M</div>
+        <div class="pharmacy-name">MediCare Pharmacy</div>
+        <div class="tagline">Your Health, Our Priority</div>
+        <div class="contact-line">
+          123 Health Street, City Center<br/>
+          Tel: +1 (555) 234-5678<br/>
+          info@medicarepharmacy.com
+        </div>
+      </div>
+
+      <hr class="rule-solid" />
+
+      <!-- INVOICE META -->
+      <div class="meta-grid">
+        <span class="label">Invoice No.</span>
+        <span class="value inv-num">INV-847291</span>
+        <span class="label">Date</span>
+        <span class="value">12/03/2026</span>
+        <span class="label">Time</span>
+        <span class="value">14:35</span>
+        <span class="label">Tax ID</span>
+        <span class="value">TX-00291847</span>
+      </div>
+
+      <hr class="rule-dash" />
+
+      <!-- CUSTOMER -->
+      <div class="cust-line">
+        <span class="cust-label">Customer:</span>
+        <span class="cust-val">Ahmed Raza | +92-300-1234567</span>
+      </div>
+
+      <hr class="rule-solid" />
+
+      <!-- TABLE -->
+      <table>
+        <thead>
+          <tr>
+            <th class="col-num">#</th>
+            <th class="col-name">Medicine</th>
+            <th class="col-qty">Qty</th>
+            <th class="col-rate">Rate</th>
+            <th class="col-disc">Disc%</th>
+            <th class="col-amt">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="col-num">1</td>
+            <td class="col-name">
+              <span class="med-name">Panadol 500mg</span>
+              <span class="med-barcode">6291041500213</span>
+            </td>
+            <td class="col-qty">2</td>
+            <td class="col-rate">$1.50</td>
+            <td class="col-disc">5%</td>
+            <td class="col-amt">$2.85</td>
+          </tr>
+          <tr>
+            <td class="col-num">2</td>
+            <td class="col-name">
+              <span class="med-name">Amoxicillin 250mg</span>
+              <span class="med-barcode">6291041500897</span>
+            </td>
+            <td class="col-qty">1</td>
+            <td class="col-rate">$4.20</td>
+            <td class="col-disc">—</td>
+            <td class="col-amt">$4.20</td>
+          </tr>
+          <tr>
+            <td class="col-num">3</td>
+            <td class="col-name">
+              <span class="med-name">Vitamin C 1000</span>
+              <span class="med-barcode">6291041501104</span>
+              <span class="med-return">↩ Returned: 1</span>
+            </td>
+            <td class="col-qty">2</td>
+            <td class="col-rate">$2.00</td>
+            <td class="col-disc">10%</td>
+            <td class="col-amt">$3.60</td>
+          </tr>
+          <tr>
+            <td class="col-num">4</td>
+            <td class="col-name">
+              <span class="med-name">Omeprazole 20mg</span>
+            </td>
+            <td class="col-qty">3</td>
+            <td class="col-rate">$3.00</td>
+            <td class="col-disc">—</td>
+            <td class="col-amt">$9.00</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="items-summary">4 items</div>
+
+      <hr class="rule-dash" />
+
+      <!-- TOTALS -->
+      <div class="totals">
+        <div class="tot-row">
+          <span class="tot-label">Subtotal</span>
+          <span class="tot-val">$21.50</span>
+        </div>
+        <div class="tot-row savings">
+          <span class="tot-label">Discount (saved)</span>
+          <span class="tot-val">- $0.93</span>
+        </div>
+        <div class="tot-row tax-row">
+          <span class="tot-label">Tax (GST)</span>
+          <span class="tot-val">+ $1.64</span>
+        </div>
+      </div>
+
+      <hr class="rule-eq" />
+
+      <div class="grand-row">
+        <span class="grand-label">Total</span>
+        <span class="grand-val">$22.21</span>
+      </div>
+
+      <hr class="rule-solid" />
+
+      <div class="thank-you">Thank You!</div>
+
+      <!-- FOOTER -->
+      <div class="footer">
+        <div class="note">
+          Medicines once sold will not be returned without a valid reason and original bill.
+        </div>
+        <div>MediCare Pharmacy</div>
+        <div>123 Health Street, City Center</div>
+        <div>Tel: +1 (555) 234-5678 | info@medicarepharmacy.com</div>
+        <div class="powered">Printed by PharmacyOS</div>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

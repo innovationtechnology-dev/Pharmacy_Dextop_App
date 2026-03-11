@@ -13,7 +13,7 @@ import {
     FiDollarSign,
     FiHome,
 } from 'react-icons/fi';
-import { getAuthUser } from '../../utils/auth';
+import { getAuthUser, updateProfile } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -91,6 +91,7 @@ const Settings: React.FC = () => {
                     email: authUser.email || '',
                     phone: authUser.phone || '',
                     address: authUser.address || '',
+                    profilePicture: authUser.profilePicture || undefined,
                 });
             }
         };
@@ -127,15 +128,33 @@ const Settings: React.FC = () => {
         try {
             if (activeSection === 'pharmacy') {
                 localStorage.setItem('pharmacySettings', JSON.stringify(pharmacySettings));
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                alert('Settings updated successfully!');
+            } else if (activeSection === 'profile' && user?.id) {
+                const fullName = [profileData.firstName, profileData.lastName].filter(Boolean).join(' ').trim() || user.name;
+                const result = await updateProfile(user.id, {
+                    name: fullName,
+                    email: profileData.email,
+                    phone: profileData.phone || undefined,
+                    address: profileData.address || undefined,
+                    profilePicture: profileData.profilePicture || undefined,
+                });
+                if (result.success) {
+                    setUser(result.user ?? user);
+                    alert('Profile updated successfully!');
+                } else {
+                    alert(result.error || 'Failed to update profile.');
+                }
+            } else {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                alert('Settings updated successfully!');
             }
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            alert('Settings updated successfully!');
         } catch (error) {
             alert('Failed to update settings. Please try again.');
         } finally {
             setSaving(false);
         }
-    }, [activeSection, pharmacySettings]);
+    }, [activeSection, pharmacySettings, profileData, user]);
 
     const handleProfilePictureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -433,28 +452,65 @@ const Settings: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tax / Registration ID</label>
-                                        <input
-                                            type="text"
-                                            value={pharmacySettings.taxId}
-                                            onChange={(e) => handlePharmacyChange('taxId', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="GST / NTN / VAT number"
-                                        />
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tax / Registration ID</label>
+                                    <input
+                                        type="text"
+                                        value={pharmacySettings.taxId}
+                                        onChange={(e) => handlePharmacyChange('taxId', e.target.value)}
+                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
+                                        placeholder="GST / NTN / VAT number"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Pharmacy logo (for receipt & invoices)</label>
+                                    <div className="flex flex-wrap items-center gap-4">
+                                        <div className="w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-gray-300 dark:border-gray-600">
+                                            {pharmacySettings.logoUrl ? (
+                                                <img src={pharmacySettings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
+                                            ) : (
+                                                <span className="text-gray-400 dark:text-gray-500 text-xs">No logo</span>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-col gap-2">
+                                            <label className="inline-block">
+                                                <input
+                                                    type="file"
+                                                    accept="image/jpeg,image/jpg,image/png,image/gif"
+                                                    onChange={(e) => {
+                                                        const file = e.target.files?.[0];
+                                                        if (file) {
+                                                            if (file.size > 500 * 1024) {
+                                                                alert('Logo should be under 500 KB for best performance.');
+                                                                return;
+                                                            }
+                                                            const reader = new FileReader();
+                                                            reader.onloadend = () => {
+                                                                handlePharmacyChange('logoUrl', reader.result as string);
+                                                            };
+                                                            reader.readAsDataURL(file);
+                                                        }
+                                                        e.target.value = '';
+                                                    }}
+                                                    className="hidden"
+                                                />
+                                                <span className="inline-block px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition-colors text-sm font-medium">
+                                                    Upload logo
+                                                </span>
+                                            </label>
+                                            {pharmacySettings.logoUrl && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handlePharmacyChange('logoUrl', '')}
+                                                    className="text-sm text-red-600 dark:text-red-400 hover:underline"
+                                                >
+                                                    Remove logo
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Logo URL (optional)</label>
-                                        <input
-                                            type="text"
-                                            value={pharmacySettings.logoUrl}
-                                            onChange={(e) => handlePharmacyChange('logoUrl', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="https://..."
-                                        />
-                                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Shown on invoices if provided.</p>
-                                    </div>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">JPG or PNG, max 500 KB. Uploaded image is embedded in receipts so it always prints correctly. Click <strong>Save Changes</strong> (top right) after uploading.</p>
                                 </div>
 
                                 <div>

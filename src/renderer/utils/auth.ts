@@ -12,6 +12,7 @@ export interface User {
   role: string;
   firstName?: string;
   lastName?: string;
+  profilePicture?: string;
 }
 
 export interface AuthResponse {
@@ -128,5 +129,28 @@ export const verifyToken = async (token: string): Promise<{ valid: boolean; user
     });
 
     window.electron.ipcRenderer.sendMessage('auth-verify-token', [token] as any);
+  });
+};
+
+export interface UpdateProfileParams {
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  profilePicture?: string;
+}
+
+/**
+ * Update current user profile (persists to DB). Returns updated user on success.
+ */
+export const updateProfile = async (userId: number, params: UpdateProfileParams): Promise<{ success: boolean; user?: User; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('auth-update-profile-reply', (response: any) => {
+      if (response.success && response.user) {
+        setAuthUser(response.user);
+      }
+      resolve(response);
+    });
+    window.electron.ipcRenderer.sendMessage('auth-update-profile', [userId, params] as any);
   });
 };

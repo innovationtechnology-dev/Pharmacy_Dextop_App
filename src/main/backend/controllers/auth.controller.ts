@@ -108,6 +108,18 @@ export class AuthController {
         event.reply('auth-get-all-users-reply', []);
       }
     });
+
+    ipcMain.on('auth-update-profile', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const userId = args[0] as number;
+        const params = args[1] as { name: string; email?: string; phone?: string; address?: string; profilePicture?: string };
+        const result = await this.authService.updateProfile(userId, params);
+        event.reply('auth-update-profile-reply', result);
+      } catch (error) {
+        console.error('Update profile error:', error);
+        event.reply('auth-update-profile-reply', { success: false, error: 'Failed to update profile' });
+      }
+    });
   }
 }
 
