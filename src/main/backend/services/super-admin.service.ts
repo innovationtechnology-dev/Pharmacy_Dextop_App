@@ -462,7 +462,7 @@ export class SuperAdminService {
       // 1. Basic SQLite Validation
       const sqlite3 = require('sqlite3').verbose();
       const tempDb = new sqlite3.Database(filePath);
-      
+
       const schemaCheck = await new Promise<boolean>((resolve) => {
         // Check for 'users' table as a proxy for a valid schema
         tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
@@ -518,7 +518,7 @@ export class SuperAdminService {
         return { success: true };
       } catch (err: any) {
         console.error('Error during database rotation:', err);
-        
+
         // Detailed error for UI
         let errorMessage = 'Failed to rotate database files';
         if (err.code === 'EBUSY') {

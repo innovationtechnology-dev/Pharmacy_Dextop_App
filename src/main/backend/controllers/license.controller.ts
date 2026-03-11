@@ -75,6 +75,29 @@ export class LicenseController {
         event.reply('license-get-reply', null);
       }
     });
+
+    // Handle license key generation (admin desktop only)
+    ipcMain.on('license-generate', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const details = args[0] as {
+          pharmacyName?: string;
+          doctorName?: string;
+          email?: string;
+          phone?: string;
+          address?: string;
+          city?: string;
+          country?: string;
+        };
+        const result = await this.licenseService.generateLicenseKey(details);
+        event.reply('license-generate-reply', result);
+      } catch (error) {
+        console.error('License generate handler error:', error);
+        event.reply('license-generate-reply', {
+          success: false,
+          error: 'Failed to generate license key.',
+        });
+      }
+    });
   }
 }
 

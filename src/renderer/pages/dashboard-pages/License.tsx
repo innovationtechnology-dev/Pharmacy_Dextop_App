@@ -15,6 +15,64 @@ import { getAuthUser } from '../../utils/auth';
 import { getLicenseStatus, getLicense, LicenseStatus, License as LicenseType } from '../../utils/license';
 import LicenseActivationDialog from '../../components/license/LicenseActivationDialog';
 import { useDashboardHeader } from './useDashboardHeader';
+import {
+  getCloudLicenseApiBaseUrl,
+  setCloudLicenseApiBaseUrl,
+  pingCloudLicenseServer,
+  registerLicenseKeyWithCloud,
+  CloudLicenseServerStatus,
+} from '../../utils/cloudLicense';
+
+// ── Inline helper: display + copy generated key ──────────────────────────────
+function formatKey(key: string): string {
+  const clean = key.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+  return clean.replace(/(.{4})/g, '$1 ').trim();
+}
+
+function GeneratedKeyCard({ licenseKey }: { licenseKey: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      const clean = licenseKey.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+      await navigator.clipboard.writeText(clean);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API unavailable
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2">
+      <span className="font-mono text-sm font-bold tracking-[0.18em] text-gray-900 dark:text-white flex-1 select-all">
+        {formatKey(licenseKey)}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className={`shrink-0 flex items-center justify-center w-7 h-7 rounded-full border transition-all ${
+          copied
+            ? 'bg-emerald-500 border-emerald-400 text-white scale-110'
+            : 'border-gray-300 dark:border-gray-500 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600'
+        }`}
+        aria-label="Copy license key"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {copied ? (
+            <polyline points="20 6 9 17 4 12" />
+          ) : (
+            <>
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </>
+          )}
+        </svg>
+      </button>
+    </div>
+  );
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const License: React.FC = () => {
   const { setHeader } = useDashboardHeader();
@@ -24,11 +82,30 @@ const License: React.FC = () => {
   const [showActivationDialog, setShowActivationDialog] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [userId, setUserId] = useState<number | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<string | null>(null);
+
+  // Cloud license state (admin only)
+  const [cloudServerUrl, setCloudServerUrl] = useState<string>('');
+  const [serverStatus, setServerStatus] = useState<CloudLicenseServerStatus>({ state: 'idle' });
+  const [isCheckingServer, setIsCheckingServer] = useState(false);
+
+  const [pharmacyName, setPharmacyName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [doctorName, setDoctorName] = useState('');
+  const [address, setAddress] = useState('');
+  const [city, setCity] = useState('');
+  const [country, setCountry] = useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [requestSuccessMessage, setRequestSuccessMessage] = useState<string | null>(null);
+  const [requestErrorMessage, setRequestErrorMessage] = useState<string | null>(null);
+  const [generatedKey, setGeneratedKey] = useState<string | null>(null);
 
   useEffect(() => {
     const user = getAuthUser();
     if (user) {
       setUserId(user.id);
+      setCurrentUserRole(user.role);
     }
   }, []);
 
@@ -89,6 +166,101 @@ const License: React.FC = () => {
     loadLicenseData();
   };
 
+  const handleServerUrlChange = (value: string) => {
+    setCloudServerUrl(value);
+    setCloudLicenseApiBaseUrl(value);
+  };
+
+  const handlePingServer = async () => {
+    setIsCheckingServer(true);
+    setServerStatus({ state: 'checking' });
+    try {
+      const status = await pingCloudLicenseServer();
+      setServerStatus(status);
+    } finally {
+      setIsCheckingServer(false);
+    }
+  };
+
+  const handleSubmitLicenseRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRequestSuccessMessage(null);
+    setRequestErrorMessage(null);
+    setGeneratedKey(null);
+
+    if (!pharmacyName.trim() || !email.trim() || !phone.trim()) {
+      setRequestErrorMessage('Pharmacy name, email, and phone are required.');
+      return;
+    }
+
+    setIsSubmittingRequest(true);
+    try {
+      // Step 1: generate key locally via IPC (works fully offline)
+      const details = {
+        pharmacyName: pharmacyName.trim(),
+        email: email.trim(),
+        phone: phone.trim(),
+        doctorName: doctorName.trim() || undefined,
+        address: address.trim() || undefined,
+        city: city.trim() || undefined,
+        country: country.trim() || undefined,
+      };
+
+      const ipcResult = await new Promise<{
+        success: boolean;
+        code?: string;
+        error?: string;
+      }>((resolve) => {
+        window.electron.ipcRenderer.once('license-generate-reply', (result) => {
+          resolve(result as { success: boolean; code?: string; error?: string });
+        });
+        window.electron.ipcRenderer.sendMessage('license-generate', [details]);
+      });
+
+      if (!ipcResult.success || !ipcResult.code) {
+        setRequestErrorMessage(ipcResult.error || 'Failed to generate license key.');
+        return;
+      }
+
+      const generatedCode = ipcResult.code;
+      setGeneratedKey(generatedCode);
+
+      // Step 2: push to cloud for visibility (best-effort, tolerates offline)
+      const cloudResult = await registerLicenseKeyWithCloud({
+        licenseKey: generatedCode,
+        pharmacyName: details.pharmacyName,
+        email: details.email,
+        phone: details.phone,
+        doctorName: details.doctorName,
+        address: details.address,
+        city: details.city,
+        country: details.country,
+      });
+
+      if (cloudResult.ok) {
+        setRequestSuccessMessage(
+          'License key generated and synced to cloud. Share the key below via WhatsApp.'
+        );
+      } else {
+        setRequestSuccessMessage(
+          'License key generated and saved locally. Cloud sync failed — key will appear on web when connection is restored.'
+        );
+      }
+
+      setPharmacyName('');
+      setEmail('');
+      setPhone('');
+      setDoctorName('');
+      setAddress('');
+      setCity('');
+      setCountry('');
+    } catch {
+      setRequestErrorMessage('Failed to generate license key. Please try again.');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  };
+
   const formatDate = (dateString: string | null | undefined): string => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -111,6 +283,11 @@ const License: React.FC = () => {
     });
   };
 
+  useEffect(() => {
+    // Initialize cloud server URL from storage on mount
+    setCloudServerUrl(getCloudLicenseApiBaseUrl());
+  }, []);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
@@ -126,6 +303,9 @@ const License: React.FC = () => {
   const isExpired = licenseStatus?.isExpired ?? true;
   const isExpiringSoon = licenseStatus?.isExpiringSoon ?? false;
   const isActive = licenseStatus?.isActive ?? false;
+  // Only super_admin can generate keys for other pharmacies.
+  // Regular admin and cashier are clients — they only activate their own license.
+  const isAdmin = currentUserRole === 'super_admin';
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -270,7 +450,7 @@ const License: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Side: Detailed Info */}
+        {/* Right Side: Detailed Info + Cloud License (admin) */}
         <div className="w-full md:w-2/3 flex flex-col overflow-hidden min-h-0">
           <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex items-center gap-3">
@@ -354,6 +534,148 @@ const License: React.FC = () => {
                </span>
             </div>
           </div>
+
+          {/* Cloud License Server & Request (admin only) */}
+          {isAdmin && (
+            <div className="mt-3 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-4 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                    Cloud License Server
+                  </p>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Configure the Next.js cloud license admin URL and verify connectivity.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-col md:flex-row gap-2">
+                <input
+                  type="text"
+                  value={cloudServerUrl}
+                  onChange={(e) => handleServerUrlChange(e.target.value)}
+                  placeholder="https://your-cloud-license-admin-domain"
+                  className="flex-1 px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                />
+                <button
+                  type="button"
+                  onClick={handlePingServer}
+                  disabled={isCheckingServer}
+                  className="px-3 py-2 text-xs font-semibold rounded-md bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50"
+                >
+                  {isCheckingServer ? 'Checking...' : 'Check Connection'}
+                </button>
+              </div>
+
+              {serverStatus.state === 'ok' && (
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                  License server reachable: {serverStatus.message}
+                </p>
+              )}
+              {serverStatus.state === 'error' && (
+                <p className="text-xs text-red-600 dark:text-red-400">
+                  {serverStatus.message}
+                </p>
+              )}
+
+              {serverStatus.state === 'ok' && (
+                <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                  <p className="text-xs font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-2">
+                    Generate License Key
+                  </p>
+                  <form onSubmit={handleSubmitLicenseRequest} className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="md:col-span-2">
+                      <input
+                        type="text"
+                        value={pharmacyName}
+                        onChange={(e) => setPharmacyName(e.target.value)}
+                        placeholder="Pharmacy Name *"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email *"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        placeholder="Phone / WhatsApp *"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        value={doctorName}
+                        onChange={(e) => setDoctorName(e.target.value)}
+                        placeholder="Doctor / Owner Name"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        value={city}
+                        onChange={(e) => setCity(e.target.value)}
+                        placeholder="City"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <input
+                        type="text"
+                        value={country}
+                        onChange={(e) => setCountry(e.target.value)}
+                        placeholder="Country"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <input
+                        type="text"
+                        value={address}
+                        onChange={(e) => setAddress(e.target.value)}
+                        placeholder="Address"
+                        className="w-full px-3 py-2 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    {requestErrorMessage && (
+                      <div className="md:col-span-2 text-xs text-red-600 dark:text-red-400">
+                        {requestErrorMessage}
+                      </div>
+                    )}
+                    {requestSuccessMessage && (
+                      <div className="md:col-span-2 space-y-2">
+                        <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                          {requestSuccessMessage}
+                        </p>
+                        {generatedKey && (
+                          <GeneratedKeyCard licenseKey={generatedKey} />
+                        )}
+                      </div>
+                    )}
+                    <div className="md:col-span-2 flex justify-end">
+                      <button
+                        type="submit"
+                        disabled={isSubmittingRequest}
+                        className="px-4 py-2 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
+                      >
+                        {isSubmittingRequest ? 'Generating...' : 'Generate License Key'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
