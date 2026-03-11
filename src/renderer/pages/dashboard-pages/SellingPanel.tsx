@@ -21,6 +21,7 @@ import {
   FiUsers,
   FiChevronLeft,
   FiChevronRight,
+  FiChevronDown,
   FiRotateCcw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -45,6 +46,16 @@ interface Medicine {
   sellablePills?: number;
   totalAvailablePills?: number;
   averageSellablePricePerPill?: number | null;
+}
+
+export interface Customer {
+  id?: number;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  notes?: string;
 }
 
 interface CartItem {
@@ -91,6 +102,10 @@ const SellingPanel: React.FC = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [receivedAmount, setReceivedAmount] = useState<string>('');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [saleType, setSaleType] = useState<string>('Regular');
   const [processing, setProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
@@ -118,10 +133,7 @@ const SellingPanel: React.FC = () => {
       return [];
     }
   });
-  const [invoiceNumber, setInvoiceNumber] = useState<string>(() => {
-    const timestamp = Date.now();
-    return `INV-${timestamp.toString().slice(-6)}`;
-  });
+  const [invoiceNumber, setInvoiceNumber] = useState<string>('INV-01');
   const [currentDate, setCurrentDate] = useState<string>(() => {
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -404,6 +416,31 @@ const SellingPanel: React.FC = () => {
     loadSalesHistory();
   }, [loadSalesHistory]);
 
+  const loadCustomers = useCallback(() => {
+    window.electron.ipcRenderer.once('customer-get-all-reply', (response: any) => {
+      if (response.success) {
+        setCustomers(response.data || []);
+      }
+    });
+    window.electron.ipcRenderer.sendMessage('customer-get-all', []);
+  }, []);
+
+  useEffect(() => {
+    loadCustomers();
+  }, [loadCustomers]);
+
+  // Sync accurate next invoice number for new bills
+  useEffect(() => {
+    if (selectedSaleId === null) {
+      if (salesHistory.length > 0) {
+        const highestId = Math.max(...salesHistory.map((s) => s.saleId), 0);
+        setInvoiceNumber(`INV-${String(highestId + 1).padStart(2, '0')}`);
+      } else {
+        setInvoiceNumber('INV-01');
+      }
+    }
+  }, [salesHistory, selectedSaleId]);
+
   // Function to clear form for new bill
   const clearFormForNewBill = useCallback(() => {
     setSelectedSaleId(null);
@@ -412,8 +449,8 @@ const SellingPanel: React.FC = () => {
     setCurrentSaleReturnTotal(0);
     setCustomerName('');
     setCustomerPhone('');
-    const timestamp = Date.now();
-    setInvoiceNumber(`INV-${timestamp.toString().slice(-6)}`);
+    setSaleType('Regular');
+    setReceivedAmount('');
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
     const month = now.toLocaleString('default', { month: 'short' });
@@ -438,8 +475,9 @@ const SellingPanel: React.FC = () => {
         acc[sale.saleId] = {
           saleId: sale.saleId,
           createdAt: sale.createdAt,
-          customerName: sale.customerName || 'Walk-in Customer',
+          customerName: sale.customerName || '',
           customerPhone: sale.customerPhone || '-',
+          saleType: sale.saleType || 'Regular',
           items: [],
           total: 0,
         };
@@ -447,7 +485,7 @@ const SellingPanel: React.FC = () => {
       acc[sale.saleId].items.push(sale);
       acc[sale.saleId].total += sale.total;
       return acc;
-    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; items: FlatSaleRow[]; total: number }>);
+    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }>);
 
     return Object.values(groupedSales).sort(
       (a, b) =>
@@ -828,6 +866,7 @@ const SellingPanel: React.FC = () => {
         })),
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
+        saleType: saleType || 'Regular',
       };
 
       // Check if we're updating an existing sale or creating a new one
@@ -1153,12 +1192,13 @@ const SellingPanel: React.FC = () => {
 
   // Function to load sale details into the form
   const loadSaleDetails = useCallback(
-      async (sale: { saleId: number; createdAt: string; customerName: string; customerPhone: string; items: FlatSaleRow[]; total: number }, index?: number) => {
+      async (sale: { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }, index?: number) => {
         setSelectedSaleId(sale.saleId);
 
         // Set customer information
-        setCustomerName(sale.customerName || 'CASH CUSTOMER');
+        setCustomerName(sale.customerName || '');
         setCustomerPhone(sale.customerPhone || '0000');
+        setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
 
         // Set date and time from sale
@@ -1870,12 +1910,66 @@ const SellingPanel: React.FC = () => {
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
                     Customer
                   </label>
-                  <input
-                    type="text"
-                    value={customerName || 'CASH CUSTOMER'}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="flex-1 min-w-0 h-8 px-2.5 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
-                  />
+                  <div className="flex-1 min-w-0 relative">
+                    <input
+                      id="customer-search-input"
+                      type="text"
+                      value={customerName}
+                      placeholder="CASH CUSTOMER"
+                      onChange={(e) => {
+                        setCustomerName(e.target.value);
+                        setShowCustomerDropdown(true);
+                        setSaleType('Regular');
+                      }}
+                      onFocus={() => setShowCustomerDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                      className="w-full h-8 pl-2.5 pr-8 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
+                    />
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 dark:text-gray-500">
+                      <FiChevronDown className="w-3.5 h-3.5" />
+                    </div>
+                    {showCustomerDropdown && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-[100] max-h-48 overflow-y-auto">
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-emerald-600 dark:text-emerald-400 border-b border-gray-100 dark:border-gray-700 flex items-center gap-1.5"
+                          onMouseDown={(e) => { 
+                            e.preventDefault(); 
+                            setCustomerName(''); 
+                            document.getElementById('customer-search-input')?.focus(); 
+                          }}
+                        >
+                          <FiSearch className="w-3 h-3" /> Registered Customer
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                        >
+                          CASH CUSTOMER
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Family/Relatives'); setSaleType('Family/Relatives'); setShowCustomerDropdown(false); }}
+                        >
+                          Family/Relatives
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Charity'); setSaleType('Charity'); setShowCustomerDropdown(false); }}
+                        >
+                          Charity
+                        </div>
+                        {customerName.trim() !== '' && customers.filter(c => c.name.toLowerCase().includes(customerName.toLowerCase())).map(customer => (
+                          <div 
+                            key={customer.id} 
+                            className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50"
+                            onMouseDown={(e) => { e.preventDefault(); setCustomerName(customer.name); setCustomerPhone(customer.phone || ''); setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                          >
+                            {customer.name} {customer.phone ? `(${customer.phone})` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1888,7 +1982,7 @@ const SellingPanel: React.FC = () => {
                   </label>
                   <input
                     type="tel"
-                    value={customerPhone || '0000'}
+                    value={customerPhone || '-'}
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     className="w-28 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
                   />
@@ -1910,7 +2004,7 @@ const SellingPanel: React.FC = () => {
                 {/* HISTORY BTN */}
                 <Link
                   to="/sales"
-                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
+                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-e-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
                 >
                   History
                 </Link>
@@ -2300,7 +2394,7 @@ const SellingPanel: React.FC = () => {
           </div>
 
           {/* Right Side: Summary (Top Half) and History (Bottom Half) */}
-          <div className="lg:col-span-4 flex flex-col gap-3 overflow-hidden min-h-0 h-full">
+          <div className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full">
             {/* Sale Summary - Top Half */}
             <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
               <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
@@ -2310,8 +2404,8 @@ const SellingPanel: React.FC = () => {
               </div>
               <div className="flex-1 flex flex-col p-3 gap-3 min-h-0 overflow-y-auto">
                 {/* Net Payable - Most Prominent */}
-                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-4 border border-emerald-600 dark:border-emerald-500 shadow-lg">
-                  <div className="flex items-center justify-between mb-1">
+                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-2 border border-emerald-600 dark:border-emerald-500 shadow-lg">
+                  <div className="flex items-center justify-between mb-0">
                     <div className="text-xs font-semibold text-white/90 uppercase tracking-wide">
                       Net Payable
                     </div>
@@ -2348,36 +2442,81 @@ const SellingPanel: React.FC = () => {
                 {/* Summary Breakdown - Show only when creating new sale */}
                 {currentBillIndex === -1 && cart.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
-                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
-                        Subtotal
+                    {/* Block 1: Discounts & Taxes */}
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Discount
+                        </div>
+                        <div className="text-sm font-bold text-red-600 dark:text-red-400">
+                          -{formatCurrency(discountValue)}
+                        </div>
                       </div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">
-                        {formatCurrency(subtotalValue)}
-                      </div>
-                    </div>
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
-                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
-                        Discount
-                      </div>
-                      <div className="text-sm font-bold text-red-600 dark:text-red-400">
-                        -{formatCurrency(discountValue)}
-                      </div>
-                    </div>
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
-                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
-                        Tax
-                      </div>
-                      <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                        +{formatCurrency(taxValue)}
+                      <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 dark:border-gray-600/50">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Tax
+                        </div>
+                        <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
+                          +{formatCurrency(taxValue)}
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600">
-                      <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
-                        Total
+
+                    {/* Block 2: Values & Final Total */}
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2 text-right">
+                      <div className="flex justify-between items-center">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Subtotal
+                        </div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-white">
+                          {formatCurrency(subtotalValue)}
+                        </div>
                       </div>
-                      <div className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                        {formatCurrency(grandTotal)}
+                      <div className="flex justify-between items-center pt-1.5 border-t border-emerald-100 dark:border-emerald-900/30">
+                        <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                          Total
+                        </div>
+                        <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(grandTotal)}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Given & Return Amounts - Calculator */}
+                {currentBillIndex === -1 && cart.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                    <div className="bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-2.5 border border-emerald-100 dark:border-emerald-800/50">
+                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1">
+                        Given Amount
+                      </div>
+                      <input
+                        type="number"
+                        value={receivedAmount}
+                        onChange={(e) => setReceivedAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-700 rounded px-2 py-1 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
+                      />
+                    </div>
+                    <div className={`rounded-lg p-2.5 border transition-colors ${
+                      receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                        ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
+                        : 'bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50'
+                    }`}>
+                      <div className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${
+                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                          ? 'text-blue-700 dark:text-blue-400'
+                          : 'text-red-700 dark:text-red-400'
+                      }`}>
+                        Return Amount
+                      </div>
+                      <div className={`text-sm font-black ${
+                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {formatCurrency(receivedAmount ? (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) : 0)}
                       </div>
                     </div>
                   </div>
@@ -2493,7 +2632,7 @@ const SellingPanel: React.FC = () => {
             </div>
 
             {/* Selling History - Bottom Half */}
-            <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
+            <div className="h-[200px] bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden flex-shrink-0">
             <div className="px-3 py-2.5 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
                 Selling History
@@ -2658,13 +2797,26 @@ const SellingPanel: React.FC = () => {
 
       {/* Return Modal */}
       {showReturnModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <FiRotateCcw className="w-5 h-5 text-red-500" />
-                Create Sale Return
-              </h2>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => {
+            setShowReturnModal(false);
+            setReturnItems([]);
+            setReturnReason('');
+            setReturnNotes('');
+          }} />
+          
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] max-w-4xl w-full max-h-[90vh] flex flex-col relative animate-in fade-in zoom-in duration-300 overflow-hidden border border-gray-100/50 dark:border-gray-700">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-gradient-to-br from-red-500 via-red-600 to-orange-500 flex items-center justify-between shadow-lg shadow-red-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-md">
+                  <FiRotateCcw className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-white tracking-tight">Create Sale Return</h2>
+                  <p className="text-xs text-red-50/90 font-medium">Process refunds or item returns for this sale</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -2673,45 +2825,54 @@ const SellingPanel: React.FC = () => {
                   setReturnReason('');
                   setReturnNotes('');
                 }}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                className="w-8 h-8 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded-full text-white transition-all hover:rotate-90"
               >
-                <FiX className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                <FiX className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="mb-4">
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Return Reason (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={returnReason}
-                  onChange={(e) => setReturnReason(e.target.value)}
-                  placeholder="e.g., Defective, Wrong item, Customer request..."
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                />
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Top inputs section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest block ml-1">
+                    Return Reason
+                  </label>
+                  <input
+                    type="text"
+                    value={returnReason}
+                    onChange={(e) => setReturnReason(e.target.value)}
+                    placeholder="e.g., Defective, Wrong item, Customer request..."
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl dark:text-white focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none transition-all placeholder:text-gray-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest block ml-1">
+                    Return Notes
+                  </label>
+                  <textarea
+                    value={returnNotes}
+                    onChange={(e) => setReturnNotes(e.target.value)}
+                    placeholder="Provide additional context for this return..."
+                    rows={1}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl dark:text-white focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none transition-all resize-none min-h-[42px] placeholder:text-gray-400"
+                  />
+                </div>
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Notes (Optional)
-                </label>
-                <textarea
-                  value={returnNotes}
-                  onChange={(e) => setReturnNotes(e.target.value)}
-                  placeholder="Additional notes about the return..."
-                  rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                />
-              </div>
-
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    Items to Return
-                  </h3>
-                  <div className="flex gap-2">
+              {/* Items Section header */}
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
+                      <FiPackage className="w-3.5 h-3.5 text-emerald-500" />
+                    </div>
+                    <h3 className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-[0.15em]">
+                      Items In Sale
+                    </h3>
+                  </div>
+                  <div className="flex bg-gray-100 dark:bg-gray-700 p-1 rounded-lg gap-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -2721,9 +2882,9 @@ const SellingPanel: React.FC = () => {
                         }));
                         setReturnItems(newItems);
                       }}
-                      className="text-xs px-2 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                      className="text-[10px] font-semibold px-3 py-1.5 rounded-md hover:bg-white dark:hover:bg-gray-600 text-blue-600 dark:text-blue-400 transition-all"
                     >
-                      Select All
+                      SELECT ALL
                     </button>
                     <button
                       type="button"
@@ -2734,165 +2895,197 @@ const SellingPanel: React.FC = () => {
                         }));
                         setReturnItems(newItems);
                       }}
-                      className="text-xs px-2 py-1 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                      className="text-[10px] font-semibold px-3 py-1.5 rounded-md hover:bg-white dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400 transition-all"
                     >
-                      Deselect All
+                      CLEAR ALL
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
+
+                <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                   {returnItems.map((item, index) => {
                     const isSelected = item.returnPills > 0;
                     const subtotal = item.unitPrice * item.returnPills;
                     const total = subtotal - item.discountAmount + item.taxAmount;
+                    
                     return (
                       <div
                         key={item.medicineId}
-                        className={`border-2 rounded-lg p-3 transition-all ${
+                        className={`group rounded-xl border transition-all duration-300 p-2.5 ${
                           isSelected
-                            ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 shadow-md'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 opacity-75'
+                            ? 'border-red-500/30 bg-gradient-to-br from-white to-red-50/30 dark:from-gray-800 dark:to-red-900/5 shadow-md shadow-red-500/5'
+                            : 'border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800/40 opacity-90 hover:opacity-100 hover:border-red-200 hover:shadow-sm'
                         }`}
                       >
-                        <div className="flex items-start gap-3 mb-2">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              const newItems = [...returnItems];
-                              newItems[index].returnPills = e.target.checked ? item.availableToReturn : 0;
-                              setReturnItems(newItems);
-                            }}
-                            className="mt-1 w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500 focus:ring-2 cursor-pointer"
-                          />
-                          <div className="flex-1">
-                            <div className={`font-semibold ${isSelected ? 'text-red-900 dark:text-red-200' : 'text-gray-900 dark:text-white'}`}>
-                              {item.medicineName}
+                        <div className="flex items-start gap-4">
+                          <div className="mt-1 flex-shrink-0">
+                            <label className="relative flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    const newItems = [...returnItems];
+                                    newItems[index].returnPills = e.target.checked ? item.availableToReturn : 0;
+                                    setReturnItems(newItems);
+                                  }}
+                                  className="peer sr-only"
+                                />
+                                <div className="w-6 h-6 bg-white dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg transition-all peer-checked:border-red-500 peer-checked:bg-red-500 flex items-center justify-center shadow-sm">
+                                    <FiCheck className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${isSelected ? 'scale-100' : 'scale-0'}`} />
+                                </div>
+                            </label>
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className={`text-[15px] font-semibold tracking-tight truncate ${isSelected ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                                  {item.medicineName}
+                                </h4>
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-100/80 dark:bg-gray-700/50 rounded-full text-[9px] font-semibold text-gray-500 dark:text-gray-400">
+                                    <div className={`w-1 h-1 rounded-full ${item.availableToReturn > 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                    {item.availableToReturn} PILLS AVAILABLE
+                                  </div>
+                                  <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
+                                    {symbol}{item.unitPrice.toFixed(2)} / unit
+                                  </div>
+                                  
+                                  {/* Compact Financial Stats */}
+                                  <div className={`flex items-center gap-2 transition-all duration-300 ${isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-95 w-0 overflow-hidden'}`}>
+                                    <div className="h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-orange-400 uppercase">Discount:</span>
+                                      <span className="text-[10px] font-bold text-orange-500">-{symbol}{item.discountAmount.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-blue-400 uppercase">Tax:</span>
+                                      <span className="text-[10px] font-bold text-blue-500">+{symbol}{item.taxAmount.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-gray-400 uppercase">Sub Total:</span>
+                                      <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">{symbol}{subtotal.toFixed(2)}</span>
+                                    </div>
+                                    
+                                  </div>
+
+                                  {item.availableToReturn < item.originalPills && (
+                                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-red-100/50 dark:bg-red-900/20 rounded-full text-[9px] font-bold text-red-500 uppercase animate-pulse">
+                                      {item.originalPills - item.availableToReturn} RETURNED
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className={`text-right transition-opacity duration-300 ${isSelected ? 'opacity-100' : 'opacity-0'}`}>
+                                <div className="text-[9px] font-bold text-red-600/50 dark:text-red-400/50 uppercase tracking-tighter">Refund Amount</div>
+                                <div className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums">
+                                    {symbol}{total.toFixed(2)}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Available to Return: <span className="font-bold text-gray-700 dark:text-gray-200">{item.availableToReturn} pills</span>
-                              {item.availableToReturn < item.originalPills && (
-                                <span className="ml-2 text-[10px] text-red-500 italic">({item.originalPills - item.availableToReturn} already returned)</span>
-                              )}
-                              {" | "} Unit Price: {symbol}{item.unitPrice.toFixed(2)}
-                            </div>
+
                             {isSelected && (
-                              <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
-                                ✓ Selected for return
+                              <div className="mt-2 animate-in slide-in-from-top-2 duration-300">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-2 dark:border-red-900/20">
+                                    <div className="space-y-1.5">
+                                      <label className="text-[9px] font-bold text-red-600/60 dark:text-red-400/60 uppercase tracking-widest ml-1">Quantity To Return</label>
+                                      <div className="relative flex items-center w-32">
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={item.availableToReturn}
+                                          value={item.returnPills}
+                                          onChange={(e) => {
+                                            const newItems = [...returnItems];
+                                            newItems[index].returnPills = Math.max(1, Math.min(item.availableToReturn, parseInt(e.target.value) || 1));
+                                            setReturnItems(newItems);
+                                          }}
+                                          className="w-full pl-3 pr-14 py-2 bg-white dark:bg-gray-900 border border-red-200 dark:border-red-800 rounded-xl text-sm font-semibold text-gray-900 dark:text-white focus:ring-4 focus:ring-red-500/5 focus:border-red-500 outline-none transition-all shadow-inner"
+                                        />
+                                        <div className="absolute right-3 text-[9px] font-bold text-red-600/30">MAX: {item.availableToReturn}</div>
+                                      </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className="text-[9px] font-bold text-red-600/60 dark:text-red-400/60 uppercase tracking-widest ml-1">Item Specific Reason</label>
+                                      <input
+                                        type="text"
+                                        value={item.reason || ''}
+                                        onChange={(e) => {
+                                          const newItems = [...returnItems];
+                                          newItems[index].reason = e.target.value;
+                                          setReturnItems(newItems);
+                                        }}
+                                        placeholder="Reason for this specific item..."
+                                        className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-red-200 dark:border-red-800 rounded-xl text-sm text-gray-700 dark:text-gray-300 focus:ring-4 focus:ring-red-500/5 focus:border-red-500 outline-none transition-all shadow-inner"
+                                      />
+                                    </div>
+                                </div>
                               </div>
                             )}
                           </div>
                         </div>
-                        {isSelected && (
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 pt-3 border-t border-red-200 dark:border-red-800">
-                            <div>
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                Return Quantity
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                max={item.availableToReturn}
-                                value={item.returnPills}
-                                onChange={(e) => {
-                                  const newItems = [...returnItems];
-                                  newItems[index].returnPills = Math.max(1, Math.min(item.availableToReturn, parseInt(e.target.value) || 1));
-                                  setReturnItems(newItems);
-                                }}
-                                className="w-full px-2 py-1 text-sm border border-red-300 dark:border-red-700 rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                              />
-                              <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-                                Max: {item.availableToReturn}
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                Reason (Optional)
-                              </label>
-                              <input
-                                type="text"
-                                value={item.reason || ''}
-                                onChange={(e) => {
-                                  const newItems = [...returnItems];
-                                  newItems[index].reason = e.target.value;
-                                  setReturnItems(newItems);
-                                }}
-                                placeholder="Item reason..."
-                                className="w-full px-2 py-1 text-sm border border-red-300 dark:border-red-700 rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <div className="text-xs text-gray-600 dark:text-gray-400">
-                                <div>Subtotal: {symbol}{subtotal.toFixed(2)}</div>
-                                <div>Discount: {symbol}{item.discountAmount.toFixed(2)}</div>
-                                <div>Tax: {symbol}{item.taxAmount.toFixed(2)}</div>
-                                <div className="font-semibold text-red-700 dark:text-red-300 mt-1">
-                                  Total: {symbol}{total.toFixed(2)}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                 </div>
-                {returnItems.filter(item => item.returnPills > 0).length === 0 && (
-                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                    No items selected. Check the boxes above to select items for return.
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold text-gray-900 dark:text-white">
-                    Total Return Amount:
-                  </span>
-                  <span className="text-lg font-bold text-red-600 dark:text-red-400">
-                    {symbol}
-                    {returnItems
-                      .reduce((sum, item) => {
-                        const subtotal = item.unitPrice * item.returnPills;
-                        return sum + subtotal - item.discountAmount + item.taxAmount;
-                      }, 0)
-                      .toFixed(2)}
-                  </span>
-                </div>
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowReturnModal(false);
-                  setReturnItems([]);
-                  setReturnReason('');
-                  setReturnNotes('');
-                }}
-                className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleProcessReturn}
-                disabled={processingReturn || returnItems.filter(item => item.returnPills > 0).length === 0}
-                className="flex-1 px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-md font-semibold hover:bg-red-700 dark:hover:bg-red-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {processingReturn ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
+            {/* Modal Footer with summary & actions */}
+            <div className="px-5 py-5 bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950 dark:border-gray-800 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center gap-6">
+                <div className="relative group">
+                    <div className="absolute -inset-2 bg-red-500/5 rounded-2xl blur-lg transition duration-500 group-hover:bg-red-500/10" />
+                    <div className="relative flex items-center gap-4 bg-white dark:bg-gray-800 py-2.5 px-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                        <div className="text-right border-r pr-4 border-gray-100 dark:border-gray-700">
+                            <span className="text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] block mb-0.5">Total Refund</span>
+                            <span className="text-xl font-black text-red-600 dark:text-red-400 tabular-nums leading-none">
+                              {symbol}
+                              {returnItems
+                                .reduce((sum, item) => {
+                                  const subtotal = item.unitPrice * item.returnPills;
+                                  return sum + subtotal - item.discountAmount + item.taxAmount;
+                                }, 0)
+                                .toFixed(2)}
+                            </span>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-gray-800 dark:text-gray-200 leading-none">
+                                {returnItems.filter(i => i.returnPills > 0).length} ITEMS
+                            </span>
+                            <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-tighter mt-1">SELECTED</span>
+                        </div>
+                    </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReturnModal(false);
+                    setReturnItems([]);
+                    setReturnReason('');
+                    setReturnNotes('');
+                  }}
+                  className="px-5 py-2.5 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-xl font-semibold text-sm border border-gray-200 dark:border-gray-600 hover:bg-gray-50 transition-all active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProcessReturn}
+                  disabled={processingReturn || returnItems.filter(item => item.returnPills > 0).length === 0}
+                  className="px-7 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold text-sm shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all active:scale-95 disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
+                >
+                  {processingReturn ? (
+                    <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
                     <FiRotateCcw className="w-4 h-4" />
-                    Process Return
-                  </>
-                )}
-              </button>
+                  )}
+                  <span>Process Return</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

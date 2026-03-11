@@ -409,7 +409,7 @@ export default function Purchases() {
               Total Purchases
             </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -422,7 +422,7 @@ export default function Purchases() {
               Paid
             </span>
             <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -435,7 +435,7 @@ export default function Purchases() {
               Outstanding
             </span>
             <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -670,15 +670,15 @@ export default function Purchases() {
                         </span>
                       </div>
                       <div className="col-span-1 text-right">
-                        <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{purchase.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                        <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{purchase.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div className="col-span-1 text-right text-blue-600 dark:text-blue-400">
-                        {getCurrencySymbol()}{purchase.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        {getCurrencySymbol()}{purchase.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </div>
                       <div className="col-span-2 text-right">
                         {purchase.remainingBalance > 0 ? (
                           <span className="text-orange-600 dark:text-orange-400 font-medium">
-                            {getCurrencySymbol()}{purchase.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            {getCurrencySymbol()}{purchase.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </span>
                         ) : (
                           <span className="text-green-500 dark:text-green-400 flex items-center justify-end gap-1 font-bold">
@@ -709,13 +709,13 @@ export default function Purchases() {
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
                 <div className="col-span-6 text-right text-gray-600 dark:text-gray-300 pr-4">Total</div>
                 <div className="col-span-1 text-right text-emerald-700 dark:text-emerald-400">
-                  {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="col-span-1 text-right text-blue-700 dark:text-blue-400">
-                  {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="col-span-2 text-right text-orange-700 dark:text-orange-400">
-                  {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             )}

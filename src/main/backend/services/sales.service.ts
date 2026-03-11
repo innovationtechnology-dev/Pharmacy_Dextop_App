@@ -26,6 +26,7 @@ export interface Sale {
   total: number;
   customerName?: string;
   customerPhone?: string;
+  saleType?: string;
   createdAt?: string;
 }
 
@@ -41,6 +42,7 @@ export class SalesService {
     createdAt: string;
     customerName?: string;
     customerPhone?: string;
+    saleType?: string;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -58,6 +60,7 @@ export class SalesService {
         s.created_at AS createdAt,
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
+        s.sale_type AS saleType,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -105,6 +108,7 @@ export class SalesService {
     createdAt: string;
     customerName?: string;
     customerPhone?: string;
+    saleType?: string;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -120,6 +124,7 @@ export class SalesService {
         s.created_at AS createdAt,
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
+        s.sale_type AS saleType,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -151,6 +156,7 @@ export class SalesService {
         total REAL NOT NULL,
         customer_name TEXT,
         customer_phone TEXT,
+        sale_type TEXT DEFAULT 'Regular',
         created_at DATETIME DEFAULT (datetime('now', 'localtime'))
       )
     `);
@@ -164,6 +170,8 @@ export class SalesService {
         pills INTEGER NOT NULL,
         unit_price REAL NOT NULL,
         subtotal REAL NOT NULL,
+        cost_price REAL NOT NULL DEFAULT 0,
+        cost_subtotal REAL NOT NULL DEFAULT 0,
         discount_amount REAL NOT NULL DEFAULT 0,
         tax_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL,
@@ -172,6 +180,11 @@ export class SalesService {
       )
     `);
 
+    const saleItemsInfoCheck = await this.dbService.query(`PRAGMA table_info(sale_items)`);
+    if (!saleItemsInfoCheck.some((col: any) => col.name === 'cost_price')) {
+      await this.dbService.execute(`ALTER TABLE sale_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0`);
+      await this.dbService.execute(`ALTER TABLE sale_items ADD COLUMN cost_subtotal REAL NOT NULL DEFAULT 0`);
+    }
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_items_sale_id ON sale_items(sale_id)
     `);
@@ -191,6 +204,11 @@ export class SalesService {
       await this.dbService.execute('DROP TABLE IF EXISTS sale_items');
       await this.dbService.execute('DROP TABLE IF EXISTS sales');
       return;
+    }
+
+    // Add sale_type if it doesn't exist
+    if (salesInfo.length > 0 && !salesInfo.some((col: any) => col.name === 'sale_type')) {
+      await this.dbService.execute("ALTER TABLE sales ADD COLUMN sale_type TEXT DEFAULT 'Regular'");
     }
 
     const saleItemsInfo = await this.dbService.query(`PRAGMA table_info(sale_items)`);
@@ -288,8 +306,8 @@ export class SalesService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertSaleSql = `
-        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, sale_type, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleResult = await this.dbService.execute(insertSaleSql, [
         subtotal,
@@ -298,23 +316,26 @@ export class SalesService {
         total,
         payload.customerName || null,
         payload.customerPhone || null,
+        payload.saleType || 'Regular',
       ]);
       const saleId = (saleResult as any).lastID;
 
       for (const item of computedItems) {
+        // Fetch cost price (average of available batches)
+        const costResult = await this.dbService.queryOne(`
+          SELECT AVG(price_per_pill) as avg_cost 
+          FROM purchase_items 
+          WHERE medicine_id = ? AND available_pills > 0
+        `, [item.medicineId]);
+        const costPrice = costResult?.avg_cost || 0;
+        const costSubtotal = costPrice * item.pills;
+
         const insertItemSql = `
           INSERT INTO sale_items (
-            sale_id,
-            medicine_id,
-            medicine_name,
-            pills,
-            unit_price,
-            subtotal,
-            discount_amount,
-            tax_amount,
-            total
+            sale_id, medicine_id, medicine_name, pills, unit_price, subtotal, 
+            cost_price, cost_subtotal, discount_amount, tax_amount, total
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           saleId,
@@ -323,6 +344,8 @@ export class SalesService {
           item.pills,
           item.unitPrice,
           item.subtotal,
+          costPrice,
+          costSubtotal,
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.total,
@@ -356,6 +379,7 @@ export class SalesService {
         total: sale.total,
         customerName: sale.customer_name || undefined,
         customerPhone: sale.customer_phone || undefined,
+        saleType: sale.sale_type || 'Regular',
         createdAt: sale.created_at,
         items: items.map((item: any) => ({
           medicineId: item.medicine_id,
@@ -420,6 +444,7 @@ export class SalesService {
       total: sale.total,
       customerName: sale.customer_name || undefined,
       customerPhone: sale.customer_phone || undefined,
+      saleType: sale.sale_type || 'Regular',
       createdAt: sale.created_at,
       items: items.map((item: any) => ({
         medicineId: item.medicine_id,
@@ -571,7 +596,7 @@ export class SalesService {
       const updateSaleSql = `
         UPDATE sales 
         SET subtotal = ?, discount_total = ?, tax_total = ?, total = ?, 
-            customer_name = ?, customer_phone = ?
+            customer_name = ?, customer_phone = ?, sale_type = ?
         WHERE id = ?
       `;
       await this.dbService.execute(updateSaleSql, [
@@ -581,6 +606,7 @@ export class SalesService {
         total,
         payload.customerName || null,
         payload.customerPhone || null,
+        payload.saleType || 'Regular',
         saleId,
       ]);
 
@@ -712,6 +738,8 @@ export class SalesService {
     saleDiscountTotal: number;
     saleTaxTotal: number;
     saleReturnsTotal: number;
+    familyTotal: number;
+    charityTotal: number;
     netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
@@ -726,7 +754,8 @@ export class SalesService {
         COALESCE(SUM(total), 0) as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
-        COALESCE(SUM(total), 0) as payment_total
+        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN total ELSE 0 END), 0) as family_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN total ELSE 0 END), 0) as charity_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
         AND datetime(created_at) <= datetime(?)
@@ -735,10 +764,27 @@ export class SalesService {
     const sellingTotal = salesResult?.selling_total || 0;
     const saleDiscountTotal = salesResult?.sale_discount_total || 0;
     const saleTaxTotal = salesResult?.sale_tax_total || 0;
-    const paymentTotal = salesResult?.payment_total || 0;
+    const familyTotal = salesResult?.family_total || 0;
+    const charityTotal = salesResult?.charity_total || 0;
 
     // Get sale returns total for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
+    
+    // Get total COGS (Cost of Goods Sold)
+    // We sum cost_subtotal, but for legacy rows where it might be 0, we fallback to medicine buy_price * quantity
+    const cogsSql = `
+      SELECT COALESCE(SUM(
+        CASE 
+          WHEN si.cost_subtotal > 0 THEN si.cost_subtotal 
+          ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0)
+        END
+      ), 0) as total_cogs
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)
+    `;
+    const cogsResult = await this.dbService.queryOne(cogsSql, [fromDateTime, toDateTime]);
+    const totalCogs = cogsResult?.total_cogs || 0;
     
     // Calculate net revenue (sales - returns)
     const netRevenue = sellingTotal - saleReturnsTotal;
@@ -769,15 +815,19 @@ export class SalesService {
     const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDateTime, toDateTime]);
     const remainingPayment = remainingPaymentResult?.total_remaining || 0;
 
-    // Calculate profit from net revenue
-    const profit = netRevenue - purchasingTotal;
+    // Calculate profit as margin: Net Revenue - COGS
+    const profit = netRevenue - totalCogs;
 
     // Trend calculation
     const salesTrendSql = `
-      SELECT date(created_at) as date, SUM(total) as amount
-      FROM sales
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)
-      GROUP BY date(created_at)
+      SELECT 
+        date(s.created_at) as date, 
+        SUM(si.total) as amount,
+        SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0) END) as cost
+      FROM sales s
+      JOIN sale_items si ON s.id = si.sale_id
+      WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)
+      GROUP BY date(s.created_at)
     `;
     const purchasesTrendSql = `
       SELECT date(created_at) as date, SUM(grand_total) as amount
@@ -789,15 +839,17 @@ export class SalesService {
     const salesTrend = await this.dbService.query(salesTrendSql, [fromDateTime, toDateTime]);
     const purchasesTrend = await this.dbService.query(purchasesTrendSql, [fromDateTime, toDateTime]);
 
-    const trendMap = new Map<string, { sales: number; purchases: number }>();
+    const trendMap = new Map<string, { sales: number; purchases: number; cost: number }>();
 
     salesTrend.forEach((r: any) => {
-      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0 });
-      trendMap.get(r.date)!.sales = r.amount;
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
+      const current = trendMap.get(r.date)!;
+      current.sales = r.amount;
+      current.cost = r.cost;
     });
 
     purchasesTrend.forEach((r: any) => {
-      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0 });
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
       trendMap.get(r.date)!.purchases = r.amount;
     });
 
@@ -806,7 +858,7 @@ export class SalesService {
         date,
         sales: data.sales,
         purchases: data.purchases,
-        profit: data.sales - data.purchases
+        profit: data.sales - (data as any).cost
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -818,8 +870,10 @@ export class SalesService {
       saleDiscountTotal,
       saleTaxTotal,
       saleReturnsTotal,
+      familyTotal,
+      charityTotal,
       netRevenue,
-      paymentTotal,
+      paymentTotal: sellingTotal, // Restore paymentTotal (assumed to be sellingTotal based on original SQL)
       remainingPayment,
       profit,
       trend,

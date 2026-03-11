@@ -3,7 +3,7 @@ import { getSalesFlatRowsByRange, FlatSaleRow, exportSalesPdf, exportSalesCsvByR
 import { useDashboardHeader } from './useDashboardHeader';
 import { getAuthUser } from '../../utils/auth';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiUser, FiPhone, FiFileText } from 'react-icons/fi';
-import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown, FaUndo } from 'react-icons/fa';
+import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown, FaUndo, FaArrowLeft } from 'react-icons/fa';
 import ReportDetailModal from '../../components/common/DetailModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
@@ -171,6 +171,7 @@ export default function SalesReport() {
     return groupedData.filter(row =>
       row.displayMedicineName.toLowerCase().includes(q) ||
       (row.customerName && row.customerName.toLowerCase().includes(q)) ||
+      (row.saleType && row.saleType.toLowerCase().includes(q)) ||
       row.saleId.toString().includes(q)
     );
   }, [reportRows, searchQuery]);
@@ -202,7 +203,7 @@ export default function SalesReport() {
               Revenue
             </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -241,7 +242,7 @@ export default function SalesReport() {
               Tax
             </span>
             <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -254,15 +255,25 @@ export default function SalesReport() {
               Discount
             </span>
             <span className="text-xs font-bold text-pink-600 dark:text-pink-400 ml-1">
-              {getCurrencySymbol()}{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
 
+
+        {/* Back to Selling Button */}
+        <button
+          onClick={() => window.location.hash = '#/selling-panel'}
+          className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FaArrowLeft className="w-3.5 h-3.5" />
+          Back to Selling
+        </button>
+
         {/* Refresh Button */}
         <button
           onClick={fetchReport}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
         >
           <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           Refresh
@@ -394,7 +405,7 @@ export default function SalesReport() {
             <div className="grid grid-cols-12 gap-3 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
               <div className="col-span-2">Date / ID</div>
               <div className="col-span-3">Medicine</div>
-              <div className="col-span-2">Customer</div>
+              <div className="col-span-2">Customer / Type</div>
               <div className="col-span-1 text-right">Price</div>
               <div className="col-span-1 text-center">Qty</div>
               <div className="col-span-2 text-right">Total</div>
@@ -429,14 +440,17 @@ export default function SalesReport() {
                       <div className="col-span-3">
                         <div className="font-medium text-gray-900 dark:text-white truncate" title={row.displayMedicineName}>{row.displayMedicineName}</div>
                       </div>
-                      <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
-                        {row.customerName || 'Walk-in'}
+                      <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={`${row.customerName || 'Walk-in'} - ${row.saleType || 'Regular'}`}>
+                        <div>{row.customerName || 'Walk-in'}</div>
+                        {row.saleType && row.saleType !== 'Regular' && (
+                          <div className="text-[9px] text-emerald-500 font-bold mt-0.5 uppercase tracking-wider">{row.saleType}</div>
+                        )}
                       </div>
                       <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
                         {row.isGrouped ? (
                           <span className="text-gray-400 italic text-[9px]">Multiple</span>
                         ) : (
-                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString()}</>
+                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
                         )}
                       </div>
                       <div className="col-span-1 text-center">
@@ -445,7 +459,7 @@ export default function SalesReport() {
                         </span>
                       </div>
                       <div className="col-span-2 text-right">
-                        <div className="font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                        <div className="font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div className="col-span-1 text-center">
                         <button
@@ -470,7 +484,7 @@ export default function SalesReport() {
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
                 <div className="col-span-10 text-right text-gray-600 dark:text-gray-300 pr-4">Grand Total</div>
                 <div className="col-span-2 text-right text-emerald-700 dark:text-emerald-400">
-                  {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             )}
@@ -559,17 +573,17 @@ export default function SalesReport() {
             </div>
             <div className="col-span-2 text-right">
               <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="col-span-1 text-right">
               <div className="text-[11px] font-normal text-red-500">
-                -{getCurrencySymbol()}{item.discountAmount.toLocaleString()}
+                -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="col-span-2 text-right">
               <div className="text-[11px] font-medium text-gray-900 dark:text-white">
-                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
           </div>
@@ -583,10 +597,10 @@ export default function SalesReport() {
           )
         }}
         summaryItems={[
-          { label: 'Subtotal', value: `${getCurrencySymbol()}${selectedSale?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Net Amount', type: 'total', value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+          { label: 'Subtotal', value: `${getCurrencySymbol()}${selectedSale?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Net Amount', type: 'total', value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
         ]}
         footerStatus={{
           label: 'Transaction Finalized',

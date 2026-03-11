@@ -9,6 +9,7 @@ import {
   FiDollarSign,
   FiPackage,
   FiRefreshCw,
+  FiUsers,
 } from 'react-icons/fi';
 import {
   XAxis,
@@ -16,8 +17,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   Legend,
 } from 'recharts';
 import { invokeIpc } from '../../utils/ipcHelpers';
@@ -33,6 +34,8 @@ type FinancialData = {
   saleDiscountTotal: number;
   purchaseTaxTotal: number;
   saleTaxTotal: number;
+  familyTotal: number;
+  charityTotal: number;
   profit: number;
   trend: { date: string; sales: number; profit: number }[];
 };
@@ -55,6 +58,8 @@ const FinancialSummary = () => {
     saleDiscountTotal: 0,
     purchaseTaxTotal: 0,
     saleTaxTotal: 0,
+    familyTotal: 0,
+    charityTotal: 0,
     profit: 0,
     trend: [],
   });
@@ -66,6 +71,35 @@ const FinancialSummary = () => {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
+  };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      return (
+        <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 p-3 rounded-xl shadow-xl space-y-2 min-w-[150px] z-[1000]">
+          <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-700/50 pb-1.5 mb-1.5">
+            {new Date(label).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+          </p>
+          {payload.map((entry: any, index: number) => (
+            <div key={index} className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div 
+                  className="w-2 h-2 rounded-full" 
+                  style={{ backgroundColor: entry.color }}
+                />
+                <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 capitalize">
+                  {entry.name}
+                </span>
+              </div>
+              <span className="text-xs font-black text-gray-900 dark:text-white">
+                {formatCurrency(entry.value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+    return null;
   };
 
   const formatDisplayDate = (dateStr: string) => {
@@ -81,8 +115,8 @@ const FinancialSummary = () => {
     setLoading(true);
     try {
       const data = await invokeIpc<FinancialData>(
-        'financial-get-summary',
-        'financial-get-summary-reply',
+        'financial-get-date-range',
+        'financial-get-date-range-reply',
         [fromDate, toDate]
       );
       if (data) setFinancialData(data);
@@ -158,6 +192,22 @@ const FinancialSummary = () => {
             <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Net Profit</span>
             <span className={`text-xs font-bold ml-1 ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
               {formatCurrency(financialData.profit)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-purple-50 dark:bg-purple-900/20 px-2.5 py-1.5 rounded-md border border-purple-200 dark:border-purple-600/50 shadow-sm">
+            <FiUsers className="w-3.5 h-3.5 text-purple-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Relative</span>
+            <span className="text-xs font-bold text-purple-600 dark:text-purple-400 ml-1">
+              {formatCurrency(financialData.familyTotal)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-pink-50 dark:bg-pink-900/20 px-2.5 py-1.5 rounded-md border border-pink-200 dark:border-pink-600/50 shadow-sm">
+            <FiPieChart className="w-3.5 h-3.5 text-pink-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Charity</span>
+            <span className="text-xs font-bold text-pink-600 dark:text-pink-400 ml-1">
+              {formatCurrency(financialData.charityTotal)}
             </span>
           </div>
 
@@ -264,6 +314,18 @@ const FinancialSummary = () => {
                         <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Sale Taxes</p>
                         <p className="text-sm font-bold text-blue-600">{formatCurrency(financialData.saleTaxTotal)}</p>
                       </div>
+                      <div className="border-t border-gray-200 dark:border-gray-600 pt-3 col-span-2">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-purple-50 dark:bg-purple-900/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-800/30">
+                            <p className="text-[10px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-widest mb-0.5">Family/Relative</p>
+                            <p className="text-sm font-bold text-purple-700 dark:text-purple-300">{formatCurrency(financialData.familyTotal)}</p>
+                          </div>
+                          <div className="bg-pink-50 dark:bg-pink-900/10 p-2.5 rounded-lg border border-pink-100 dark:border-pink-800/30">
+                            <p className="text-[10px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-widest mb-0.5">Charity</p>
+                            <p className="text-sm font-bold text-pink-700 dark:text-pink-300">{formatCurrency(financialData.charityTotal)}</p>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -279,7 +341,7 @@ const FinancialSummary = () => {
                     <div className="text-right">
                       <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Margin %</p>
                       <p className="text-xl font-bold text-gray-700 dark:text-gray-300">
-                         {financialData.sellingTotal > 0 ? Math.round((financialData.profit / financialData.sellingTotal) * 100) : 0}%
+                         {financialData.sellingTotal > 0 ? Math.max(0, Math.min(100, Math.round((financialData.profit / financialData.sellingTotal) * 100))) : 0}%
                       </p>
                     </div>
                   </div>
@@ -295,36 +357,65 @@ const FinancialSummary = () => {
                   Profit Trend
                 </h3>
                 
-                <div className="flex-1 min-h-0">
+                <div className="flex-1 min-h-0 relative">
                   {financialData.trend?.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={financialData.trend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.05)" />
+                      <AreaChart data={financialData.trend} margin={{ top: 10, right: 30, left: 20, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10B981" stopOpacity={0.4} />
+                            <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="rgba(0,0,0,0.05)" />
                         <XAxis 
                           dataKey="date" 
                           axisLine={false} 
                           tickLine={false}
-                          tick={{ fill: '#9CA3AF', fontSize: 10 }}
+                          tick={{ fill: '#9CA3AF', fontSize: 10, fontWeight: 600 }}
                           tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                          dy={10}
                         />
                         <YAxis 
                           axisLine={false} 
                           tickLine={false}
-                          tick={{ fill: '#9CA3AF', fontSize: 10 }}
-                          tickFormatter={(val) => formatCurrency(val)}
+                          tick={{ fill: '#9CA3AF', fontSize: 10, fontWeight: 600 }}
+                          tickFormatter={(val) => formatCurrency(val).split('.')[0]} // Hide decimal in ticks to keep it clean
+                          dx={-10}
                         />
-                        <Tooltip 
-                          contentStyle={{ 
-                            borderRadius: '8px', 
-                            border: 'none', 
-                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
-                            fontSize: '11px'
-                          }}
+                        <Tooltip content={<CustomTooltip />} />
+                        <Legend 
+                          iconType="circle" 
+                          verticalAlign="top" 
+                          align="right" 
+                          iconSize={8}
+                          wrapperStyle={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#9CA3AF', paddingBottom: '20px' }} 
                         />
-                        <Legend iconType="circle" wrapperStyle={{ fontSize: '10px', paddingTop: '10px' }} />
-                        <Line type="monotone" dataKey="sales" stroke="#3B82F6" strokeWidth={3} dot={false} />
-                        <Line type="monotone" dataKey="profit" stroke="#10B981" strokeWidth={3} dot={false} />
-                      </LineChart>
+                        <Area 
+                          name="sales"
+                          type="monotone" 
+                          dataKey="sales" 
+                          stroke="#3B82F6" 
+                          strokeWidth={3} 
+                          fillOpacity={1} 
+                          fill="url(#colorSales)" 
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                        <Area 
+                          name="profit"
+                          type="monotone" 
+                          dataKey="profit" 
+                          stroke="#10B981" 
+                          strokeWidth={3} 
+                          fillOpacity={1} 
+                          fill="url(#colorProfit)" 
+                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        />
+                      </AreaChart>
                     </ResponsiveContainer>
                   ) : (
                     <div className="h-full flex items-center justify-center text-gray-400 text-xs italic">

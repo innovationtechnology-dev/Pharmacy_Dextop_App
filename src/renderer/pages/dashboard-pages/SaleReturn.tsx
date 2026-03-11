@@ -208,7 +208,7 @@ export default function SaleReturn() {
               Returned
             </span>
             <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -247,7 +247,7 @@ export default function SaleReturn() {
               Tax
             </span>
             <span className="text-xs font-bold text-yellow-600 dark:text-yellow-400 ml-1">
-              {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -260,7 +260,7 @@ export default function SaleReturn() {
               Discount
             </span>
             <span className="text-xs font-bold text-pink-600 dark:text-pink-400 ml-1">
-              {getCurrencySymbol()}{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -450,7 +450,7 @@ export default function SaleReturn() {
                         {row.isGrouped ? (
                           <span className="text-gray-400 italic">Multiple</span>
                         ) : (
-                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString()}</>
+                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
                         )}
                       </div>
                       <div className="col-span-1 text-center">
@@ -459,7 +459,7 @@ export default function SaleReturn() {
                         </span>
                       </div>
                       <div className="col-span-2 text-right">
-                        <div className="font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString()}</div>
+                        <div className="font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                       <div className="col-span-1 text-center">
                         <button
@@ -484,7 +484,7 @@ export default function SaleReturn() {
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
                 <div className="col-span-10 text-right text-gray-600 dark:text-gray-300 pr-4">Grand Total</div>
                 <div className="col-span-2 text-right text-orange-700 dark:text-orange-400">
-                  {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             )}
@@ -573,17 +573,17 @@ export default function SaleReturn() {
             </div>
             <div className="col-span-2 text-right">
               <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="col-span-1 text-right">
               <div className="text-[11px] font-normal text-red-500">
-                 -{getCurrencySymbol()}{item.discountAmount.toLocaleString()}
+                 -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
             <div className="col-span-2 text-right">
               <div className="text-[11px] font-medium text-gray-900 dark:text-white">
-                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             </div>
           </div>
@@ -597,10 +597,10 @@ export default function SaleReturn() {
           )
         }}
         summaryItems={[
-          { label: 'Gross Value', value: `${getCurrencySymbol()}${selectedReturn?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Adjustment', type: 'discount', value: `${getCurrencySymbol()}${selectedReturn?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Tax Reversal', type: 'tax', value: `${getCurrencySymbol()}${selectedReturn?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Refund Amount', type: 'total', value: `${getCurrencySymbol()}${selectedReturn?.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+          { label: 'Gross Value', value: `${getCurrencySymbol()}${selectedReturn?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Adjustment', type: 'discount', value: `${getCurrencySymbol()}${selectedReturn?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Tax Reversal', type: 'tax', value: `${getCurrencySymbol()}${selectedReturn?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Refund Amount', type: 'total', value: `${getCurrencySymbol()}${selectedReturn?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
         ]}
         footerStatus={{
           label: 'Return Processed',

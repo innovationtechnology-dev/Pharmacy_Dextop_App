@@ -2,16 +2,18 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  BarChart,
+  Bar,
   AreaChart,
   Area,
   Cell,
+  ReferenceLine,
+  Label,
 } from 'recharts';
 import {
   FiTrendingUp,
@@ -43,6 +45,7 @@ type SaleRecord = {
   total: number;
   customerName?: string;
   customerPhone?: string;
+  saleType?: string;
   createdAt?: string;
   items: SaleItemSummary[];
 };
@@ -89,6 +92,13 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
   const netRevenue = revenue - saleReturnsTotal;
   const profit = netRevenue - costOfGoodsSold;
 
+  const familyTotal = sales
+    .filter((sale) => sale.saleType === 'Family/Relatives')
+    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+  const charityTotal = sales
+    .filter((sale) => sale.saleType === 'Charity')
+    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+
   const uniqueCustomers = new Set(
     sales
       .map((sale) => sale.customerName?.trim().toLowerCase())
@@ -96,10 +106,15 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
   ).size;
   const totalMedicines = medicines.length;
 
+  const purchasesTotal = purchases.reduce((sum, p) => sum + (p.grandTotal || 0), 0);
+
   return {
     revenue,
     netRevenue,
     saleReturnsTotal,
+    familyTotal,
+    charityTotal,
+    purchasesTotal,
     profit,
     uniqueCustomers,
     totalMedicines,
@@ -165,7 +180,8 @@ const buildSalesSeries = (
   const data: { day: string; value: number }[] = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const key = getDateKey(d);
-    data.push({ day: key.slice(5), value: map.get(key) || 0 });
+    const label = d.toLocaleString('default', { month: 'short', day: 'numeric' });
+    data.push({ day: label, value: map.get(key) || 0 });
   }
   return data;
 };
@@ -201,8 +217,44 @@ const Dashboard = () => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
-      maximumFractionDigits: 0,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
     }).format(value);
+  };
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const value = payload[0].value;
+      const avg = chartData.reduce((acc, curr) => acc + curr.value, 0) / chartData.length;
+      const isAboveAvg = value >= avg;
+
+      return (
+        <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-white/20 dark:border-gray-700/50 p-3 rounded-xl shadow-2xl space-y-2 min-w-[140px] z-[1000] ring-1 ring-black/5">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700/50 pb-1.5 mb-1">
+            <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">{label}</p>
+            <div className={`w-1.5 h-1.5 rounded-full ${isAboveAvg ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          </div>
+          
+          <div className="space-y-0">
+            <p className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Sales</p>
+            <p className="text-base font-bold text-gray-900 dark:text-white leading-none">
+              {formatCurrency(value)}
+            </p>
+          </div>
+
+          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-wider ${
+            isAboveAvg ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600'
+          }`}>
+            {isAboveAvg ? (
+              <><FiTrendingUp className="w-2.5 h-2.5" /> Above Avg</>
+            ) : (
+              <><FiTrendingUp className="w-2.5 h-2.5 rotate-180" /> Below Avg</>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return null;
   };
 
   const loadData = useCallback(async () => {
@@ -268,14 +320,20 @@ const Dashboard = () => {
   const metrics = useMemo(
     () => [
       {
+        id: 'purchases',
+        title: 'Purchases',
+        value: formatCurrency(totals.purchasesTotal),
+        icon: <FiPackage />,
+      },
+      {
         id: 'revenue',
-        title: 'Gross Revenue',
+        title: 'Gross Sales',
         value: formatCurrency(totals.revenue),
         icon: <FiDollarSign />,
       },
       {
         id: 'netRevenue',
-        title: 'Net Revenue',
+        title: 'Net Sales',
         value: formatCurrency(totals.netRevenue),
         icon: <FiShoppingBag />,
       },
@@ -295,6 +353,18 @@ const Dashboard = () => {
         id: 'inventory',
         title: 'Medicines',
         value: formatNumber(totals.totalMedicines),
+        icon: <FiPackage />,
+      },
+      {
+        id: 'family',
+        title: 'Relative',
+        value: formatCurrency(totals.familyTotal),
+        icon: <FiUsers />,
+      },
+      {
+        id: 'charity',
+        title: 'Charity',
+        value: formatCurrency(totals.charityTotal),
         icon: <FiPackage />,
       },
     ],
@@ -333,14 +403,20 @@ const Dashboard = () => {
                   metric.id === 'revenue' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-600/50' :
                   metric.id === 'netRevenue' ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-600/50' :
                   metric.id === 'profit' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-600/50' :
+                  metric.id === 'purchases' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-600/50' :
                   metric.id === 'customers' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
+                  metric.id === 'family' ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-600/50' :
+                  metric.id === 'charity' ? 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-600/50' :
                   'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-600/50'
                 }`}>
                   <div className={
                     metric.id === 'revenue' ? 'text-blue-500' :
                     metric.id === 'netRevenue' ? 'text-indigo-500' :
                     metric.id === 'profit' ? 'text-emerald-500' :
+                    metric.id === 'purchases' ? 'text-orange-500' :
                     metric.id === 'customers' ? 'text-teal-500' :
+                    metric.id === 'family' ? 'text-purple-500' :
+                    metric.id === 'charity' ? 'text-pink-500' :
                     'text-amber-500'
                   }>
                     {React.cloneElement(metric.icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
@@ -352,7 +428,10 @@ const Dashboard = () => {
                     metric.id === 'revenue' ? 'text-blue-600 dark:text-blue-400' :
                     metric.id === 'netRevenue' ? 'text-indigo-600 dark:text-indigo-400' :
                     metric.id === 'profit' ? 'text-emerald-600 dark:text-emerald-400' :
+                    metric.id === 'purchases' ? 'text-orange-600 dark:text-orange-400' :
                     metric.id === 'customers' ? 'text-teal-600 dark:text-teal-400' :
+                    metric.id === 'family' ? 'text-purple-600 dark:text-purple-400' :
+                    metric.id === 'charity' ? 'text-pink-600 dark:text-pink-400' :
                     'text-amber-600 dark:text-amber-400'
                   }`}>
                     {metric.value}
@@ -388,17 +467,91 @@ const Dashboard = () => {
               </div>
               <div className="flex-1 min-h-0 p-4">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.05)" />
-                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 10 }} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#9CA3AF', fontSize: 10 }} tickFormatter={(val) => formatCurrency(val)} />
-                    <Tooltip 
-                      cursor={{ fill: 'rgba(59, 130, 246, 0.05)' }}
-                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '12px' }}
+                  <BarChart 
+                    data={chartData} 
+                    margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                    barGap={0}
+                  >
+                    <defs>
+                      <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#3B82F6" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#2563EB" stopOpacity={0.9} />
+                      </linearGradient>
+                      <linearGradient id="activeBarGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#10B981" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#059669" stopOpacity={0.9} />
+                      </linearGradient>
+                      <filter id="barShadow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.2" />
+                      </filter>
+                    </defs>
+                    
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(0,0,0,0.03)" />
+                    
+                    <XAxis 
+                      dataKey="day" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#9CA3AF', fontSize: 9, fontWeight: 600, letterSpacing: '0.02em' }} 
+                      dy={10}
                     />
-                    <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+                    
+                    <YAxis 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{ fill: '#9CA3AF', fontSize: 9, fontWeight: 600 }} 
+                      tickFormatter={(val) => formatCurrency(val).split('.')[0]}
+                      dx={-10}
+                    />
+                    
+                    <Tooltip 
+                      cursor={{ fill: 'rgba(59, 130, 246, 0.03)', radius: 8 }}
+                      content={<CustomTooltip />}
+                    />
+
+                    {/* Average Reference Line */}
+                    <ReferenceLine 
+                      y={chartData.reduce((acc, curr) => acc + curr.value, 0) / chartData.length} 
+                      stroke="#9CA3AF" 
+                      strokeDasharray="4 4" 
+                      strokeOpacity={0.4}
+                      strokeWidth={1}
+                    >
+                      <Label 
+                        value="AVG" 
+                        position="right" 
+                        fill="#9CA3AF" 
+                        fontSize={8} 
+                        fontWeight={700} 
+                        className="uppercase tracking-widest text-[7px]"
+                        dx={10}
+                      />
+                    </ReferenceLine>
+                    
+                    {/* Shadow / Background Bar for Depth */}
+                    <Bar 
+                      dataKey="value" 
+                      fill="rgba(0,0,0,0.02)" 
+                      radius={[6, 6, 0, 0]} 
+                      barSize={range === 'this_year' ? 32 : 12}
+                      xAxisId={0}
+                      isAnimationActive={false}
+                    />
+
+                    {/* Main Interactive Bar */}
+                    <Bar 
+                      dataKey="value" 
+                      radius={[6, 6, 0, 0]} 
+                      barSize={range === 'this_year' ? 32 : 12}
+                      animationDuration={1500}
+                      animationEasing="ease-out"
+                    >
                       {chartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={index === chartData.length - 1 ? '#10B981' : '#3B82F6'} fillOpacity={0.8} />
+                        <Cell 
+                          key={`cell-${index}`} 
+                          fill={index === chartData.length - 1 ? 'url(#activeBarGradient)' : 'url(#barGradient)'}
+                          filter="url(#barShadow)"
+                        />
                       ))}
                     </Bar>
                   </BarChart>
@@ -410,7 +563,7 @@ const Dashboard = () => {
               <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
                 <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide flex items-center gap-2">
                   <FiTrendingUp className="text-emerald-500" />
-                  Revenue Overview
+                  Sales Overview
                 </h3>
               </div>
 
@@ -420,7 +573,7 @@ const Dashboard = () => {
                     {formatCurrency(totals.revenue)}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                    Total revenue recorded
+                    Total sales recorded
                   </div>
                 </div>
 
@@ -433,7 +586,12 @@ const Dashboard = () => {
                           <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <Area type="monotone" dataKey="y" stroke="#10B981" fill="url(#colorRevenue)" strokeWidth={2} />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '10px' }}
+                        formatter={(value: any) => [formatCurrency(Number(value) || 0), 'Sales']}
+                        labelStyle={{ display: 'none' }} // Hide x-axis index/date to keep it clean
+                      />
+                      <Area type="monotone" dataKey="y" stroke="#10B981" fill="url(#colorRevenue)" strokeWidth={2} dot={{ r: 2, fill: '#10B981' }} activeDot={{ r: 4 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
@@ -456,6 +614,17 @@ const Dashboard = () => {
                       totals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
                     }`}>
                       {totals.profit >= 0 ? 'PROFIT' : 'LOSS'}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg border border-purple-100/50 dark:border-purple-800/30">
+                      <div className="text-[9px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mb-0.5">Relative</div>
+                      <div className="text-xs font-bold text-purple-700 dark:text-purple-300">{formatCurrency(totals.familyTotal)}</div>
+                    </div>
+                    <div className="p-2.5 bg-pink-50/50 dark:bg-pink-900/10 rounded-lg border border-pink-100/50 dark:border-pink-800/30">
+                      <div className="text-[9px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-wider mb-0.5">Charity</div>
+                      <div className="text-xs font-bold text-pink-700 dark:text-pink-300">{formatCurrency(totals.charityTotal)}</div>
                     </div>
                   </div>
                 </div>
