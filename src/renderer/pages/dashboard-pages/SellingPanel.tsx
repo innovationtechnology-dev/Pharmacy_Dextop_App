@@ -34,6 +34,12 @@ import { createSaleReturn, getSaleReturnsBySaleId, SaleReturnItem } from '../../
 import { Link } from 'react-router-dom';
 import { getAuthUser } from '../../utils/auth';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { buildThermalReceiptHtml } from '../../utils/thermalReceipt';
+
+// Toggle this flag to switch between in-app preview and real printing.
+// true  => show thermal receipt inside the app (for design tweaking)
+// false => send to browser/Electron print dialog
+const RECEIPT_PREVIEW_MODE = false;
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -167,6 +173,7 @@ const SellingPanel: React.FC = () => {
   const [processingReturn, setProcessingReturn] = useState(false);
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
+  const [receiptPreviewHtml, setReceiptPreviewHtml] = useState<string | null>(null);
   const isCashier = getAuthUser()?.role === 'cashier';
 
   const isWithin24Hours = useCallback((dateString?: string): boolean => {
@@ -502,7 +509,7 @@ const SellingPanel: React.FC = () => {
   useEffect(() => {
     const loadReturnsForAllSales = async () => {
       const returnsMap = new Map<number, number>();
-      
+
       for (const sale of salesHistoryList) {
         const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
         if (returnsResponse.success && returnsResponse.data) {
@@ -510,10 +517,10 @@ const SellingPanel: React.FC = () => {
           returnsMap.set(sale.saleId, returnTotal);
         }
       }
-      
+
       setSaleReturnsMap(returnsMap);
     };
-    
+
     if (salesHistoryList.length > 0) {
       loadReturnsForAllSales();
     }
@@ -545,7 +552,7 @@ const SellingPanel: React.FC = () => {
   useEffect(() => {
     const updateDateTime = () => {
       const now = new Date();
-      
+
       // Update time
       setCurrentTime(
         now.toLocaleTimeString('en-US', {
@@ -555,24 +562,24 @@ const SellingPanel: React.FC = () => {
           second: '2-digit',
         })
       );
-      
+
       // Update date (only when creating new sale, not viewing old ones)
       if (currentBillIndex === -1) {
         const day = String(now.getDate()).padStart(2, '0');
         const month = now.toLocaleString('default', { month: 'short' });
         const year = now.getFullYear();
         const newDate = `${day}/${month}/${year}`;
-        
+
         // Only update if date has changed
         if (currentDate !== newDate) {
           setCurrentDate(newDate);
         }
       }
     };
-    
+
     // Update immediately
     updateDateTime();
-    
+
     // Then update every second
     const timer = setInterval(updateDateTime, 1000);
     return () => clearInterval(timer);
@@ -891,6 +898,13 @@ const SellingPanel: React.FC = () => {
         window.electron.ipcRenderer.once('sale-create-reply', (response: any) => {
           setProcessing(false);
           if (response.success) {
+            // Print a thermal receipt for this sale before clearing the cart
+            try {
+              handlePrintInvoice();
+            } catch (printError) {
+              console.error('Error printing thermal receipt:', printError);
+            }
+
             setShowSuccess(true);
             setCart([]);
             setReturnedQuantities(new Map());
@@ -930,224 +944,70 @@ const SellingPanel: React.FC = () => {
       alert('Add medicines to the cart to print an invoice.');
       return;
     }
+    // Always read latest from Settings so receipt reflects current pharmacy details
+    const pharmacyInfo = getStoredPharmacySettings();
+    const amountGivenForReceipt =
+      currentBillIndex === -1 && receivedAmount && !Number.isNaN(Number(receivedAmount))
+        ? Number(receivedAmount)
+        : subtotalValue - discountValue + taxValue;
 
-    const profile = pharmacyInfo;
-    const currencyCode = profile.currency || 'USD';
-    const symbol = getSymbol(currencyCode);
-    const subtotal = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-      return sum + (item.unitPrice * netPills);
-    }, 0);
-
-    const discountTotal = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-      const itemSubtotal = item.unitPrice * netPills;
-      return sum + ((itemSubtotal * item.discount) / 100);
-    }, 0);
-
-    const taxTotal = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-      const itemSubtotal = item.unitPrice * netPills;
-      return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
-    }, 0);
-
-    const grandTotal = subtotal - discountTotal + taxTotal;
-    const printInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
-    const now = new Date();
-    const dateString = now.toLocaleDateString();
-    const timeString = now.toLocaleTimeString();
-
-    const rows = cart
-      .map(
-        (item, index) => {
-          const returned = returnedQuantities.get(item.medicine.id) || 0;
-          const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-          const itemSubtotal = item.unitPrice * netPills;
-          const itemDiscount = (itemSubtotal * item.discount) / 100;
-          const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
-          const finalPrice = itemSubtotal - itemDiscount + itemTax;
-
-          return `
-                <tr>
-                    <td>${index + 1}</td>
-                    <td>
-                        <strong>${item.medicine.name}</strong><br/>
-                        <small>${item.medicine.barcode || '—'}</small>
-                        ${currentBillIndex >= 0 && returned > 0 ? `<br/><small style="color:#ef4444;">Returned: ${returned}</small>` : ''}
-                    </td>
-                    <td>${netPills}</td>
-                    <td>${symbol}${item.unitPrice.toFixed(2)}</td>
-                    <td>${symbol}${finalPrice.toFixed(2)}</td>
-                </tr>
-            `;
-        }
-      )
-      .join('');
-
-    const html = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>${printInvoiceNumber}</title>
-                <style>
-                    body { font-family: 'Inter', sans-serif; margin: 0; padding: 32px; background: #f3f4f6; color: #111827; }
-                    .invoice { background: #fff; border-radius: 16px; padding: 32px; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
-                    .header { display:flex; justify-content:space-between; }
-                    .brand { display:flex; gap:16px; }
-                    .logo {
-                        width:56px; height:56px; border-radius:16px;
-                        background: linear-gradient(135deg, #059669, #10b981);
-                        color:#fff; display:flex; align-items:center; justify-content:center;
-                        font-size:22px; font-weight:700;
-                    }
-                    table { width:100%; border-collapse:collapse; margin-top:24px; }
-                    th, td { padding:12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:14px; }
-                    th { background:#f9fafb; text-transform:uppercase; font-size:12px; color:#6b7280; letter-spacing:0.05em; }
-                    .totals { width:320px; margin-left:auto; margin-top:24px; }
-                    .totals td { border:none; padding:6px 0; }
-                    .grand { font-size:20px; font-weight:700; color:#059669; }
-                    .notes { margin-top:24px; font-size:13px; color:#374151; }
-                    .footer { margin-top:24px; padding-top:16px; border-top:1px dashed #d1d5db; color:#6b7280; font-size:12px; }
-                    @media print { body { background:#fff; padding:0; } .invoice { box-shadow:none; border-radius:0; } }
-                </style>
-            </head>
-            <body>
-                <div class="invoice">
-                    <div class="header">
-                        <div class="brand">
-                            ${profile.logoUrl
-        ? `<img src="${profile.logoUrl}" alt="logo" style="width:56px;height:56px;border-radius:16px;object-fit:cover;" />`
-        : `<div class="logo">${profile.pharmacyName?.[0]?.toUpperCase() ||
-        'P'
-        }</div>`
-      }
-                            <div>
-                                <h1 style="margin:0;font-size:24px;">${profile.pharmacyName || 'Your Pharmacy'
-      }</h1>
-                                <p style="margin:4px 0 0;color:#6b7280;">${profile.tagline ||
-      'Complete care for every prescription.'
-      }</p>
-                            </div>
-                        </div>
-                        <div style="text-align:right;">
-                            <p style="margin:0;">Invoice <strong>${printInvoiceNumber}</strong></p>
-                            <p style="margin:4px 0 0;">${dateString} ${timeString}</p>
-                        </div>
-                    </div>
-
-                    <table style="margin-top:16px;">
-                        <tr>
-                            <td style="vertical-align:top;padding-right:24px;">
-                                <p style="font-size:12px;text-transform:uppercase;color:#9ca3af;letter-spacing:0.05em;margin-bottom:4px;">Bill To</p>
-                                <p style="margin:0;font-weight:600;">${customerName || 'Walk-in Customer'
-      }</p>
-                                <p style="margin:2px 0 0;color:#6b7280;">${customerPhone || 'No phone provided'
-      }</p>
-                            </td>
-                            <td style="vertical-align:top;">
-                                <p style="font-size:12px;text-transform:uppercase;color:#9ca3af;letter-spacing:0.05em;margin-bottom:4px;">Pharmacy</p>
-                                <p style="margin:0;font-weight:600;">${profile.pharmacyName || 'Your Pharmacy'
-      }</p>
-                                <p style="margin:2px 0 0;color:#6b7280;">${profile.address || 'Address not configured'
-      }</p>
-                                <p style="margin:2px 0 0;color:#6b7280;">${profile.phone || ''
-      }${profile.email ? ` • ${profile.email}` : ''
-      }</p>
-                                ${profile.taxId
-        ? `<p style="margin:2px 0 0;color:#6b7280;">Tax ID: ${profile.taxId}</p>`
-        : ''
-      }
-                                ${profile.website
-        ? `<p style="margin:2px 0 0;color:#6b7280;">${profile.website}</p>`
-        : ''
-      }
-                            </td>
-                        </tr>
-                    </table>
-
-                    <table>
-                        <thead>
-                            <tr>
-                                <th style="width:40px;">#</th>
-                                <th>Medicine</th>
-                                <th style="width:70px;">Qty</th>
-                                <th style="width:120px;">Unit Price</th>
-                                <th style="width:120px;">Total</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${rows}
-                        </tbody>
-                    </table>
-
-                    <div class="totals">
-                        <table>
-                            <tr><td>Subtotal</td><td style="text-align:right;">${symbol}${subtotal.toFixed(
-        2
-      )}</td></tr>
-                            <tr><td>Discount</td><td style="text-align:right;">-${symbol}${discountTotal.toFixed(
-        2
-      )}</td></tr>
-                            <tr><td>Tax</td><td style="text-align:right;">+${symbol}${taxTotal.toFixed(
-        2
-      )}</td></tr>
-                            <tr><td colspan="2"><hr style="border:none;border-top:1px solid #e5e7eb;margiPn:8px 0;"></td></tr>
-                            <tr><td class="grand">Grand Total</td><td class="grand" style="text-align:right;">${symbol}${grandTotal.toFixed(
-        2
-      )}</td></tr>
-                        </table>
-                    </div>
-
-                    <div class="notes">
-                        ${profile.invoiceNotes ||
-      'Thank you for choosing us. Please reach out if you have any questions about your prescription.'
-      }
-                    </div>
-
-                    <div class="footer">
-                        Generated on ${dateString} at ${timeString}. This is a computer-generated invoice and does not require a signature.
-                    </div>
-                </div>
-                <script>
-                    window.onload = function() {
-                        window.print();
-                    };
-                </script>
-            </body>
-            </html>
-        `;
-
-    const printFrame = document.createElement('iframe');
-    printFrame.style.position = 'fixed';
-    printFrame.style.right = '0';
-    printFrame.style.bottom = '0';
-    printFrame.style.width = '0';
-    printFrame.style.height = '0';
-    printFrame.style.border = '0';
-    document.body.appendChild(printFrame);
-
-    const frameDoc = printFrame.contentWindow?.document;
-    if (!frameDoc) {
-      alert('Unable to prepare invoice for printing.');
-      document.body.removeChild(printFrame);
-      return;
-    }
-
-    frameDoc.open();
-    frameDoc.write(html);
-    frameDoc.close();
-
-    printFrame.onload = () => {
-      printFrame.contentWindow?.focus();
-      printFrame.contentWindow?.print();
-      setTimeout(() => {
+    const html = buildThermalReceiptHtml(
+      {
+        cart: cart.map((item) => ({
+          medicine: {
+            id: item.medicine.id,
+            name: item.medicine.name,
+            barcode: item.medicine.barcode,
+          },
+          pills: item.pills,
+          unitPrice: item.unitPrice,
+          discount: item.discount,
+          tax: item.tax,
+        })),
+        pharmacyInfo: {
+          pharmacyName: pharmacyInfo.pharmacyName,
+          address: pharmacyInfo.address,
+          phone: pharmacyInfo.phone,
+          email: pharmacyInfo.email,
+          website: pharmacyInfo.website,
+          taxId: pharmacyInfo.taxId,
+          tagline: pharmacyInfo.tagline,
+          logoUrl: pharmacyInfo.logoUrl,
+          currency: pharmacyInfo.currency,
+          invoiceNotes: pharmacyInfo.invoiceNotes,
+        },
+        customerName,
+        customerPhone,
+        currentBillIndex,
+        returnedQuantities,
+        amountGiven: amountGivenForReceipt,
+      },
+      { includePrintScript: !RECEIPT_PREVIEW_MODE }
+    );
+    if (!html) return;
+    if (RECEIPT_PREVIEW_MODE) {
+      setReceiptPreviewHtml(html);
+    } else {
+      const printFrame = document.createElement('iframe');
+      printFrame.style.cssText =
+        'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+      document.body.appendChild(printFrame);
+      const frameDoc = printFrame.contentWindow?.document;
+      if (!frameDoc) {
+        alert('Unable to prepare invoice for printing.');
         document.body.removeChild(printFrame);
-      }, 500);
-    };
-  }, [cart, pharmacyInfo, customerName, customerPhone]);
+        return;
+      }
+      frameDoc.open();
+      frameDoc.write(html);
+      frameDoc.close();
+      printFrame.onload = () => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => document.body.removeChild(printFrame), 500);
+      };
+    }
+  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount]);
 
   const clearCart = () => {
     if (window.confirm('Clear cart and start a new sale?')) {
@@ -1445,7 +1305,7 @@ const SellingPanel: React.FC = () => {
         setReturnItems([]);
         setReturnReason('');
         setReturnNotes('');
-        
+
         // Refresh local returned quantities for the current sale immediately
         if (selectedSaleId) {
           const returnsResp = await getSaleReturnsBySaleId(selectedSaleId);
@@ -1480,7 +1340,7 @@ const SellingPanel: React.FC = () => {
     try {
       const date = new Date(dateString);
       const today = new Date();
-      
+
       // Compare year, month, and day
       return (
         date.getFullYear() === today.getFullYear() &&
@@ -1930,37 +1790,37 @@ const SellingPanel: React.FC = () => {
                     </div>
                     {showCustomerDropdown && (
                       <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-[100] max-h-48 overflow-y-auto">
-                        <div 
+                        <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-emerald-600 dark:text-emerald-400 border-b border-gray-100 dark:border-gray-700 flex items-center gap-1.5"
-                          onMouseDown={(e) => { 
-                            e.preventDefault(); 
-                            setCustomerName(''); 
-                            document.getElementById('customer-search-input')?.focus(); 
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setCustomerName('');
+                            document.getElementById('customer-search-input')?.focus();
                           }}
                         >
                           <FiSearch className="w-3 h-3" /> Registered Customer
                         </div>
-                        <div 
+                        <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
                           onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
                         >
                           CASH CUSTOMER
                         </div>
-                        <div 
+                        <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
                           onMouseDown={(e) => { e.preventDefault(); setCustomerName('Family/Relatives'); setSaleType('Family/Relatives'); setShowCustomerDropdown(false); }}
                         >
                           Family/Relatives
                         </div>
-                        <div 
+                        <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
                           onMouseDown={(e) => { e.preventDefault(); setCustomerName('Charity'); setSaleType('Charity'); setShowCustomerDropdown(false); }}
                         >
                           Charity
                         </div>
                         {customerName.trim() !== '' && customers.filter(c => c.name.toLowerCase().includes(customerName.toLowerCase())).map(customer => (
-                          <div 
-                            key={customer.id} 
+                          <div
+                            key={customer.id}
                             className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50"
                             onMouseDown={(e) => { e.preventDefault(); setCustomerName(customer.name); setCustomerPhone(customer.phone || ''); setSaleType('Regular'); setShowCustomerDropdown(false); }}
                           >
@@ -2535,9 +2395,9 @@ const SellingPanel: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Update and Delete buttons in one row - Only show if no returns AND not cashier */}
+                      {/* Update, Delete and Print buttons row - Only show if no returns AND not cashier */}
                       {currentSaleReturnTotal === 0 && (!isCashier || currentBillIndex === -1 || isWithin24Hours(selectedSale?.createdAt)) && (
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                           <button
                             type="button"
                             onClick={handleCheckout}
@@ -2581,6 +2441,16 @@ const SellingPanel: React.FC = () => {
                               </button>
                             );
                           })()}
+
+                          <button
+                            type="button"
+                            onClick={handlePrintInvoice}
+                            disabled={cart.length === 0}
+                            className="py-2.5 bg-gray-900 dark:bg-gray-800 text-white rounded-lg text-sm font-semibold hover:bg-black dark:hover:bg-gray-900 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
+                          >
+                            <FiPrinter className="w-3.5 h-3.5" />
+                            <span>Print</span>
+                          </button>
                         </div>
                       )}
 
@@ -2804,7 +2674,7 @@ const SellingPanel: React.FC = () => {
             setReturnReason('');
             setReturnNotes('');
           }} />
-          
+
           <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] max-w-4xl w-full max-h-[90vh] flex flex-col relative animate-in fade-in zoom-in duration-300 overflow-hidden border border-gray-100/50 dark:border-gray-700">
             {/* Modal Header */}
             <div className="px-5 py-4 bg-gradient-to-br from-red-500 via-red-600 to-orange-500 flex items-center justify-between shadow-lg shadow-red-500/10">
@@ -2907,7 +2777,7 @@ const SellingPanel: React.FC = () => {
                     const isSelected = item.returnPills > 0;
                     const subtotal = item.unitPrice * item.returnPills;
                     const total = subtotal - item.discountAmount + item.taxAmount;
-                    
+
                     return (
                       <div
                         key={item.medicineId}
@@ -2935,7 +2805,7 @@ const SellingPanel: React.FC = () => {
                                 </div>
                             </label>
                           </div>
-                          
+
                           <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-start">
                               <div>
@@ -2950,7 +2820,7 @@ const SellingPanel: React.FC = () => {
                                   <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
                                     {symbol}{item.unitPrice.toFixed(2)} / unit
                                   </div>
-                                  
+
                                   {/* Compact Financial Stats */}
                                   <div className={`flex items-center gap-2 transition-all duration-300 ${isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-95 w-0 overflow-hidden'}`}>
                                     <div className="h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
@@ -2966,7 +2836,7 @@ const SellingPanel: React.FC = () => {
                                       <span className="text-[9px] font-bold text-gray-400 uppercase">Sub Total:</span>
                                       <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">{symbol}{subtotal.toFixed(2)}</span>
                                     </div>
-                                    
+
                                   </div>
 
                                   {item.availableToReturn < item.originalPills && (
@@ -3086,6 +2956,33 @@ const SellingPanel: React.FC = () => {
                   <span>Process Return</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {receiptPreviewHtml && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center">
+          <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-[380px] max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-700">
+              <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 uppercase tracking-wide">
+                Thermal Receipt Preview
+              </span>
+              <button
+                type="button"
+                onClick={() => setReceiptPreviewHtml(null)}
+                className="p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <FiX className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-800 p-3">
+              <iframe
+                title="Thermal receipt preview"
+                srcDoc={receiptPreviewHtml}
+                className="mx-auto bg-white border-0"
+                style={{ width: 302, minHeight: 480 }}
+              />
             </div>
           </div>
         </div>

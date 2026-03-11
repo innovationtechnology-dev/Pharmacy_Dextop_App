@@ -97,7 +97,7 @@ const Dashboard_Layout: React.FC = () => {
     setToken(authToken);
 
     // Route Guarding
-    const cashierProhibitedRoutes = ['/settings', '/dashboard', '/payments', '/financial-summary'];
+    const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
     const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/sale-return', '/alerts'];
     
     if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
@@ -624,7 +624,7 @@ const Dashboard_Layout: React.FC = () => {
                       >
                         <div className="relative">
                           <img
-                            src={user?.avatar || `https://i.pravatar.cc/40?img=32`}
+                            src={user?.profilePicture || user?.avatar || `https://i.pravatar.cc/40?img=32`}
                             alt="avatar"
                             className={`${location.pathname.includes('/selling-panel') ||
                               location.pathname.includes('/purchasing-panel') ||

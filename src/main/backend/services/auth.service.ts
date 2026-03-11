@@ -13,15 +13,23 @@ export interface User {
 export interface LoginResult {
   success: boolean;
   token?: string;
-  user?: { id: number; name: string; email: string; role: string };
+  user?: { id: number; name: string; email: string; role: string; phone?: string; address?: string; profilePicture?: string };
   error?: string;
 }
 
 export interface SignupResult {
   success: boolean;
   token?: string;
-  user?: { id: number; name: string; email: string; role: string };
+  user?: { id: number; name: string; email: string; role: string; phone?: string; address?: string; profilePicture?: string };
   error?: string;
+}
+
+export interface UpdateProfileParams {
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  profilePicture?: string;
 }
 
 export class AuthService {
@@ -43,7 +51,7 @@ export class AuthService {
   }
 
   /**
-   * Initialize users table
+   * Initialize users table and add profile columns if missing
    */
   public async initializeTable(): Promise<void> {
     const sql = `
@@ -57,6 +65,29 @@ export class AuthService {
       )
     `;
     await this.dbService.execute(sql);
+    await this.ensureProfileColumns();
+  }
+
+  /**
+   * Add phone, address, profile_photo columns to users if they do not exist
+   */
+  private async ensureProfileColumns(): Promise<void> {
+    const columns = [
+      { name: 'phone', sql: 'ALTER TABLE users ADD COLUMN phone TEXT' },
+      { name: 'address', sql: 'ALTER TABLE users ADD COLUMN address TEXT' },
+      { name: 'profile_photo', sql: 'ALTER TABLE users ADD COLUMN profile_photo TEXT' },
+    ];
+    for (const col of columns) {
+      try {
+        await this.dbService.execute(col.sql);
+      } catch (err: any) {
+        if (err?.message?.includes('duplicate column name')) {
+          // Column already exists, ignore
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
   /**
@@ -102,6 +133,9 @@ export class AuthService {
           name,
           email,
           role,
+          phone: undefined,
+          address: undefined,
+          profilePicture: undefined,
         },
       };
     } catch (error) {
@@ -141,7 +175,7 @@ export class AuthService {
 
       // Generate token
       const token = this.generateToken(user.id, user.email);
-
+      const u = user as any;
       return {
         success: true,
         token,
@@ -150,6 +184,9 @@ export class AuthService {
           name: user.name,
           email: user.email,
           role: user.role,
+          phone: u.phone ?? undefined,
+          address: u.address ?? undefined,
+          profilePicture: u.profile_photo ?? undefined,
         },
       };
     } catch (error) {
@@ -177,17 +214,67 @@ export class AuthService {
   }
 
   /**
-   * Get user by ID
+   * Get user by ID (including profile fields)
    */
   public async getUserById(userId: number): Promise<User | null> {
     try {
       const user = await this.dbService.queryOne(
-        `SELECT id, name, email, role, created_at FROM users WHERE id = ${userId}`
-      ) as User | null;
-      return user;
+        `SELECT id, name, email, role, created_at, phone, address, profile_photo FROM users WHERE id = ${userId}`
+      ) as any;
+      if (!user) return null;
+      return {
+        ...user,
+        profilePicture: user.profile_photo,
+      };
     } catch (error) {
       console.error('Get user error:', error);
       return null;
+    }
+  }
+
+  /**
+   * Update current user profile (name, email, phone, address, profile_photo)
+   */
+  public async updateProfile(userId: number, params: UpdateProfileParams): Promise<{ success: boolean; user?: any; error?: string }> {
+    try {
+      const esc = (v: string | undefined) => (v == null ? '' : String(v).replace(/'/g, "''"));
+      const name = esc(params.name);
+      const email = params.email != null ? esc(params.email) : null;
+      const phone = params.phone != null ? esc(params.phone) : null;
+      const address = params.address != null ? esc(params.address) : null;
+      const profilePhoto = params.profilePicture != null ? esc(params.profilePicture) : null;
+
+      const updates: string[] = [`name = '${name}'`];
+      if (email !== null) updates.push(`email = '${email}'`);
+      if (phone !== null) updates.push(`phone = '${phone}'`);
+      if (address !== null) updates.push(`address = '${address}'`);
+      if (profilePhoto !== null) updates.push(`profile_photo = '${profilePhoto}'`);
+
+      await this.dbService.execute(
+        `UPDATE users SET ${updates.join(', ')} WHERE id = ${userId}`
+      );
+
+      const user = await this.dbService.queryOne(
+        `SELECT id, name, email, role, created_at, phone, address, profile_photo FROM users WHERE id = ${userId}`
+      ) as any;
+      if (!user) {
+        return { success: false, error: 'User not found after update' };
+      }
+      return {
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phone: user.phone ?? undefined,
+          address: user.address ?? undefined,
+          profilePicture: user.profile_photo ?? undefined,
+        },
+      };
+    } catch (error) {
+      console.error('Update profile error:', error);
+      return { success: false, error: 'Failed to update profile' };
     }
   }
 }

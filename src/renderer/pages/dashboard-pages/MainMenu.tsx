@@ -265,7 +265,6 @@ const MainMenu: React.FC = () => {
       description: 'System Configuration',
       route: '/settings',
       shortcut: 'Ctrl+,',
-      disabled: isCashier,
     },
   ];
 
