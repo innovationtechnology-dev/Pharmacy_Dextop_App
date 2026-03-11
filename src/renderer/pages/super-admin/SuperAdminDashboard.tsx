@@ -35,15 +35,19 @@ import {
   deleteLicense,
   updateActivationCode,
   deleteActivationCode,
+  getAllGeneratedLicenses,
+  revokeGeneratedLicense,
+  deleteGeneratedLicense,
   downloadDatabase,
   importDatabase,
   User,
   License,
   ActivationCode,
+  GeneratedLicense,
 } from '../../utils/super-admin';
 import { ToastContainer, useToast } from '../../components/common/Toast';
 
-type Tab = 'database' | 'users' | 'licenses' | 'activation-codes';
+type Tab = 'database' | 'users' | 'licenses' | 'activation-codes' | 'generated-keys';
 
 const SuperAdminDashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -79,6 +83,10 @@ const SuperAdminDashboard: React.FC = () => {
   const [activationCodes, setActivationCodes] = useState<ActivationCode[]>([]);
   const [editingCode, setEditingCode] = useState<ActivationCode | null>(null);
   const [codeForm, setCodeForm] = useState({ code: '', expiryDate: '', isUsed: false });
+
+  // Generated licenses state
+  const [generatedLicenses, setGeneratedLicenses] = useState<GeneratedLicense[]>([]);
+  const [glFilter, setGlFilter] = useState<'all' | 'used' | 'unused'>('all');
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -119,6 +127,19 @@ const SuperAdminDashboard: React.FC = () => {
     }
   }, []);
 
+  const loadGeneratedLicenses = useCallback(async () => {
+    setLoading(true);
+    setLoadingText('Fetching generated license keys...');
+    try {
+      const data = await getAllGeneratedLicenses();
+      setGeneratedLicenses(data);
+    } catch (err) {
+      // Error loading generated licenses
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab === 'users') {
       loadUsers();
@@ -126,8 +147,10 @@ const SuperAdminDashboard: React.FC = () => {
       loadLicenses();
     } else if (activeTab === 'activation-codes') {
       loadActivationCodes();
+    } else if (activeTab === 'generated-keys') {
+      loadGeneratedLicenses();
     }
-  }, [activeTab, loadUsers, loadLicenses, loadActivationCodes]);
+  }, [activeTab, loadUsers, loadLicenses, loadActivationCodes, loadGeneratedLicenses]);
 
   const handleLogout = () => {
     superAdminLogout();
@@ -385,6 +408,43 @@ const SuperAdminDashboard: React.FC = () => {
     }
   };
 
+  // Generated License Handlers
+  const handleRevokeGeneratedLicense = async (id: number, code: string) => {
+    if (!confirm(`Revoke key ${code}?\n\nThis will mark it as unused so the client can re-activate.`)) return;
+    setLoading(true);
+    try {
+      const result = await revokeGeneratedLicense(id);
+      if (result.success) {
+        loadGeneratedLicenses();
+        success('License key revoked — client can re-activate.');
+      } else {
+        error(result.error || 'Failed to revoke key');
+      }
+    } catch (err) {
+      error('Failed to revoke key');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteGeneratedLicense = async (id: number) => {
+    if (!confirm('Permanently delete this generated license key? This cannot be undone.')) return;
+    setLoading(true);
+    try {
+      const result = await deleteGeneratedLicense(id);
+      if (result.success) {
+        loadGeneratedLicenses();
+        success('License key deleted.');
+      } else {
+        error(result.error || 'Failed to delete key');
+      }
+    } catch (err) {
+      error('Failed to delete key');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string): string => {
     return new Date(dateString).toLocaleString('en-US', {
       year: 'numeric',
@@ -556,6 +616,21 @@ const SuperAdminDashboard: React.FC = () => {
             >
               <FiKey className="w-5 h-5" />
               Activation Codes
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('generated-keys');
+                setSidebarOpen(false);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                activeTab === 'generated-keys'
+                  ? 'bg-red-50 text-red-600 font-semibold'
+                  : 'text-gray-700 hover:bg-gray-50'
+              }`}
+            >
+              <FiShield className="w-5 h-5" />
+              Generated Keys
             </button>
           </nav>
 
@@ -873,6 +948,177 @@ const SuperAdminDashboard: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Generated Keys Tab */}
+          {activeTab === 'generated-keys' && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 sm:p-6">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4 sm:mb-6">
+                <div>
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Generated License Keys</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">
+                    14-char keys issued by the desktop. Revoke to allow re-activation; delete to remove entirely.
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {/* Filter */}
+                  <select
+                    value={glFilter}
+                    onChange={(e) => setGlFilter(e.target.value as 'all' | 'used' | 'unused')}
+                    className="text-xs border border-gray-300 rounded-lg px-3 py-2 bg-white text-gray-700 focus:ring-2 focus:ring-red-500 outline-none"
+                  >
+                    <option value="all">All keys</option>
+                    <option value="unused">Unused only</option>
+                    <option value="used">Used only</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={loadGeneratedLicenses}
+                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"
+                  >
+                    <FiRefreshCw className="w-4 h-4" />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats bar */}
+              <div className="grid grid-cols-3 gap-3 mb-5">
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200 text-center">
+                  <div className="text-2xl font-bold text-gray-900">{generatedLicenses.length}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">Total Keys</div>
+                </div>
+                <div className="bg-emerald-50 rounded-lg p-3 border border-emerald-100 text-center">
+                  <div className="text-2xl font-bold text-emerald-700">
+                    {generatedLicenses.filter((k) => k.is_used === 0).length}
+                  </div>
+                  <div className="text-xs text-emerald-600 mt-0.5">Available</div>
+                </div>
+                <div className="bg-blue-50 rounded-lg p-3 border border-blue-100 text-center">
+                  <div className="text-2xl font-bold text-blue-700">
+                    {generatedLicenses.filter((k) => k.is_used === 1).length}
+                  </div>
+                  <div className="text-xs text-blue-600 mt-0.5">Activated</div>
+                </div>
+              </div>
+
+              {loading && generatedLicenses.length === 0 ? (
+                <div className="flex justify-center py-12">
+                  <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-500" />
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {generatedLicenses
+                    .filter((k) => {
+                      if (glFilter === 'used') return k.is_used === 1;
+                      if (glFilter === 'unused') return k.is_used === 0;
+                      return true;
+                    })
+                    .map((gl) => (
+                      <div
+                        key={gl.id}
+                        className={`rounded-xl border p-4 transition-all ${
+                          gl.is_used === 1
+                            ? 'border-blue-200 bg-blue-50/40'
+                            : 'border-gray-200 bg-white hover:border-emerald-200'
+                        }`}
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-start gap-3">
+                          {/* Key + status */}
+                          <div className="flex-1 min-w-0">
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              <span className="font-mono text-sm font-bold tracking-[0.18em] text-gray-900 select-all">
+                                {gl.code.replace(/(.{4})/g, '$1 ').trim()}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                  gl.is_used === 1
+                                    ? 'bg-blue-100 text-blue-700'
+                                    : 'bg-emerald-100 text-emerald-700'
+                                }`}
+                              >
+                                {gl.is_used === 1 ? 'Activated' : 'Available'}
+                              </span>
+                            </div>
+
+                            {/* Pharmacy details grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-0.5 text-xs text-gray-600">
+                              {gl.pharmacy_name && (
+                                <div><span className="text-gray-400">Pharmacy:</span> {gl.pharmacy_name}</div>
+                              )}
+                              {gl.doctor_name && (
+                                <div><span className="text-gray-400">Doctor:</span> {gl.doctor_name}</div>
+                              )}
+                              {gl.email && (
+                                <div><span className="text-gray-400">Email:</span> {gl.email}</div>
+                              )}
+                              {gl.phone && (
+                                <div><span className="text-gray-400">Phone:</span> {gl.phone}</div>
+                              )}
+                              {(gl.city || gl.country) && (
+                                <div>
+                                  <span className="text-gray-400">Location:</span>{' '}
+                                  {[gl.city, gl.country].filter(Boolean).join(', ')}
+                                </div>
+                              )}
+                              {gl.address && (
+                                <div className="sm:col-span-2">
+                                  <span className="text-gray-400">Address:</span> {gl.address}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Dates */}
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-gray-400">
+                              <span>Generated: {formatDate(gl.generated_at)}</span>
+                              {gl.is_used === 1 && gl.used_at && (
+                                <span className="text-blue-500">
+                                  Activated: {formatDate(gl.used_at)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {gl.is_used === 1 && (
+                              <button
+                                type="button"
+                                onClick={() => handleRevokeGeneratedLicense(gl.id, gl.code)}
+                                disabled={loading}
+                                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-100 hover:bg-amber-200 text-amber-700 transition-colors disabled:opacity-50"
+                                title="Revoke — reset to unused so client can re-activate"
+                              >
+                                <FiAlertCircle className="w-3.5 h-3.5" />
+                                Revoke
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteGeneratedLicense(gl.id)}
+                              disabled={loading}
+                              className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                              title="Delete key permanently"
+                            >
+                              <FiTrash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+
+                  {generatedLicenses.filter((k) => {
+                    if (glFilter === 'used') return k.is_used === 1;
+                    if (glFilter === 'unused') return k.is_used === 0;
+                    return true;
+                  }).length === 0 && (
+                    <div className="py-12 text-center text-gray-400 text-sm">
+                      No keys found for the selected filter.
+                    </div>
+                  )}
                 </div>
               )}
             </div>

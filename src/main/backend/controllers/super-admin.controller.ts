@@ -206,6 +206,47 @@ export class SuperAdminController {
       }
     });
 
+    // Handle get all generated license keys
+    ipcMain.on('super-admin-get-generated-licenses', async (event: IpcMainEvent) => {
+      try {
+        const rows = await this.superAdminService.getAllGeneratedLicenses();
+        event.reply('super-admin-get-generated-licenses-reply', rows);
+      } catch (error) {
+        console.error('Get generated licenses error:', error);
+        event.reply('super-admin-get-generated-licenses-reply', []);
+      }
+    });
+
+    // Handle revoke generated license key
+    ipcMain.on('super-admin-revoke-generated-license', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const id = args[0] as number;
+        const result = await this.superAdminService.revokeGeneratedLicense(id);
+        event.reply('super-admin-revoke-generated-license-reply', result);
+      } catch (error) {
+        console.error('Revoke generated license error:', error);
+        event.reply('super-admin-revoke-generated-license-reply', {
+          success: false,
+          error: 'Failed to revoke license key',
+        });
+      }
+    });
+
+    // Handle delete generated license key
+    ipcMain.on('super-admin-delete-generated-license', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const id = args[0] as number;
+        const result = await this.superAdminService.deleteGeneratedLicense(id);
+        event.reply('super-admin-delete-generated-license-reply', result);
+      } catch (error) {
+        console.error('Delete generated license error:', error);
+        event.reply('super-admin-delete-generated-license-reply', {
+          success: false,
+          error: 'Failed to delete generated license key',
+        });
+      }
+    });
+
     // Handle download database
     ipcMain.on('super-admin-download-database', async (event: IpcMainEvent) => {
       try {

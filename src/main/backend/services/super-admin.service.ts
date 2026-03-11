@@ -37,6 +37,21 @@ export interface ActivationCode {
   created_at: string;
 }
 
+export interface GeneratedLicense {
+  id: number;
+  code: string;
+  pharmacy_name: string | null;
+  doctor_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  generated_at: string;
+  is_used: number;
+  used_at: string | null;
+}
+
 export class SuperAdminService {
   private dbService = getDatabaseService();
   private readonly SUPER_ADMIN_EMAIL = 'superadmin@pharmacy.com';
@@ -450,6 +465,63 @@ export class SuperAdminService {
       };
     }
   }
+  // ── Generated Licenses (14-char keys) ────────────────────────────────────
+
+  /**
+   * Get all generated license keys
+   */
+  public async getAllGeneratedLicenses(): Promise<GeneratedLicense[]> {
+    try {
+      const rows = await this.dbService.query(
+        'SELECT * FROM generated_licenses ORDER BY generated_at DESC'
+      );
+      return rows as GeneratedLicense[];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  /**
+   * Revoke a generated license (mark as unused so it can be re-activated)
+   */
+  public async revokeGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `UPDATE generated_licenses SET is_used = 0, used_at = NULL WHERE id = ${id}`
+      );
+
+      // Also deactivate any live license that was activated with this code
+      const row = (await this.dbService.queryOne(
+        `SELECT code FROM generated_licenses WHERE id = ${id}`
+      )) as { code: string } | null;
+
+      if (row) {
+        await this.dbService.execute(
+          `UPDATE licenses SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+           WHERE activation_code = '${row.code.replace(/'/g, "''")}'`
+        );
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Failed to revoke license key' };
+    }
+  }
+
+  /**
+   * Delete a generated license key entirely
+   */
+  public async deleteGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `DELETE FROM generated_licenses WHERE id = ${id}`
+      );
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Failed to delete generated license key' };
+    }
+  }
+
   /**
    * Import database file
    */

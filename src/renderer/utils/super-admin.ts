@@ -41,6 +41,21 @@ export interface ActivationCode {
   created_at: string;
 }
 
+export interface GeneratedLicense {
+  id: number;
+  code: string;
+  pharmacy_name: string | null;
+  doctor_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  generated_at: string;
+  is_used: number;
+  used_at: string | null;
+}
+
 /**
  * Store super admin token
  */
@@ -266,6 +281,52 @@ export const deleteActivationCode = async (
     });
 
     window.electron.ipcRenderer.sendMessage('super-admin-delete-activation-code', [codeId] as any);
+  });
+};
+
+/**
+ * Get all generated license keys
+ */
+export const getAllGeneratedLicenses = async (): Promise<GeneratedLicense[]> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('super-admin-get-generated-licenses-reply', (rows: any) => {
+      resolve(rows);
+    });
+    window.electron.ipcRenderer.sendMessage('super-admin-get-generated-licenses', []);
+  });
+};
+
+/**
+ * Revoke a generated license key (resets is_used to 0 so client can re-activate)
+ */
+export const revokeGeneratedLicense = async (
+  id: number
+): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once(
+      'super-admin-revoke-generated-license-reply',
+      (response: any) => {
+        resolve(response);
+      }
+    );
+    window.electron.ipcRenderer.sendMessage('super-admin-revoke-generated-license', [id] as any);
+  });
+};
+
+/**
+ * Delete a generated license key entirely
+ */
+export const deleteGeneratedLicense = async (
+  id: number
+): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once(
+      'super-admin-delete-generated-license-reply',
+      (response: any) => {
+        resolve(response);
+      }
+    );
+    window.electron.ipcRenderer.sendMessage('super-admin-delete-generated-license', [id] as any);
   });
 };
 
