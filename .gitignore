@@ -7,7 +7,10 @@ pids
 *.pid
 *.seed
 seed_medicines.js
-
+migrate-roles.js
+seed_cashier.js
+seed_customers.js
+seed_suppliers.js
 # Coverage directory used by tools like istanbul
 coverage
 .eslintcache

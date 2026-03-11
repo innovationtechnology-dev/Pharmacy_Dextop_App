@@ -6,20 +6,21 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role: string;
   created_at: string;
 }
 
 export interface LoginResult {
   success: boolean;
   token?: string;
-  user?: { id: number; name: string; email: string };
+  user?: { id: number; name: string; email: string; role: string };
   error?: string;
 }
 
 export interface SignupResult {
   success: boolean;
   token?: string;
-  user?: { id: number; name: string; email: string };
+  user?: { id: number; name: string; email: string; role: string };
   error?: string;
 }
 
@@ -51,6 +52,7 @@ export class AuthService {
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'admin',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `;
@@ -63,7 +65,8 @@ export class AuthService {
   public async signup(
     name: string,
     email: string,
-    password: string
+    password: string,
+    role: string = 'admin'
   ): Promise<SignupResult> {
     try {
       // Check if user already exists
@@ -83,7 +86,7 @@ export class AuthService {
 
       // Insert new user
       const result = await this.dbService.execute(
-        `INSERT INTO users (name, email, password_hash) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}')`
+        `INSERT INTO users (name, email, password_hash, role) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}', '${role}')`
       );
 
       const userId = (result as any).lastID;
@@ -98,6 +101,7 @@ export class AuthService {
           id: userId,
           name,
           email,
+          role,
         },
       };
     } catch (error) {
@@ -145,6 +149,7 @@ export class AuthService {
           id: user.id,
           name: user.name,
           email: user.email,
+          role: user.role,
         },
       };
     } catch (error) {
@@ -177,7 +182,7 @@ export class AuthService {
   public async getUserById(userId: number): Promise<User | null> {
     try {
       const user = await this.dbService.queryOne(
-        `SELECT id, name, email, created_at FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, role, created_at FROM users WHERE id = ${userId}`
       ) as User | null;
       return user;
     } catch (error) {

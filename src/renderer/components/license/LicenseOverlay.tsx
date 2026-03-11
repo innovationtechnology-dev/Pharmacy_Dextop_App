@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { FiAlertTriangle, FiX } from 'react-icons/fi';
 import { useNavigate } from 'react-router-dom';
-import { getAuthUser, logout } from '../../utils/auth';
+import { getAuthUser, logout, User as AuthUser } from '../../utils/auth';
 import { getLicenseStatus, activateLicense, LicenseStatus } from '../../utils/license';
 import LicenseActivationDialog from './LicenseActivationDialog';
 import { resetAttempts } from '../../utils/licenseAttempts';
@@ -12,6 +12,7 @@ interface LicenseOverlayProps {
 
 const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   const navigate = useNavigate();
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(getAuthUser());
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [showActivationDialog, setShowActivationDialog] = useState(false);
   const [showAlert, setShowAlert] = useState(false);
@@ -21,7 +22,13 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   const checkLicenseStatus = useCallback(async () => {
     try {
       const user = getAuthUser();
-      if (!user) return;
+      setCurrentUser(user);
+
+      // Only enforce license for cashier role. Admin/super admin can always use the app.
+      if (!user || user.role !== 'cashier') {
+        setLoading(false);
+        return;
+      }
 
       const status = await getLicenseStatus(user.id);
       setLicenseStatus(status);
@@ -65,7 +72,7 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   ): Promise<{ success: boolean; error?: string }> => {
     try {
       const user = getAuthUser();
-      if (!user) {
+      if (!user || user.role !== 'cashier') {
         return { success: false, error: 'User not found' };
       }
 
@@ -88,6 +95,12 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
       return { success: false, error: 'Failed to activate license' };
     }
   };
+
+  // If there is no authenticated user or the user is not a cashier,
+  // bypass all license checks and just render the children.
+  if (!currentUser || currentUser.role !== 'cashier') {
+    return <>{children}</>;
+  }
 
   if (loading) {
     return <>{children}</>;
@@ -140,7 +153,7 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
                   </svg>
                   Activate License
                 </button>
-                
+
                 <button
                   type="button"
                   onClick={() => {

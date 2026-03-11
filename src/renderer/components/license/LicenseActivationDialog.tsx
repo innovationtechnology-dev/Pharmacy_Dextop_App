@@ -7,7 +7,7 @@ import {
   resetAttempts,
 } from '../../utils/licenseAttempts';
 
-const MAX_ATTEMPTS_PER_DAY = 20; // Increased from 5 to 20
+const MAX_ATTEMPTS_PER_DAY = 40; // Daily activation attempts limit
 
 interface LicenseActivationDialogProps {
   onClose: () => void;
@@ -188,11 +188,11 @@ const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
                     Activation Code
                   </label>
                   <input
-                    id="activation-code"
-                    type="text"
-                    value={activationCode}
-                    onChange={(e) => {
-                      setActivationCode(e.target.value.toUpperCase());
+                  id="activation-code"
+                  type="text"
+                  value={activationCode}
+                  onChange={(e) => {
+                      setActivationCode(e.target.value);
                       setError(null);
                     }}
                     placeholder="Enter activation code"

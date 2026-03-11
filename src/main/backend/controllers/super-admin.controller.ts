@@ -12,6 +12,13 @@ export class SuperAdminController {
   }
 
   /**
+   * Initialize super admin data
+   */
+  public async initializeTables(): Promise<void> {
+    await this.superAdminService.initializeSuperAdmin();
+  }
+
+  /**
    * Register all IPC handlers for super admin operations
    */
   private registerHandlers(): void {
@@ -118,17 +125,6 @@ export class SuperAdminController {
       }
     });
 
-    // Handle get all activation codes
-    ipcMain.on('super-admin-get-activation-codes', async (event: IpcMainEvent) => {
-      try {
-        const codes = await this.superAdminService.getAllActivationCodes();
-        event.reply('super-admin-get-activation-codes-reply', codes);
-      } catch (error) {
-        console.error('Get activation codes error:', error);
-        event.reply('super-admin-get-activation-codes-reply', []);
-      }
-    });
-
     // Handle update license
     ipcMain.on('super-admin-update-license', async (event: IpcMainEvent, args: any[]) => {
       try {
@@ -161,40 +157,43 @@ export class SuperAdminController {
       }
     });
 
-    // Handle update activation code
-    ipcMain.on('super-admin-update-activation-code', async (event: IpcMainEvent, args: any[]) => {
+    // Handle get all generated license keys
+    ipcMain.on('super-admin-get-generated-licenses', async (event: IpcMainEvent) => {
       try {
-        const codeId = args[0] as number;
-        const code = args[1] as string;
-        const expiryDate = args[2] as string;
-        const isUsed = args[3] as boolean;
-        const result = await this.superAdminService.updateActivationCode(
-          codeId,
-          code,
-          expiryDate,
-          isUsed
-        );
-        event.reply('super-admin-update-activation-code-reply', result);
+        const rows = await this.superAdminService.getAllGeneratedLicenses();
+        event.reply('super-admin-get-generated-licenses-reply', rows);
       } catch (error) {
-        console.error('Update activation code error:', error);
-        event.reply('super-admin-update-activation-code-reply', {
+        console.error('Get generated licenses error:', error);
+        event.reply('super-admin-get-generated-licenses-reply', []);
+      }
+    });
+
+    // Handle revoke generated license key
+    ipcMain.on('super-admin-revoke-generated-license', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const id = args[0] as number;
+        const result = await this.superAdminService.revokeGeneratedLicense(id);
+        event.reply('super-admin-revoke-generated-license-reply', result);
+      } catch (error) {
+        console.error('Revoke generated license error:', error);
+        event.reply('super-admin-revoke-generated-license-reply', {
           success: false,
-          error: 'Failed to update activation code',
+          error: 'Failed to revoke license key',
         });
       }
     });
 
-    // Handle delete activation code
-    ipcMain.on('super-admin-delete-activation-code', async (event: IpcMainEvent, args: any[]) => {
+    // Handle delete generated license key
+    ipcMain.on('super-admin-delete-generated-license', async (event: IpcMainEvent, args: any[]) => {
       try {
-        const codeId = args[0] as number;
-        const result = await this.superAdminService.deleteActivationCode(codeId);
-        event.reply('super-admin-delete-activation-code-reply', result);
+        const id = args[0] as number;
+        const result = await this.superAdminService.deleteGeneratedLicense(id);
+        event.reply('super-admin-delete-generated-license-reply', result);
       } catch (error) {
-        console.error('Delete activation code error:', error);
-        event.reply('super-admin-delete-activation-code-reply', {
+        console.error('Delete generated license error:', error);
+        event.reply('super-admin-delete-generated-license-reply', {
           success: false,
-          error: 'Failed to delete activation code',
+          error: 'Failed to delete generated license key',
         });
       }
     });
@@ -252,8 +251,43 @@ export class SuperAdminController {
         });
       }
     });
+    // Handle import database
+    ipcMain.on('super-admin-import-database', async (event: IpcMainEvent) => {
+      try {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+        if (!mainWindow) {
+          event.reply('super-admin-import-database-reply', {
+            success: false,
+            error: 'Main window not found',
+          });
+          return;
+        }
+
+        const result = await dialog.showOpenDialog(mainWindow, {
+          title: 'Select Database File to Import',
+          properties: ['openFile'],
+          filters: [{ name: 'SQLite Database', extensions: ['sqlite3', 'db'] }],
+        });
+
+        if (result.canceled || result.filePaths.length === 0) {
+          event.reply('super-admin-import-database-reply', {
+            success: false,
+            error: 'Import cancelled',
+          });
+          return;
+        }
+
+        const importResult = await this.superAdminService.importDatabase(result.filePaths[0]);
+        event.reply('super-admin-import-database-reply', importResult);
+      } catch (error) {
+        console.error('Import database error:', error);
+        event.reply('super-admin-import-database-reply', {
+          success: false,
+          error: 'Failed to import database',
+        });
+      }
+    });
   }
 }
 
 export default SuperAdminController;
-

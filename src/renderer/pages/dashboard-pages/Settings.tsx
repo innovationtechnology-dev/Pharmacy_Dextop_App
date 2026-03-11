@@ -17,6 +17,7 @@ import { getAuthUser } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useTheme } from '../../contexts/ThemeContext';
+import { colorThemes, ColorTheme } from '../../themes/colorThemes';
 
 type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance';
 
@@ -48,7 +49,7 @@ interface SecuritySettings {
 const Settings: React.FC = () => {
     const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
     const [user, setUser] = useState<any>(null);
-    const { theme, setTheme } = useTheme();
+    const { theme, setTheme, colorTheme, setColorTheme } = useTheme();
     const [saving, setSaving] = useState(false);
 
     const [profileData, setProfileData] = useState<ProfileData>({
@@ -364,8 +365,8 @@ const Settings: React.FC = () => {
                                             <option value="USD">USD ($)</option>
                                             <option value="EUR">EUR (€)</option>
                                             <option value="GBP">GBP (£)</option>
-                                            <option value="PKR">PKR (₨)</option>
-                                            <option value="INR">INR (₹)</option>
+                                            <option value="PKR">PKR (Rs.)</option>
+                                            <option value="INR">INR (Rs.)</option>
                                         </select>
                                     </div>
                                 </div>
@@ -474,8 +475,10 @@ const Settings: React.FC = () => {
             case 'appearance':
                 return (
                     <div className="space-y-8">
+                        {/* Theme Mode */}
                         <div className="p-6 bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/30 dark:to-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-6">Theme Mode</h3>
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Theme Mode</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Choose how the application looks across all screens.</p>
                             <div className="grid grid-cols-2 gap-4">
                                 <button
                                     onClick={() => handleThemeChange('light')}
@@ -507,6 +510,81 @@ const Settings: React.FC = () => {
                                         </div>
                                     )}
                                 </button>
+                            </div>
+                        </div>
+
+                        {/* Theme Color */}
+                        <div className="p-6 bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/30 dark:to-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
+                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Theme Color</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Select an accent color that is applied across the entire application.</p>
+
+                            {/* Color swatch cards */}
+                            <div className="grid grid-cols-5 gap-3 mb-6">
+                                {(Object.values(colorThemes) as typeof colorThemes[ColorTheme][]).map((t) => {
+                                    const isActive = colorTheme === t.id;
+                                    return (
+                                        <button
+                                            key={t.id}
+                                            onClick={() => setColorTheme(t.id as ColorTheme)}
+                                            title={t.name}
+                                            className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:scale-105 focus:outline-none ${
+                                                isActive
+                                                    ? 'border-emerald-500 dark:border-emerald-400 shadow-lg bg-white dark:bg-gray-700/50'
+                                                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-500 bg-white dark:bg-gray-700/30'
+                                            }`}
+                                        >
+                                            <span
+                                                className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 flex-shrink-0"
+                                                style={{
+                                                    backgroundColor: t.accent,
+                                                    boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${t.accent}` : 'none',
+                                                }}
+                                            />
+                                            <span className={`text-xs font-medium leading-tight text-center ${isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>
+                                                {t.name}
+                                            </span>
+                                            {isActive && (
+                                                <div className="absolute top-1.5 right-1.5">
+                                                    <FiCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                                </div>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            {/* Dropdown selector */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                                    Selected Theme
+                                </label>
+                                <div className="relative">
+                                    <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
+                                        <span
+                                            className="w-4 h-4 rounded-full flex-shrink-0"
+                                            style={{ backgroundColor: colorThemes[colorTheme].accent }}
+                                        />
+                                    </div>
+                                    <select
+                                        value={colorTheme}
+                                        onChange={(e) => setColorTheme(e.target.value as ColorTheme)}
+                                        className="w-full pl-9 pr-10 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-medium appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-colors"
+                                    >
+                                        {(Object.values(colorThemes) as typeof colorThemes[ColorTheme][]).map((t) => (
+                                            <option key={t.id} value={t.id}>
+                                                {t.name} — {t.description}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+                                    Changes apply instantly across the entire application.
+                                </p>
                             </div>
                         </div>
                     </div>

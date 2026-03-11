@@ -49,19 +49,35 @@ export class DatabaseService {
    */
   public async execute(sql: string, params: any[] = []): Promise<sqlite3.RunResult> {
     return new Promise((resolve, reject) => {
-      // Serialize to prevent concurrent writes
-      this.db.serialize(() => {
-        this.db.run(sql, params, function (err) {
-          if (err) {
-            console.error('Database execute error: ', err);
-            console.error('SQL:', sql);
-            console.error('Params:', params);
-            reject(err);
-            return;
-          }
-          resolve(this);
+      const MAX_RETRIES = 5;
+      const RETRY_DELAY_MS = 500;
+
+      const runWithRetry = (attempt: number) => {
+        // Serialize to prevent concurrent writes on this connection
+        this.db.serialize(() => {
+          this.db.run(sql, params, function (err) {
+            if (err) {
+              // Transparent retry for SQLITE_BUSY to avoid "database is locked" flakiness
+              const code = (err as any).code;
+              if (code === 'SQLITE_BUSY' && attempt < MAX_RETRIES) {
+                const nextAttempt = attempt + 1;
+                const delay = RETRY_DELAY_MS;
+                setTimeout(() => runWithRetry(nextAttempt), delay);
+                return;
+              }
+
+              console.error('Database execute error: ', err);
+              console.error('SQL:', sql);
+              console.error('Params:', params);
+              reject(err);
+              return;
+            }
+            resolve(this);
+          });
         });
-      });
+      };
+
+      runWithRetry(0);
     });
   }
 

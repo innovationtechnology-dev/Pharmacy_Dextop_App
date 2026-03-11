@@ -95,7 +95,17 @@ const Dashboard_Layout: React.FC = () => {
 
     setUser(authUser);
     setToken(authToken);
-  }, [navigate]);
+
+    // Route Guarding
+    const cashierProhibitedRoutes = ['/settings', '/dashboard', '/payments', '/financial-summary'];
+    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/sale-return', '/alerts'];
+    
+    if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
+      navigate('/main-menu');
+    } else if (authUser.role === 'admin' && adminProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
+      navigate('/main-menu');
+    }
+  }, [navigate, location.pathname]);
 
   const handleLogout = () => {
     authLogout();
@@ -467,12 +477,22 @@ const Dashboard_Layout: React.FC = () => {
                       : ''
                       }`}
                   >
-                    {customHeader?.actions && (
-                      <div className="flex flex-wrap items-center gap-2">
-                        {customHeader.actions}
-                      </div>
-                    )}
-                    <div className="relative" ref={notificationMenuRef}>
+                    {/* Current role badge */}
+                    <div className="hidden xs:flex items-center px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium mr-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5" />
+                      <span className="mr-1">{user?.name || 'User'}</span>
+                      <span className="w-px h-3 bg-emerald-300/70 dark:bg-emerald-600/70 mx-1" />
+                      <span className="uppercase tracking-wide">
+                        {user?.role === 'admin'
+                          ? 'Admin'
+                          : user?.role === 'cashier'
+                          ? 'Cashier'
+                          : 'User'}
+                      </span>
+                    </div>
+
+                    {user?.role !== 'admin' && (
+                      <div className="relative" ref={notificationMenuRef}>
                       <button
                         type="button"
                         className={`relative ${location.pathname.includes('/selling-panel') ||
@@ -576,6 +596,7 @@ const Dashboard_Layout: React.FC = () => {
                         </div>
                       )}
                     </div>
+                    )}
 
                     <div className="relative" ref={profileMenuRef}>
                       <button
@@ -645,7 +666,7 @@ const Dashboard_Layout: React.FC = () => {
                               </div>
                               <div className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                                Administrator
+                                {user?.role === 'admin' ? 'Administrator' : 'Cashier'}
                               </div>
                             </div>
                           )}
@@ -656,16 +677,23 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/medicines') ||
                           location.pathname.includes('/sales') ||
                           location.pathname.includes('/settings') ||
-                          location.pathname.includes('/license')) ||
+                          location.pathname.includes('/license') ||
                           location.pathname.includes('/payment') ||
                           location.pathname.includes('/alerts') ||
                           location.pathname.includes('/sale-return') ||
                           location.pathname.includes('/financial-summary') ||
                           location.pathname.includes('/purchases') ||
-                          location.pathname.includes('/dashboard') && (
+                          location.pathname.includes('/dashboard')) && (
                             <div className="hidden sm:block text-left">
                               <div className="text-xs font-semibold text-gray-800 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
                                 {user?.name || 'Alex James'}
+                              </div>
+                              <div className="mt-0.5 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                {user?.role === 'admin'
+                                  ? 'Admin'
+                                  : user?.role === 'cashier'
+                                  ? 'Cashier'
+                                  : 'User'}
                               </div>
                             </div>
                           )}

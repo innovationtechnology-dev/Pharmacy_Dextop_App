@@ -21,6 +21,7 @@ import {
   FiUsers,
   FiChevronLeft,
   FiChevronRight,
+  FiChevronDown,
   FiRotateCcw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -31,6 +32,8 @@ import {
 import { getSalesFlatRows, FlatSaleRow, updateSale } from '../../utils/sales';
 import { createSaleReturn, getSaleReturnsBySaleId, SaleReturnItem } from '../../utils/sale-return';
 import { Link } from 'react-router-dom';
+import { getAuthUser } from '../../utils/auth';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -45,6 +48,16 @@ interface Medicine {
   averageSellablePricePerPill?: number | null;
 }
 
+export interface Customer {
+  id?: number;
+  name: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  notes?: string;
+}
+
 interface CartItem {
   medicine: Medicine;
   pills: number;
@@ -57,22 +70,14 @@ interface CartItem {
   finalPrice: number;
 }
 
-const currencySymbols: Record<string, string> = {
-  USD: 'Rs.',
-  EUR: 'Rs.',
-  GBP: 'Rs.',
-  PKR: 'Rs.',
-  INR: 'Rs.',
-};
 
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
   const subtotal = item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
-  const taxableBase = subtotal - discountAmount;
-  const taxAmount = (taxableBase * taxPercent) / 100;
-  const finalPrice = taxableBase + taxAmount;
+  const taxAmount = (subtotal * taxPercent) / 100; // Tax calculated on original subtotal
+  const finalPrice = subtotal - discountAmount + taxAmount;
 
   return {
     ...item,
@@ -97,6 +102,10 @@ const SellingPanel: React.FC = () => {
   const [isScanning, setIsScanning] = useState(false);
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  const [receivedAmount, setReceivedAmount] = useState<string>('');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [saleType, setSaleType] = useState<string>('Regular');
   const [processing, setProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
@@ -124,10 +133,7 @@ const SellingPanel: React.FC = () => {
       return [];
     }
   });
-  const [invoiceNumber, setInvoiceNumber] = useState<string>(() => {
-    const timestamp = Date.now();
-    return `INV-${timestamp.toString().slice(-6)}`;
-  });
+  const [invoiceNumber, setInvoiceNumber] = useState<string>('INV-01');
   const [currentDate, setCurrentDate] = useState<string>(() => {
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -149,6 +155,7 @@ const SellingPanel: React.FC = () => {
     medicineId: number;
     medicineName: string;
     originalPills: number;
+    availableToReturn: number;
     returnPills: number;
     unitPrice: number;
     discountAmount: number;
@@ -159,6 +166,17 @@ const SellingPanel: React.FC = () => {
   const [returnNotes, setReturnNotes] = useState('');
   const [processingReturn, setProcessingReturn] = useState(false);
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
+  const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
+  const isCashier = getAuthUser()?.role === 'cashier';
+
+  const isWithin24Hours = useCallback((dateString?: string): boolean => {
+    if (!dateString) return true;
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+    return diffHours <= 24;
+  }, []);
 
   const barcodeInputRef = useRef<HTMLInputElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -398,15 +416,41 @@ const SellingPanel: React.FC = () => {
     loadSalesHistory();
   }, [loadSalesHistory]);
 
+  const loadCustomers = useCallback(() => {
+    window.electron.ipcRenderer.once('customer-get-all-reply', (response: any) => {
+      if (response.success) {
+        setCustomers(response.data || []);
+      }
+    });
+    window.electron.ipcRenderer.sendMessage('customer-get-all', []);
+  }, []);
+
+  useEffect(() => {
+    loadCustomers();
+  }, [loadCustomers]);
+
+  // Sync accurate next invoice number for new bills
+  useEffect(() => {
+    if (selectedSaleId === null) {
+      if (salesHistory.length > 0) {
+        const highestId = Math.max(...salesHistory.map((s) => s.saleId), 0);
+        setInvoiceNumber(`INV-${String(highestId + 1).padStart(2, '0')}`);
+      } else {
+        setInvoiceNumber('INV-01');
+      }
+    }
+  }, [salesHistory, selectedSaleId]);
+
   // Function to clear form for new bill
   const clearFormForNewBill = useCallback(() => {
     setSelectedSaleId(null);
     setCart([]);
     setReturnedQuantities(new Map());
+    setCurrentSaleReturnTotal(0);
     setCustomerName('');
     setCustomerPhone('');
-    const timestamp = Date.now();
-    setInvoiceNumber(`INV-${timestamp.toString().slice(-6)}`);
+    setSaleType('Regular');
+    setReceivedAmount('');
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
     const month = now.toLocaleString('default', { month: 'short' });
@@ -423,14 +467,17 @@ const SellingPanel: React.FC = () => {
   }, []);
 
   // Group sales by saleId for history display
+  const [saleReturnsMap, setSaleReturnsMap] = useState<Map<number, number>>(new Map());
+
   const salesHistoryList = useMemo(() => {
     const groupedSales = salesHistory.reduce((acc, sale) => {
       if (!acc[sale.saleId]) {
         acc[sale.saleId] = {
           saleId: sale.saleId,
           createdAt: sale.createdAt,
-          customerName: sale.customerName || 'Walk-in Customer',
+          customerName: sale.customerName || '',
           customerPhone: sale.customerPhone || '-',
+          saleType: sale.saleType || 'Regular',
           items: [],
           total: 0,
         };
@@ -438,7 +485,7 @@ const SellingPanel: React.FC = () => {
       acc[sale.saleId].items.push(sale);
       acc[sale.saleId].total += sale.total;
       return acc;
-    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; items: FlatSaleRow[]; total: number }>);
+    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }>);
 
     return Object.values(groupedSales).sort(
       (a, b) =>
@@ -446,27 +493,60 @@ const SellingPanel: React.FC = () => {
     );
   }, [salesHistory]);
 
+  const selectedSale = useMemo(() => {
+    if (selectedSaleId === null) return null;
+    return salesHistoryList.find((s) => s.saleId === selectedSaleId);
+  }, [selectedSaleId, salesHistoryList]);
+
+  // Load returns for all sales in history to show net totals
+  useEffect(() => {
+    const loadReturnsForAllSales = async () => {
+      const returnsMap = new Map<number, number>();
+      
+      for (const sale of salesHistoryList) {
+        const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
+        if (returnsResponse.success && returnsResponse.data) {
+          const returnTotal = returnsResponse.data.reduce((sum, ret) => sum + ret.total, 0);
+          returnsMap.set(sale.saleId, returnTotal);
+        }
+      }
+      
+      setSaleReturnsMap(returnsMap);
+    };
+    
+    if (salesHistoryList.length > 0) {
+      loadReturnsForAllSales();
+    }
+  }, [salesHistoryList.length]); // Only re-run when the number of sales changes
+
   // Reset to new bill when sales history is loaded and no bill is selected
   useEffect(() => {
     if (
       salesHistoryList.length > 0 &&
       currentBillIndex === -1 &&
-      selectedSaleId === null
+      selectedSaleId === null &&
+      cart.length === 0
     ) {
-      // Ensure we're on new bill state
-      clearFormForNewBill();
+      // Ensure date is today when starting fresh
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = now.toLocaleString('default', { month: 'short' });
+      const year = now.getFullYear();
+      setCurrentDate(`${day}/${month}/${year}`);
     }
   }, [
     salesHistoryList.length,
     currentBillIndex,
     selectedSaleId,
-    clearFormForNewBill,
+    cart.length,
   ]);
 
-  // Update time every second
+  // Update time every second and date when it changes
   useEffect(() => {
-    const timer = setInterval(() => {
+    const updateDateTime = () => {
       const now = new Date();
+      
+      // Update time
       setCurrentTime(
         now.toLocaleTimeString('en-US', {
           hour12: true,
@@ -475,9 +555,28 @@ const SellingPanel: React.FC = () => {
           second: '2-digit',
         })
       );
-    }, 1000);
+      
+      // Update date (only when creating new sale, not viewing old ones)
+      if (currentBillIndex === -1) {
+        const day = String(now.getDate()).padStart(2, '0');
+        const month = now.toLocaleString('default', { month: 'short' });
+        const year = now.getFullYear();
+        const newDate = `${day}/${month}/${year}`;
+        
+        // Only update if date has changed
+        if (currentDate !== newDate) {
+          setCurrentDate(newDate);
+        }
+      }
+    };
+    
+    // Update immediately
+    updateDateTime();
+    
+    // Then update every second
+    const timer = setInterval(updateDateTime, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [currentBillIndex, currentDate]);
 
   // Check if medicines exist after loading, show seed button if empty
   useEffect(() => {
@@ -744,7 +843,7 @@ const SellingPanel: React.FC = () => {
   };
 
   const calculateTotal = () => {
-    return cart.reduce((sum, item) => sum + item.finalPrice, 0);
+    return grandTotal;
   };
 
   const handleCheckout = async () => {
@@ -767,6 +866,7 @@ const SellingPanel: React.FC = () => {
         })),
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
+        saleType: saleType || 'Regular',
       };
 
       // Check if we're updating an existing sale or creating a new one
@@ -833,13 +933,27 @@ const SellingPanel: React.FC = () => {
 
     const profile = pharmacyInfo;
     const currencyCode = profile.currency || 'USD';
-    const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
-    const subtotal = cart.reduce((sum, item) => sum + item.subtotal, 0);
-    const discountTotal = cart.reduce(
-      (sum, item) => sum + (item.discountAmount || 0),
-      0
-    );
-    const taxTotal = cart.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
+    const symbol = getSymbol(currencyCode);
+    const subtotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+
+    const discountTotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+
+    const taxTotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
+    }, 0);
+
     const grandTotal = subtotal - discountTotal + taxTotal;
     const printInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
     const now = new Date();
@@ -848,18 +962,28 @@ const SellingPanel: React.FC = () => {
 
     const rows = cart
       .map(
-        (item, index) => `
+        (item, index) => {
+          const returned = returnedQuantities.get(item.medicine.id) || 0;
+          const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+          const itemSubtotal = item.unitPrice * netPills;
+          const itemDiscount = (itemSubtotal * item.discount) / 100;
+          const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
+          const finalPrice = itemSubtotal - itemDiscount + itemTax;
+
+          return `
                 <tr>
                     <td>${index + 1}</td>
                     <td>
                         <strong>${item.medicine.name}</strong><br/>
                         <small>${item.medicine.barcode || '—'}</small>
+                        ${currentBillIndex >= 0 && returned > 0 ? `<br/><small style="color:#ef4444;">Returned: ${returned}</small>` : ''}
                     </td>
-                    <td>${item.pills}</td>
+                    <td>${netPills}</td>
                     <td>${symbol}${item.unitPrice.toFixed(2)}</td>
-                    <td>${symbol}${item.subtotal.toFixed(2)}</td>
+                    <td>${symbol}${finalPrice.toFixed(2)}</td>
                 </tr>
-            `
+            `;
+        }
       )
       .join('');
 
@@ -1035,17 +1159,31 @@ const SellingPanel: React.FC = () => {
     }
   };
 
-  const subtotalValue = cart.reduce((sum, item) => sum + item.subtotal, 0);
-  const discountValue = cart.reduce(
-    (sum, item) => sum + (item.discountAmount || 0),
-    0
-  );
-  const taxValue = cart.reduce((sum, item) => sum + (item.taxAmount || 0), 0);
+  const subtotalValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    return sum + (item.unitPrice * netPills);
+  }, 0);
+
+  const discountValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    const itemSubtotal = item.unitPrice * netPills;
+    return sum + ((itemSubtotal * item.discount) / 100);
+  }, 0);
+
+  const taxValue = cart.reduce((sum, item) => {
+    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+    const itemSubtotal = item.unitPrice * netPills;
+    return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
+  }, 0);
+
   const grandTotal = subtotalValue - discountValue + taxValue;
 
   const formatCurrency = (value: number) => {
     const currency = pharmacyInfo.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
@@ -1054,12 +1192,13 @@ const SellingPanel: React.FC = () => {
 
   // Function to load sale details into the form
   const loadSaleDetails = useCallback(
-      async (sale: { saleId: number; createdAt: string; customerName: string; customerPhone: string; items: FlatSaleRow[]; total: number }, index?: number) => {
+      async (sale: { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }, index?: number) => {
         setSelectedSaleId(sale.saleId);
 
         // Set customer information
-        setCustomerName(sale.customerName || 'CASH CUSTOMER');
+        setCustomerName(sale.customerName || '');
         setCustomerPhone(sale.customerPhone || '0000');
+        setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
 
         // Set date and time from sale
@@ -1080,9 +1219,11 @@ const SellingPanel: React.FC = () => {
         // Fetch returns for this sale to show returned quantities
         const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
         const returnedByMedicine = new Map<number, number>();
+        let totalReturned = 0;
 
         if (returnsResponse.success && returnsResponse.data) {
           returnsResponse.data.forEach((ret) => {
+            totalReturned += ret.total;
             ret.items.forEach((item) => {
               const current = returnedByMedicine.get(item.medicineId) || 0;
               returnedByMedicine.set(item.medicineId, current + item.pills);
@@ -1133,6 +1274,7 @@ const SellingPanel: React.FC = () => {
 
         setCart(cartItems);
         setReturnedQuantities(returnedByMedicine);
+        setCurrentSaleReturnTotal(totalReturned);
 
         // Set current bill index if provided
         if (index !== undefined) {
@@ -1223,18 +1365,19 @@ const SellingPanel: React.FC = () => {
         // Initialize return items from cart (all items, but not pre-selected)
         const items = cart.map((item) => {
           const alreadyReturned = returnedByMedicine.get(item.medicine.id) || 0;
-          const availableToReturn = item.pills - alreadyReturned;
+          const availableToReturn = Math.max(0, item.pills - alreadyReturned);
           return {
             medicineId: item.medicine.id,
             medicineName: item.medicine.name,
             originalPills: item.pills,
+            availableToReturn,
             returnPills: 0, // Start with 0 - user will select which items to return
             unitPrice: item.unitPrice,
             discountAmount: item.discountAmount || 0,
             taxAmount: item.taxAmount || 0,
             reason: '',
           };
-        }).filter(item => item.originalPills > 0);
+        }).filter(item => item.availableToReturn > 0);
 
         if (items.length === 0) {
           alert('No items available to return from this sale');
@@ -1251,6 +1394,7 @@ const SellingPanel: React.FC = () => {
         medicineId: item.medicine.id,
         medicineName: item.medicine.name,
         originalPills: item.pills,
+        availableToReturn: item.pills,
         returnPills: 0, // Start with 0 - user will select which items to return
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount || 0,
@@ -1301,8 +1445,24 @@ const SellingPanel: React.FC = () => {
         setReturnItems([]);
         setReturnReason('');
         setReturnNotes('');
-        loadMedicines(); // Reload medicines to update quantities
-        loadSalesHistory(); // Reload sales history
+        
+        // Refresh local returned quantities for the current sale immediately
+        if (selectedSaleId) {
+          const returnsResp = await getSaleReturnsBySaleId(selectedSaleId);
+          if (returnsResp.success && returnsResp.data) {
+            const returnedByMed = new Map<number, number>();
+            returnsResp.data.forEach((ret) => {
+              ret.items.forEach((it) => {
+                const cur = returnedByMed.get(it.medicineId) || 0;
+                returnedByMed.set(it.medicineId, cur + it.pills);
+              });
+            });
+            setReturnedQuantities(returnedByMed);
+          }
+        }
+
+        loadMedicines(); // Reload medicines to update stock
+        loadSalesHistory(); // Reload sales history list
         refreshExpiringAlerts();
       } else {
         alert(`Error processing return: ${result.error || 'Unknown error'}`);
@@ -1315,8 +1475,66 @@ const SellingPanel: React.FC = () => {
     }
   }, [selectedSaleId, returnItems, customerName, customerPhone, returnReason, returnNotes, loadMedicines, loadSalesHistory, refreshExpiringAlerts]);
 
+  // Helper function to check if a date is today
+  const isToday = (dateString: string): boolean => {
+    try {
+      const date = new Date(dateString);
+      const today = new Date();
+      
+      // Compare year, month, and day
+      return (
+        date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate()
+      );
+    } catch (error) {
+      console.error('Error checking if date is today:', error);
+      return false;
+    }
+  };
+
+  // Handle delete sale
+  const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
+    if (isCashier) {
+      alert('Cashiers are not allowed to delete sales');
+      return;
+    }
+
+    if (!isToday(saleDate)) {
+      alert('You can only delete sales created today');
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      window.electron.ipcRenderer.once('sale-delete-reply', (response: any) => {
+        if (response.success) {
+          alert('Sale deleted successfully!');
+          // If the deleted sale was selected, clear the form
+          if (selectedSaleId === saleId) {
+            clearFormForNewBill();
+            setCurrentBillIndex(-1);
+            setSelectedSaleId(null);
+          }
+          loadMedicines(); // Reload medicines to update stock
+          loadSalesHistory(); // Reload sales history
+          refreshExpiringAlerts();
+        } else {
+          alert(`Error deleting sale: ${response.error || 'Unknown error'}`);
+        }
+      });
+      window.electron.ipcRenderer.sendMessage('sale-delete', [saleId]);
+    } catch (error) {
+      console.error('Error deleting sale:', error);
+      alert('Error deleting sale. Please try again.');
+    }
+  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
+
   const currencyCode = pharmacyInfo.currency || 'USD';
-  const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
+  const symbol = getSymbol(currencyCode);
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
@@ -1692,12 +1910,66 @@ const SellingPanel: React.FC = () => {
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
                     Customer
                   </label>
-                  <input
-                    type="text"
-                    value={customerName || 'CASH CUSTOMER'}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="flex-1 min-w-0 h-8 px-2.5 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
-                  />
+                  <div className="flex-1 min-w-0 relative">
+                    <input
+                      id="customer-search-input"
+                      type="text"
+                      value={customerName}
+                      placeholder="CASH CUSTOMER"
+                      onChange={(e) => {
+                        setCustomerName(e.target.value);
+                        setShowCustomerDropdown(true);
+                        setSaleType('Regular');
+                      }}
+                      onFocus={() => setShowCustomerDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                      className="w-full h-8 pl-2.5 pr-8 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
+                    />
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 dark:text-gray-500">
+                      <FiChevronDown className="w-3.5 h-3.5" />
+                    </div>
+                    {showCustomerDropdown && (
+                      <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-[100] max-h-48 overflow-y-auto">
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-emerald-600 dark:text-emerald-400 border-b border-gray-100 dark:border-gray-700 flex items-center gap-1.5"
+                          onMouseDown={(e) => { 
+                            e.preventDefault(); 
+                            setCustomerName(''); 
+                            document.getElementById('customer-search-input')?.focus(); 
+                          }}
+                        >
+                          <FiSearch className="w-3 h-3" /> Registered Customer
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                        >
+                          CASH CUSTOMER
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Family/Relatives'); setSaleType('Family/Relatives'); setShowCustomerDropdown(false); }}
+                        >
+                          Family/Relatives
+                        </div>
+                        <div 
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Charity'); setSaleType('Charity'); setShowCustomerDropdown(false); }}
+                        >
+                          Charity
+                        </div>
+                        {customerName.trim() !== '' && customers.filter(c => c.name.toLowerCase().includes(customerName.toLowerCase())).map(customer => (
+                          <div 
+                            key={customer.id} 
+                            className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50"
+                            onMouseDown={(e) => { e.preventDefault(); setCustomerName(customer.name); setCustomerPhone(customer.phone || ''); setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                          >
+                            {customer.name} {customer.phone ? `(${customer.phone})` : ''}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
 
@@ -1710,7 +1982,7 @@ const SellingPanel: React.FC = () => {
                   </label>
                   <input
                     type="tel"
-                    value={customerPhone || '0000'}
+                    value={customerPhone || '-'}
                     onChange={(e) => setCustomerPhone(e.target.value)}
                     className="w-28 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
                   />
@@ -1732,7 +2004,7 @@ const SellingPanel: React.FC = () => {
                 {/* HISTORY BTN */}
                 <Link
                   to="/sales"
-                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
+                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-e-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
                 >
                   History
                 </Link>
@@ -1950,11 +2222,11 @@ const SellingPanel: React.FC = () => {
                       <div className="col-span-1">Sr#</div>
                       <div className="col-span-3">Product</div>
                       <div className="col-span-1 text-center">Qty</div>
-                      <div className="col-span-1 text-center">Price</div>
+                      <div className="col-span-2 text-center">Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-2 text-center">Amount</div>
-                      <div className="col-span-1 text-center">Action</div>
+                      <div className="col-span-1 text-center">Remove</div>
                     </div>
                     {/* Cart Items */}
                     {cart.map((item, index) => (
@@ -1974,74 +2246,66 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         <div className="col-span-1">
-                          {currentBillIndex >= 0 ? (
-                            // Read-only display for old sales
-                            <div className="text-center">
-                              <div className="text-[11px] font-semibold text-gray-900 dark:text-white">
-                                {item.pills}
-                              </div>
-                              {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
-                                <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold">
-                                  -{returnedQuantities.get(item.medicine.id)} ret
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            // Editable for new sales
-                            <div className="flex items-center gap-0.5 justify-center">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQuantity(item.medicine.id, -1)
+                          <div className="flex items-center gap-0.5 justify-center">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCartQuantity(item.medicine.id, -1)
+                              }
+                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                              disabled={item.pills <= 1 || (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt))}
+                            >
+                              <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            </button>
+                            <input
+                              type="number"
+                              min={1}
+                              max={
+                                typeof item.medicine.sellablePills === 'number'
+                                  ? item.medicine.sellablePills + item.pills
+                                  : undefined
+                              }
+                              value={item.pills}
+                              readOnly={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
+                              onChange={(
+                                e: React.ChangeEvent<HTMLInputElement>
+                              ) => {
+                                if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
+                                let val = parseInt(e.target.value, 10);
+                                if (Number.isNaN(val) || val < 1) val = 1;
+                                const maxAvailable = typeof item.medicine.sellablePills === 'number'
+                                  ? item.medicine.sellablePills + item.pills
+                                  : Infinity;
+                                if (val > maxAvailable) {
+                                  val = maxAvailable;
                                 }
-                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                                disabled={item.pills <= 1}
-                              >
-                                <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                              </button>
-                              <input
-                                type="number"
-                                min={1}
-                                max={
-                                  typeof item.medicine.sellablePills === 'number'
-                                    ? item.medicine.sellablePills
-                                    : undefined
-                                }
-                                value={item.pills}
-                                onChange={(
-                                  e: React.ChangeEvent<HTMLInputElement>
-                                ) => {
-                                  let val = parseInt(e.target.value, 10);
-                                  if (Number.isNaN(val) || val < 1) val = 1;
-                                  if (
-                                    typeof item.medicine.sellablePills ===
-                                    'number' &&
-                                    val > item.medicine.sellablePills
-                                  ) {
-                                    val = item.medicine.sellablePills;
-                                  }
-                                  setCartItemQuantity(item.medicine.id, val);
-                                }}
-                                className="w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updateCartQuantity(item.medicine.id, 1)
-                                }
-                                className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                                disabled={
-                                  typeof item.medicine.sellablePills === 'number'
-                                    ? item.pills >= item.medicine.sellablePills
-                                    : false
-                                }
-                              >
-                                <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                              </button>
+                                setCartItemQuantity(item.medicine.id, val);
+                              }}
+                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                updateCartQuantity(item.medicine.id, 1)
+                              }
+                              className="p-0.5 hover:bg-emerald-100 dark:hover:bg-emerald-900/30 rounded transition-colors"
+                              disabled={
+                                (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ||
+                                (typeof item.medicine.sellablePills === 'number'
+                                  ? item.pills >= (item.medicine.sellablePills + item.pills)
+                                  : false)
+                              }
+                            >
+                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            </button>
+                          </div>
+                          {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
+                            <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold text-center mt-1">
+                              {returnedQuantities.get(item.medicine.id)} returned
                             </div>
                           )}
                         </div>
-                        <div className="col-span-1 text-center">
+                        <div className="col-span-2 text-center">
 
                           <input
                             type="number"
@@ -2093,17 +2357,29 @@ const SellingPanel: React.FC = () => {
                           />
                         </div>
                         <div className="col-span-2 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs">
-                          {symbol}{item.finalPrice.toFixed(2)}
+                          {symbol}{(() => {
+                            const returned = returnedQuantities.get(item.medicine.id) || 0;
+                            const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+                            const itemSubtotal = item.unitPrice * netPills;
+                            const itemDiscount = (itemSubtotal * item.discount) / 100;
+                            const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
+                            return (itemSubtotal - itemDiscount + itemTax).toFixed(2);
+                          })()}
                         </div>
                         <div className="col-span-1 text-center">
                           <button
                             type="button"
                             onClick={() => {
-                              // Always allow removal - works for both new sale and viewing old sale
+                              if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                               removeFromCart(item.medicine.id);
                             }}
-                            className="p-1.5 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded transition-all border border-transparent hover:border-red-300 dark:hover:border-red-700"
-                            title="Remove from cart"
+                            disabled={isCashier && currentBillIndex >= 0}
+                            className={`p-1.5 transition-all border border-transparent ${
+                              isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)
+                                ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                                : 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded hover:border-red-300 dark:hover:border-red-700'
+                            }`}
+                            title={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'Cashiers cannot modify old sales' : 'Remove from cart'}
                           >
                             <FiTrash2 className="w-4 h-4" />
                           </button>
@@ -2118,7 +2394,7 @@ const SellingPanel: React.FC = () => {
           </div>
 
           {/* Right Side: Summary (Top Half) and History (Bottom Half) */}
-          <div className="lg:col-span-4 flex flex-col gap-3 overflow-hidden min-h-0 h-full">
+          <div className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full">
             {/* Sale Summary - Top Half */}
             <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
               <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
@@ -2128,8 +2404,8 @@ const SellingPanel: React.FC = () => {
               </div>
               <div className="flex-1 flex flex-col p-3 gap-3 min-h-0 overflow-y-auto">
                 {/* Net Payable - Most Prominent */}
-                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-4 border border-emerald-600 dark:border-emerald-500 shadow-lg">
-                  <div className="flex items-center justify-between mb-1">
+                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-2 border border-emerald-600 dark:border-emerald-500 shadow-lg">
+                  <div className="flex items-center justify-between mb-0">
                     <div className="text-xs font-semibold text-white/90 uppercase tracking-wide">
                       Net Payable
                     </div>
@@ -2140,142 +2416,223 @@ const SellingPanel: React.FC = () => {
                     </div>
                   </div>
                   <div className="text-2xl font-bold text-white tracking-tight">
-                    {formatCurrency(calculateTotal())}
+                    {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
                   </div>
+                  {currentSaleReturnTotal > 0 && (
+                    <div className="mt-2 pt-2 border-t border-white/20">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-white/80">Original Total:</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(calculateTotal())}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs mt-1">
+                        <span className="text-white/80">Returned:</span>
+                        <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
+                      </div>
+                      {calculateTotal() < currentSaleReturnTotal && (
+                        <div className="mt-2 pt-2 border-t border-red-300/30">
+                          <p className="text-xs text-red-200">
+                            ⚠️ Data inconsistency detected
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                {/* Summary Breakdown Grid */}
-                <div className="space-y-2">
-                  {/* Subtotal Row */}
-                  <div className="flex items-center justify-between py-2 px-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg border border-gray-200 dark:border-gray-600">
-                    <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
-                      Subtotal
-                    </span>
-                    <span className="text-sm font-bold text-gray-900 dark:text-white">
-                      {formatCurrency(subtotalValue)}
-                    </span>
-                  </div>
-
-                  {/* Discount and Tax Row */}
+                {/* Summary Breakdown - Show only when creating new sale */}
+                {currentBillIndex === -1 && cart.length > 0 && (
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="flex items-center justify-between py-2 px-3 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800">
-                      <span className="text-[10px] font-semibold text-orange-700 dark:text-orange-400 uppercase tracking-wide">
-                        Discount
-                      </span>
-                      <span className="text-sm font-bold text-orange-600 dark:text-orange-400">
-                        -{formatCurrency(discountValue)}
-                      </span>
+                    {/* Block 1: Discounts & Taxes */}
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Discount
+                        </div>
+                        <div className="text-sm font-bold text-red-600 dark:text-red-400">
+                          -{formatCurrency(discountValue)}
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 dark:border-gray-600/50">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Tax
+                        </div>
+                        <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
+                          +{formatCurrency(taxValue)}
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between py-2 px-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                      <span className="text-[10px] font-semibold text-blue-700 dark:text-blue-400 uppercase tracking-wide">
-                        Tax
-                      </span>
-                      <span className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                        +{formatCurrency(taxValue)}
-                      </span>
+
+                    {/* Block 2: Values & Final Total */}
+                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2 text-right">
+                      <div className="flex justify-between items-center">
+                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                          Subtotal
+                        </div>
+                        <div className="text-sm font-bold text-gray-900 dark:text-white">
+                          {formatCurrency(subtotalValue)}
+                        </div>
+                      </div>
+                      <div className="flex justify-between items-center pt-1.5 border-t border-emerald-100 dark:border-emerald-900/30">
+                        <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                          Total
+                        </div>
+                        <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
+                          {formatCurrency(grandTotal)}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
+
+                {/* Given & Return Amounts - Calculator */}
+                {currentBillIndex === -1 && cart.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
+                    <div className="bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-2.5 border border-emerald-100 dark:border-emerald-800/50">
+                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1">
+                        Given Amount
+                      </div>
+                      <input
+                        type="number"
+                        value={receivedAmount}
+                        onChange={(e) => setReceivedAmount(e.target.value)}
+                        placeholder="0.00"
+                        className="w-full bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-700 rounded px-2 py-1 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
+                      />
+                    </div>
+                    <div className={`rounded-lg p-2.5 border transition-colors ${
+                      receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                        ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
+                        : 'bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50'
+                    }`}>
+                      <div className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${
+                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                          ? 'text-blue-700 dark:text-blue-400'
+                          : 'text-red-700 dark:text-red-400'
+                      }`}>
+                        Return Amount
+                      </div>
+                      <div className={`text-sm font-black ${
+                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {formatCurrency(receivedAmount ? (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) : 0)}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Action Buttons Section */}
                 <div className="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700 space-y-2">
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
-                      {/* Primary Action: Update Sale */}
+                      {((currentSaleReturnTotal > 0) || (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt))) && (
+                        <div className={`px-3 py-2 border rounded-lg ${(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' : 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800'}`}>
+                          <p className={`text-xs text-center ${(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'text-blue-700 dark:text-blue-400' : 'text-orange-700 dark:text-orange-400'}`}>
+                            {(isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ? 'Cashiers cannot modify existing sales after 24 hours' : 'This sale has returns and cannot be modified'}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Update and Delete buttons in one row - Only show if no returns AND not cashier */}
+                      {currentSaleReturnTotal === 0 && (!isCashier || currentBillIndex === -1 || isWithin24Hours(selectedSale?.createdAt)) && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={handleCheckout}
+                            disabled={processing || cart.length === 0}
+                            className="py-2.5 bg-blue-600 dark:bg-blue-700 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
+                          >
+                            {processing ? (
+                              <>
+                                <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Updating...</span>
+                              </>
+                            ) : (
+                              <>
+                                <FiCheck className="w-3.5 h-3.5" />
+                                <span>Update</span>
+                              </>
+                            )}
+                          </button>
+
+                          {(() => {
+                            const sale = salesHistoryList.find(s => s.saleId === selectedSaleId);
+                            const canDelete = sale && isToday(sale.createdAt);
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sale) {
+                                    handleDeleteSale(sale.saleId, sale.createdAt);
+                                  }
+                                }}
+                                disabled={!canDelete}
+                                className={`py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 ${
+                                  canDelete
+                                    ? 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
+                                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
+                                }`}
+                                title={canDelete ? 'Delete this sale' : 'Can only delete today\'s sales'}
+                              >
+                                <FiTrash2 className="w-3.5 h-3.5" />
+                                <span>Delete</span>
+                              </button>
+                            );
+                          })()}
+                        </div>
+                      )}
+
                       <button
                         type="button"
-                        onClick={handleCheckout}
-                        disabled={processing || cart.length === 0}
-                        className="w-full py-3 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        onClick={handleOpenReturnModal}
+                        className="w-full py-3 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
                       >
-                        {processing ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Updating Sale...</span>
-                          </>
-                        ) : (
-                          <>
-                              <FiCheck className="w-4 h-4" />
-                            <span>Update Sale</span>
-                          </>
-                        )}
+                        <FiRotateCcw className="w-4 h-4" />
+                        <span>Return Items</span>
                       </button>
 
-                      {/* Secondary Actions Grid */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={handleOpenReturnModal}
-                          className="py-2.5 bg-gradient-to-r from-red-600 to-red-500 dark:from-red-700 dark:to-red-600 text-white rounded-lg text-xs font-semibold hover:from-red-700 hover:to-red-600 dark:hover:from-red-800 dark:hover:to-red-700 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
-                        >
-                          <FiRotateCcw className="w-3.5 h-3.5" />
-                          <span>Return</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (window.confirm('Start a new sale? This will clear the current cart.')) {
-                              clearFormForNewBill();
-                              setCurrentBillIndex(-1);
-                              setSelectedSaleId(null);
-                            }
-                          }}
-                          className="py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600"
-                        >
-                          <FiPlus className="w-3.5 h-3.5" />
-                          <span>New Sale</span>
-                        </button>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearFormForNewBill();
+                          setCurrentBillIndex(-1);
+                          setSelectedSaleId(null);
+                        }}
+                        className="w-full py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600"
+                      >
+                        <FiX className="w-4 h-4" />
+                        <span>Cancel / New Sale</span>
+                      </button>
                     </>
                   ) : (
-                      // When creating new sale
+                    // When creating new sale - Show Complete Sale button
                     <button
                       type="button"
                       onClick={handleCheckout}
                       disabled={processing || cart.length === 0}
-                        className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                      >
-                        {processing ? (
-                          <>
-                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Processing Sale...</span>
-                          </>
-                        ) : (
-                          <>
-                              <FiCheck className="w-5 h-5" />
-                              <span>Complete Sale</span>
+                      className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                    >
+                      {processing ? (
+                        <>
+                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>Processing Sale...</span>
+                        </>
+                      ) : (
+                        <>
+                          <FiCheck className="w-5 h-5" />
+                          <span>Complete Sale</span>
                         </>
                       )}
                     </button>
                   )}
-
-                  {/* Utility Actions */}
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handlePrintInvoice}
-                      disabled={cart.length === 0}
-                      className="flex-1 py-2 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <FiPrinter className="w-3.5 h-3.5" />
-                      <span>Print</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearCart}
-                      className="flex-1 py-2 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 border border-gray-300 dark:border-gray-600"
-                    >
-                      <FiRotateCcw className="w-3.5 h-3.5" />
-                      <span>Reset</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
 
             {/* Selling History - Bottom Half */}
-            <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
+            <div className="h-[200px] bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden flex-shrink-0">
             <div className="px-3 py-2.5 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
                 Selling History
@@ -2422,7 +2779,7 @@ const SellingPanel: React.FC = () => {
                                   }`}
                               >
                                 {symbol}
-                                {sale.total.toFixed(2)}
+                                {Math.max(0, sale.total - (saleReturnsMap.get(sale.saleId) || 0)).toFixed(2)}
                               </span>
                             </div>
                           </div>
@@ -2440,13 +2797,26 @@ const SellingPanel: React.FC = () => {
 
       {/* Return Modal */}
       {showReturnModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <FiRotateCcw className="w-5 h-5 text-red-500" />
-                Create Sale Return
-              </h2>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => {
+            setShowReturnModal(false);
+            setReturnItems([]);
+            setReturnReason('');
+            setReturnNotes('');
+          }} />
+          
+          <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] max-w-4xl w-full max-h-[90vh] flex flex-col relative animate-in fade-in zoom-in duration-300 overflow-hidden border border-gray-100/50 dark:border-gray-700">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-gradient-to-br from-red-500 via-red-600 to-orange-500 flex items-center justify-between shadow-lg shadow-red-500/10">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center backdrop-blur-md">
+                  <FiRotateCcw className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-semibold text-white tracking-tight">Create Sale Return</h2>
+                  <p className="text-xs text-red-50/90 font-medium">Process refunds or item returns for this sale</p>
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -2455,57 +2825,66 @@ const SellingPanel: React.FC = () => {
                   setReturnReason('');
                   setReturnNotes('');
                 }}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                className="w-8 h-8 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded-full text-white transition-all hover:rotate-90"
               >
-                <FiX className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                <FiX className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="mb-4">
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Return Reason (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={returnReason}
-                  onChange={(e) => setReturnReason(e.target.value)}
-                  placeholder="e.g., Defective, Wrong item, Customer request..."
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                />
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Top inputs section */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest block ml-1">
+                    Return Reason
+                  </label>
+                  <input
+                    type="text"
+                    value={returnReason}
+                    onChange={(e) => setReturnReason(e.target.value)}
+                    placeholder="e.g., Defective, Wrong item, Customer request..."
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl dark:text-white focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none transition-all placeholder:text-gray-400"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-[11px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest block ml-1">
+                    Return Notes
+                  </label>
+                  <textarea
+                    value={returnNotes}
+                    onChange={(e) => setReturnNotes(e.target.value)}
+                    placeholder="Provide additional context for this return..."
+                    rows={1}
+                    className="w-full px-4 py-2 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-xl dark:text-white focus:ring-4 focus:ring-red-500/10 focus:border-red-500 outline-none transition-all resize-none min-h-[42px] placeholder:text-gray-400"
+                  />
+                </div>
               </div>
 
-              <div className="mb-4">
-                <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                  Notes (Optional)
-                </label>
-                <textarea
-                  value={returnNotes}
-                  onChange={(e) => setReturnNotes(e.target.value)}
-                  placeholder="Additional notes about the return..."
-                  rows={2}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                />
-              </div>
-
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    Items to Return
-                  </h3>
-                  <div className="flex gap-2">
+              {/* Items Section header */}
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center">
+                      <FiPackage className="w-3.5 h-3.5 text-emerald-500" />
+                    </div>
+                    <h3 className="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-[0.15em]">
+                      Items In Sale
+                    </h3>
+                  </div>
+                  <div className="flex bg-gray-100 dark:bg-gray-700 p-1 rounded-lg gap-1">
                     <button
                       type="button"
                       onClick={() => {
                         const newItems = returnItems.map(item => ({
                           ...item,
-                          returnPills: item.originalPills
+                          returnPills: item.availableToReturn
                         }));
                         setReturnItems(newItems);
                       }}
-                      className="text-xs px-2 py-1 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
+                      className="text-[10px] font-semibold px-3 py-1.5 rounded-md hover:bg-white dark:hover:bg-gray-600 text-blue-600 dark:text-blue-400 transition-all"
                     >
-                      Select All
+                      SELECT ALL
                     </button>
                     <button
                       type="button"
@@ -2516,161 +2895,197 @@ const SellingPanel: React.FC = () => {
                         }));
                         setReturnItems(newItems);
                       }}
-                      className="text-xs px-2 py-1 bg-gray-50 dark:bg-gray-700 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors"
+                      className="text-[10px] font-semibold px-3 py-1.5 rounded-md hover:bg-white dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400 transition-all"
                     >
-                      Deselect All
+                      CLEAR ALL
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-96 overflow-y-auto">
+
+                <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                   {returnItems.map((item, index) => {
                     const isSelected = item.returnPills > 0;
                     const subtotal = item.unitPrice * item.returnPills;
                     const total = subtotal - item.discountAmount + item.taxAmount;
+                    
                     return (
                       <div
                         key={item.medicineId}
-                        className={`border-2 rounded-lg p-3 transition-all ${
+                        className={`group rounded-xl border transition-all duration-300 p-2.5 ${
                           isSelected
-                            ? 'border-red-400 dark:border-red-600 bg-red-50 dark:bg-red-900/20 shadow-md'
-                            : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 opacity-75'
+                            ? 'border-red-500/30 bg-gradient-to-br from-white to-red-50/30 dark:from-gray-800 dark:to-red-900/5 shadow-md shadow-red-500/5'
+                            : 'border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800/40 opacity-90 hover:opacity-100 hover:border-red-200 hover:shadow-sm'
                         }`}
                       >
-                        <div className="flex items-start gap-3 mb-2">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => {
-                              const newItems = [...returnItems];
-                              newItems[index].returnPills = e.target.checked ? item.originalPills : 0;
-                              setReturnItems(newItems);
-                            }}
-                            className="mt-1 w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500 focus:ring-2 cursor-pointer"
-                          />
-                          <div className="flex-1">
-                            <div className={`font-semibold ${isSelected ? 'text-red-900 dark:text-red-200' : 'text-gray-900 dark:text-white'}`}>
-                              {item.medicineName}
+                        <div className="flex items-start gap-4">
+                          <div className="mt-1 flex-shrink-0">
+                            <label className="relative flex items-center cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    const newItems = [...returnItems];
+                                    newItems[index].returnPills = e.target.checked ? item.availableToReturn : 0;
+                                    setReturnItems(newItems);
+                                  }}
+                                  className="peer sr-only"
+                                />
+                                <div className="w-6 h-6 bg-white dark:bg-gray-700 border-2 border-gray-200 dark:border-gray-600 rounded-lg transition-all peer-checked:border-red-500 peer-checked:bg-red-500 flex items-center justify-center shadow-sm">
+                                    <FiCheck className={`w-3.5 h-3.5 text-white transition-transform duration-300 ${isSelected ? 'scale-100' : 'scale-0'}`} />
+                                </div>
+                            </label>
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className={`text-[15px] font-semibold tracking-tight truncate ${isSelected ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                                  {item.medicineName}
+                                </h4>
+                                <div className="flex items-center gap-2 mt-1.5">
+                                  <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-100/80 dark:bg-gray-700/50 rounded-full text-[9px] font-semibold text-gray-500 dark:text-gray-400">
+                                    <div className={`w-1 h-1 rounded-full ${item.availableToReturn > 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                                    {item.availableToReturn} PILLS AVAILABLE
+                                  </div>
+                                  <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
+                                    {symbol}{item.unitPrice.toFixed(2)} / unit
+                                  </div>
+                                  
+                                  {/* Compact Financial Stats */}
+                                  <div className={`flex items-center gap-2 transition-all duration-300 ${isSelected ? 'opacity-100 scale-100' : 'opacity-0 scale-95 w-0 overflow-hidden'}`}>
+                                    <div className="h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-orange-400 uppercase">Discount:</span>
+                                      <span className="text-[10px] font-bold text-orange-500">-{symbol}{item.discountAmount.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-blue-400 uppercase">Tax:</span>
+                                      <span className="text-[10px] font-bold text-blue-500">+{symbol}{item.taxAmount.toFixed(2)}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[9px] font-bold text-gray-400 uppercase">Sub Total:</span>
+                                      <span className="text-[10px] font-bold text-gray-700 dark:text-gray-300">{symbol}{subtotal.toFixed(2)}</span>
+                                    </div>
+                                    
+                                  </div>
+
+                                  {item.availableToReturn < item.originalPills && (
+                                    <div className="flex items-center gap-1.5 px-2 py-0.5 bg-red-100/50 dark:bg-red-900/20 rounded-full text-[9px] font-bold text-red-500 uppercase animate-pulse">
+                                      {item.originalPills - item.availableToReturn} RETURNED
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className={`text-right transition-opacity duration-300 ${isSelected ? 'opacity-100' : 'opacity-0'}`}>
+                                <div className="text-[9px] font-bold text-red-600/50 dark:text-red-400/50 uppercase tracking-tighter">Refund Amount</div>
+                                <div className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums">
+                                    {symbol}{total.toFixed(2)}
+                                </div>
+                              </div>
                             </div>
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                              Original: {item.originalPills} pills | Unit Price: {symbol}{item.unitPrice.toFixed(2)}
-                            </div>
+
                             {isSelected && (
-                              <div className="mt-1 text-xs font-medium text-red-600 dark:text-red-400">
-                                ✓ Selected for return
+                              <div className="mt-2 animate-in slide-in-from-top-2 duration-300">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-2 dark:border-red-900/20">
+                                    <div className="space-y-1.5">
+                                      <label className="text-[9px] font-bold text-red-600/60 dark:text-red-400/60 uppercase tracking-widest ml-1">Quantity To Return</label>
+                                      <div className="relative flex items-center w-32">
+                                        <input
+                                          type="number"
+                                          min={1}
+                                          max={item.availableToReturn}
+                                          value={item.returnPills}
+                                          onChange={(e) => {
+                                            const newItems = [...returnItems];
+                                            newItems[index].returnPills = Math.max(1, Math.min(item.availableToReturn, parseInt(e.target.value) || 1));
+                                            setReturnItems(newItems);
+                                          }}
+                                          className="w-full pl-3 pr-14 py-2 bg-white dark:bg-gray-900 border border-red-200 dark:border-red-800 rounded-xl text-sm font-semibold text-gray-900 dark:text-white focus:ring-4 focus:ring-red-500/5 focus:border-red-500 outline-none transition-all shadow-inner"
+                                        />
+                                        <div className="absolute right-3 text-[9px] font-bold text-red-600/30">MAX: {item.availableToReturn}</div>
+                                      </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <label className="text-[9px] font-bold text-red-600/60 dark:text-red-400/60 uppercase tracking-widest ml-1">Item Specific Reason</label>
+                                      <input
+                                        type="text"
+                                        value={item.reason || ''}
+                                        onChange={(e) => {
+                                          const newItems = [...returnItems];
+                                          newItems[index].reason = e.target.value;
+                                          setReturnItems(newItems);
+                                        }}
+                                        placeholder="Reason for this specific item..."
+                                        className="w-full px-4 py-2 bg-white dark:bg-gray-900 border border-red-200 dark:border-red-800 rounded-xl text-sm text-gray-700 dark:text-gray-300 focus:ring-4 focus:ring-red-500/5 focus:border-red-500 outline-none transition-all shadow-inner"
+                                      />
+                                    </div>
+                                </div>
                               </div>
                             )}
                           </div>
                         </div>
-                        {isSelected && (
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 pt-3 border-t border-red-200 dark:border-red-800">
-                            <div>
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                Return Quantity
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                max={item.originalPills}
-                                value={item.returnPills}
-                                onChange={(e) => {
-                                  const newItems = [...returnItems];
-                                  newItems[index].returnPills = Math.max(1, Math.min(item.originalPills, parseInt(e.target.value) || 1));
-                                  setReturnItems(newItems);
-                                }}
-                                className="w-full px-2 py-1 text-sm border border-red-300 dark:border-red-700 rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                              />
-                              <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-                                Max: {item.originalPills}
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-                                Reason (Optional)
-                              </label>
-                              <input
-                                type="text"
-                                value={item.reason || ''}
-                                onChange={(e) => {
-                                  const newItems = [...returnItems];
-                                  newItems[index].reason = e.target.value;
-                                  setReturnItems(newItems);
-                                }}
-                                placeholder="Item reason..."
-                                className="w-full px-2 py-1 text-sm border border-red-300 dark:border-red-700 rounded dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <div className="text-xs text-gray-600 dark:text-gray-400">
-                                <div>Subtotal: {symbol}{subtotal.toFixed(2)}</div>
-                                <div>Discount: {symbol}{item.discountAmount.toFixed(2)}</div>
-                                <div>Tax: {symbol}{item.taxAmount.toFixed(2)}</div>
-                                <div className="font-semibold text-red-700 dark:text-red-300 mt-1">
-                                  Total: {symbol}{total.toFixed(2)}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     );
                   })}
                 </div>
-                {returnItems.filter(item => item.returnPills > 0).length === 0 && (
-                  <div className="text-center py-4 text-sm text-gray-500 dark:text-gray-400">
-                    No items selected. Check the boxes above to select items for return.
-                  </div>
-                )}
-              </div>
-
-              <div className="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold text-gray-900 dark:text-white">
-                    Total Return Amount:
-                  </span>
-                  <span className="text-lg font-bold text-red-600 dark:text-red-400">
-                    {symbol}
-                    {returnItems
-                      .reduce((sum, item) => {
-                        const subtotal = item.unitPrice * item.returnPills;
-                        return sum + subtotal - item.discountAmount + item.taxAmount;
-                      }, 0)
-                      .toFixed(2)}
-                  </span>
-                </div>
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowReturnModal(false);
-                  setReturnItems([]);
-                  setReturnReason('');
-                  setReturnNotes('');
-                }}
-                className="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md font-semibold hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleProcessReturn}
-                disabled={processingReturn || returnItems.filter(item => item.returnPills > 0).length === 0}
-                className="flex-1 px-4 py-2 bg-red-600 dark:bg-red-700 text-white rounded-md font-semibold hover:bg-red-700 dark:hover:bg-red-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {processingReturn ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
+            {/* Modal Footer with summary & actions */}
+            <div className="px-5 py-5 bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950 dark:border-gray-800 flex flex-col md:flex-row items-center justify-between gap-6 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
+              <div className="flex items-center gap-6">
+                <div className="relative group">
+                    <div className="absolute -inset-2 bg-red-500/5 rounded-2xl blur-lg transition duration-500 group-hover:bg-red-500/10" />
+                    <div className="relative flex items-center gap-4 bg-white dark:bg-gray-800 py-2.5 px-5 rounded-2xl border border-gray-100 dark:border-gray-700 shadow-sm">
+                        <div className="text-right border-r pr-4 border-gray-100 dark:border-gray-700">
+                            <span className="text-[9px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] block mb-0.5">Total Refund</span>
+                            <span className="text-xl font-black text-red-600 dark:text-red-400 tabular-nums leading-none">
+                              {symbol}
+                              {returnItems
+                                .reduce((sum, item) => {
+                                  const subtotal = item.unitPrice * item.returnPills;
+                                  return sum + subtotal - item.discountAmount + item.taxAmount;
+                                }, 0)
+                                .toFixed(2)}
+                            </span>
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-bold text-gray-800 dark:text-gray-200 leading-none">
+                                {returnItems.filter(i => i.returnPills > 0).length} ITEMS
+                            </span>
+                            <span className="text-[9px] font-semibold text-gray-400 uppercase tracking-tighter mt-1">SELECTED</span>
+                        </div>
+                    </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowReturnModal(false);
+                    setReturnItems([]);
+                    setReturnReason('');
+                    setReturnNotes('');
+                  }}
+                  className="px-5 py-2.5 bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-xl font-semibold text-sm border border-gray-200 dark:border-gray-600 hover:bg-gray-50 transition-all active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleProcessReturn}
+                  disabled={processingReturn || returnItems.filter(item => item.returnPills > 0).length === 0}
+                  className="px-7 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-xl font-semibold text-sm shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all active:scale-95 disabled:opacity-50 disabled:shadow-none flex items-center gap-2"
+                >
+                  {processingReturn ? (
+                    <div className="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin" />
+                  ) : (
                     <FiRotateCcw className="w-4 h-4" />
-                    Process Return
-                  </>
-                )}
-              </button>
+                  )}
+                  <span>Process Return</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

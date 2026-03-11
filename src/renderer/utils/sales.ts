@@ -43,6 +43,7 @@ export type FlatSaleRow = {
   createdAt: string;
   customerName?: string;
   customerPhone?: string;
+  saleType?: string;
   medicineId: number;
   medicineName: string;
   pills: number;
@@ -102,6 +103,7 @@ export type Sale = {
   items: SaleItemInput[];
   customerName?: string;
   customerPhone?: string;
+  saleType?: string;
 };
 
 export const updateSale = (saleId: number, sale: Sale): Promise<IpcResponse<void>> => {

@@ -66,7 +66,7 @@ export class PurchaseService {
         payment_amount REAL NOT NULL DEFAULT 0,
         remaining_balance REAL NOT NULL DEFAULT 0,
         notes TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT (datetime('now', 'localtime')),
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
       )
     `);
@@ -257,8 +257,8 @@ export class PurchaseService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertPurchaseSql = `
-        INSERT INTO purchases (supplier_id, supplier_name, subtotal, discount_total, tax_total, grand_total, payment_amount, remaining_balance, status, invoice_number, notes)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO purchases (supplier_id, supplier_name, subtotal, discount_total, tax_total, grand_total, payment_amount, remaining_balance, status, invoice_number, notes, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
     `;
       const purchaseResult = await this.dbService.execute(insertPurchaseSql, [
         purchase.supplierId,

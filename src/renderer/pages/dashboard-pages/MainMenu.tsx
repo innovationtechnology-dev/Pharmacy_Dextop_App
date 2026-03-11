@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { logout as authLogout } from '../../utils/auth';
+import { logout as authLogout, getAuthUser } from '../../utils/auth';
 import {
   FiUsers,
   FiPackage,
@@ -109,6 +109,11 @@ const MainMenu: React.FC = () => {
     { id: 'reports', label: 'Reports', icon: FiBarChart2, shortcut: 'Ctrl+3' },
     { id: 'settings', label: 'Settings', icon: FiSettings, shortcut: 'Ctrl+4' },
   ];
+ 
+  const currentUser = getAuthUser();
+  const isCashier = currentUser?.role === 'cashier';
+  const isAdmin = currentUser?.role === 'admin';
+  const roleLabel = isAdmin ? 'Admin' : isCashier ? 'Cashier' : 'User';
 
   const operationsModules: MenuItem[] = [
     {
@@ -120,6 +125,7 @@ const MainMenu: React.FC = () => {
       description: 'Point of Sale',
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
+      disabled: isAdmin,
     },
     {
       id: 'medicines',
@@ -140,6 +146,7 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Management',
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
+      disabled: isAdmin,
     },
     {
       id: 'customers',
@@ -169,6 +176,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-pink-500/10 to-pink-600/10',
       description: 'Process Returns',
       route: '/sale-return',
+      disabled: isAdmin,
     },
     {
       id: 'payments',
@@ -178,6 +186,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-violet-500/10 to-violet-600/10',
       description: 'Transaction Management',
       route: '/payments',
+      disabled: isCashier,
     },
     {
       id: 'alerts',
@@ -188,6 +197,7 @@ const MainMenu: React.FC = () => {
       description: 'System Notifications',
       route: '/alerts',
       shortcut: 'Ctrl+A',
+      disabled: isAdmin,
     },
   ];
 
@@ -201,6 +211,7 @@ const MainMenu: React.FC = () => {
       description: 'Overview & Analytics',
       route: '/dashboard',
       shortcut: 'Ctrl+D',
+      disabled: isCashier,
     },
     {
       id: 'financial-summary',
@@ -211,6 +222,7 @@ const MainMenu: React.FC = () => {
       description: 'Finance Overview',
       route: '/financial-summary',
       shortcut: 'Ctrl+F',
+      disabled: isCashier,
     },
     {
       id: 'sale-report',
@@ -233,6 +245,7 @@ const MainMenu: React.FC = () => {
     },
   ];
 
+
   const settingsModules: MenuItem[] = [
     {
       id: 'license',
@@ -252,10 +265,15 @@ const MainMenu: React.FC = () => {
       description: 'System Configuration',
       route: '/settings',
       shortcut: 'Ctrl+,',
+      disabled: isCashier,
     },
   ];
 
-  const allModules = [...operationsModules, ...reportModules, ...settingsModules];
+  const allModules = [
+    ...operationsModules,
+    ...reportModules,
+    ...settingsModules
+  ];
 
   const filteredModules = allModules.filter((module) => {
     const matchesCategory =
@@ -270,9 +288,9 @@ const MainMenu: React.FC = () => {
   });
 
   const quickAccessModules = [
-    allModules.find((m) => m.id === 'selling-panel'),
+    !isAdmin ? allModules.find((m) => m.id === 'selling-panel') : null,
     allModules.find((m) => m.id === 'medicines'),
-    allModules.find((m) => m.id === 'dashboard'),
+    !isCashier ? allModules.find((m) => m.id === 'dashboard') : null,
   ].filter(Boolean) as MenuItem[];
 
   const handleModuleClick = (module: MenuItem) => {
@@ -293,11 +311,11 @@ const MainMenu: React.FC = () => {
       items: [
         { label: 'New Transaction', shortcut: 'Ctrl+N', icon: <FiPlus className="w-4 h-4" /> },
         { label: 'Open', shortcut: 'Ctrl+O', icon: <FiUpload className="w-4 h-4" /> },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'Save', shortcut: 'Ctrl+S', icon: <FiSave className="w-4 h-4" /> },
         { label: 'Export', shortcut: 'Ctrl+E', icon: <FiDownload className="w-4 h-4" /> },
         { label: 'Print', shortcut: 'Ctrl+P', icon: <FiPrinter className="w-4 h-4" /> },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'Exit', action: handleLogout, icon: <FiX className="w-4 h-4" /> },
       ],
     },
@@ -306,11 +324,11 @@ const MainMenu: React.FC = () => {
       items: [
         { label: 'Undo', shortcut: 'Ctrl+Z' },
         { label: 'Redo', shortcut: 'Ctrl+Y' },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'Cut', shortcut: 'Ctrl+X' },
         { label: 'Copy', shortcut: 'Ctrl+C' },
         { label: 'Paste', shortcut: 'Ctrl+V' },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'Find', shortcut: 'Ctrl+F', icon: <FiSearch className="w-4 h-4" /> },
       ],
     },
@@ -318,7 +336,7 @@ const MainMenu: React.FC = () => {
       label: 'View',
       items: [
         { label: 'Refresh', shortcut: 'Ctrl+R', icon: <FiRefreshCw className="w-4 h-4" /> },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'All Modules', shortcut: 'Ctrl+1', action: () => setActiveCategory('all') },
         { label: 'Operations', shortcut: 'Ctrl+2', action: () => setActiveCategory('operations') },
         { label: 'Reports', shortcut: 'Ctrl+3', action: () => setActiveCategory('reports') },
@@ -330,7 +348,7 @@ const MainMenu: React.FC = () => {
       items: [
         { label: 'Dashboard', shortcut: 'Ctrl+D', action: () => navigate('/dashboard') },
         { label: 'Settings', shortcut: 'Ctrl+,', action: () => navigate('/settings') },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'Alerts', shortcut: 'Ctrl+A', action: () => navigate('/alerts') },
       ],
     },
@@ -346,7 +364,7 @@ const MainMenu: React.FC = () => {
       items: [
         { label: 'User Guide', icon: <FiHelpCircle className="w-4 h-4" /> },
         { label: 'Keyboard Shortcuts', shortcut: 'Ctrl+?' },
-        { separator: true },
+        { label: '', separator: true },
         { label: 'About', action: () => {} },
       ],
     },
@@ -429,14 +447,16 @@ const MainMenu: React.FC = () => {
           <FiHome className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
-        <button
-          type="button"
-          onClick={() => navigate('/selling-panel')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Selling Panel (Ctrl+S)"
-        >
-          <FiShoppingCart className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={() => navigate('/selling-panel')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Selling Panel (Ctrl+S)"
+          >
+            <FiShoppingCart className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => navigate('/medicines')}
@@ -445,14 +465,16 @@ const MainMenu: React.FC = () => {
         >
           <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
-        <button
-          type="button"
-          onClick={() => navigate('/dashboard')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Dashboard (Ctrl+D)"
-        >
-          <FiBarChart2 className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
+        {!isCashier && (
+          <button
+            type="button"
+            onClick={() => navigate('/dashboard')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Dashboard (Ctrl+D)"
+          >
+            <FiBarChart2 className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
         <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
         <button
           type="button"
@@ -462,15 +484,17 @@ const MainMenu: React.FC = () => {
           <FiRefreshCw className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="flex-1" />
-        <button
-          type="button"
-          onClick={() => navigate('/alerts')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors relative"
-          title="Alerts"
-        >
-          <FiAlertTriangle className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
-        </button>
+        {!isAdmin && (
+          <button
+            type="button"
+            onClick={() => navigate('/alerts')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors relative"
+            title="Alerts"
+          >
+            <FiAlertTriangle className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-red-500 rounded-full" />
+          </button>
+        )}
       </div>
 
       {/* Main Content */}
@@ -541,16 +565,26 @@ const MainMenu: React.FC = () => {
         <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
           <div className="max-w-7xl mx-auto p-6">
             {/* Page Header */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                {categories.find((c) => c.id === activeCategory)?.label || 'All Modules'}
-              </h1>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                {activeCategory === 'all' && 'Access all your business management modules'}
-                {activeCategory === 'operations' && 'Daily operations and transaction management'}
-                {activeCategory === 'reports' && 'Analytics, reports and business insights'}
-                {activeCategory === 'settings' && 'System configuration and preferences'}
-              </p>
+            <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
+                  {categories.find((c) => c.id === activeCategory)?.label || 'All Modules'}
+                </h1>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  {activeCategory === 'all' && 'Access all your business management modules'}
+                  {activeCategory === 'operations' && 'Daily operations and transaction management'}
+                  {activeCategory === 'reports' && 'Analytics, reports and business insights'}
+                  {activeCategory === 'settings' && 'System configuration and preferences'}
+                </p>
+              </div>
+              {currentUser && (
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-medium shadow-sm">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span>{currentUser.name || 'User'}</span>
+                  <span className="w-px h-3 bg-emerald-300/70 dark:bg-emerald-600/70" />
+                  <span className="uppercase tracking-wide">{roleLabel}</span>
+                </div>
+              )}
             </div>
 
             {/* Quick Access */}
@@ -705,6 +739,13 @@ const MainMenu: React.FC = () => {
           </span>
           <span>v2.0.1</span>
           <span>Build 2025.01</span>
+          {currentUser && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
+              <span className="font-semibold">{currentUser.name || 'User'}</span>
+              <span className="w-px h-3 bg-gray-400 dark:bg-gray-500" />
+              <span>{roleLabel}</span>
+            </span>
+          )}
         </div>
         <div>
           <span>© 2025 Pharmacy Management System</span>

@@ -19,6 +19,7 @@ import {
   FiUsers,
   FiCheckCircle,
   FiAlertCircle,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
@@ -244,7 +245,7 @@ const Suppliers: React.FC = () => {
   }, [setHeader, headerActions]);
 
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirm !== null}
@@ -280,68 +281,77 @@ const Suppliers: React.FC = () => {
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3 flex-shrink-0">
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiBriefcase className="w-4 h-4 text-white" />
-            </div>
-            <FiUsers className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+      {/* Stats Header - Single Row Design matching Medicines Page */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
+        {/* Total Suppliers */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiBriefcase className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Total Suppliers
+            </span>
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+              {stats.total}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.total}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Total Suppliers</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-blue-50/50 dark:from-gray-800 dark:to-blue-900/20 rounded-lg shadow-sm border border-blue-100/50 dark:border-blue-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 shadow-md">
-              <FiMail className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-blue-400 dark:text-blue-500" />
+        {/* With Email */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiMail className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              With Email
+            </span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {stats.withEmail}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.withEmail}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">With Email</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-purple-50/50 dark:from-gray-800 dark:to-purple-900/20 rounded-lg shadow-sm border border-purple-100/50 dark:border-purple-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 shadow-md">
-              <FiMapPin className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-purple-400 dark:text-purple-500" />
+        {/* With Address */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-purple-50 dark:bg-purple-900/20 px-2.5 py-1.5 rounded-md border border-purple-200 dark:border-purple-600/50 shadow-sm">
+            <FiMapPin className="w-3.5 h-3.5 text-purple-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              With Address
+            </span>
+            <span className="text-xs font-bold text-purple-600 dark:text-purple-400 ml-1">
+              {stats.withAddress}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.withAddress}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">With Address</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-teal-50/50 dark:from-gray-800 dark:to-teal-900/20 rounded-lg shadow-sm border border-teal-100/50 dark:border-teal-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-teal-500 to-teal-600 shadow-md">
-              <FiTrendingUp className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-teal-400 dark:text-teal-500" />
+        {/* Recent */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-teal-50 dark:bg-teal-900/20 px-2.5 py-1.5 rounded-md border border-teal-200 dark:border-teal-600/50 shadow-sm">
+            <FiTrendingUp className="w-3.5 h-3.5 text-teal-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Recent (30 Days)
+            </span>
+            <span className="text-xs font-bold text-teal-600 dark:text-teal-400 ml-1">
+              {stats.recent}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.recent}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Recent (30 days)</p>
         </div>
+
+        {/* Refresh Button */}
+        <button
+          onClick={loadSuppliers}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
       {/* Main Content: Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
         {/* Left Side: Supplier Form */}
         <div className="lg:col-span-1 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Form Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
@@ -351,7 +361,7 @@ const Suppliers: React.FC = () => {
                       <FiPlus className="w-4 h-4 text-white" />
                     )}
                   </div>
-                  <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                  <h3 className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     {editingSupplier ? 'Edit Supplier' : 'New Supplier'}
                   </h3>
                 </div>
@@ -373,7 +383,7 @@ const Suppliers: React.FC = () => {
               <div>
                 <label
                   htmlFor="supplier-name"
-                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                 >
                   Supplier Name <span className="text-red-500">*</span>
                 </label>
@@ -382,7 +392,7 @@ const Suppliers: React.FC = () => {
                   type="text"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                   required
                   placeholder="Enter supplier name"
                 />
@@ -391,7 +401,7 @@ const Suppliers: React.FC = () => {
               <div>
                 <label
                   htmlFor="company-name"
-                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                 >
                   Company Name <span className="text-red-500">*</span>
                 </label>
@@ -402,7 +412,7 @@ const Suppliers: React.FC = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, companyName: e.target.value })
                   }
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                   placeholder="Enter company name"
                   required
                 />
@@ -412,7 +422,7 @@ const Suppliers: React.FC = () => {
                 <div>
                   <label
                     htmlFor="supplier-email"
-                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                    className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                   >
                     <FiMail className="w-3 h-3 inline mr-1 text-emerald-500" />
                     Email
@@ -424,14 +434,14 @@ const Suppliers: React.FC = () => {
                     onChange={(e) =>
                       setFormData({ ...formData, email: e.target.value })
                     }
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                     placeholder="email@company.com"
                   />
                 </div>
                 <div>
                   <label
                     htmlFor="supplier-phone"
-                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                    className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                   >
                     <FiPhone className="w-3 h-3 inline mr-1 text-emerald-500" />
                     Phone <span className="text-red-500">*</span>
@@ -443,7 +453,7 @@ const Suppliers: React.FC = () => {
                     onChange={(e) =>
                       setFormData({ ...formData, phone: e.target.value })
                     }
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                     placeholder="+1234567890"
                     required
                   />
@@ -453,7 +463,7 @@ const Suppliers: React.FC = () => {
               <div>
                 <label
                   htmlFor="contact-person"
-                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                 >
                   <FiUser className="w-3 h-3 inline mr-1 text-emerald-500" />
                   Contact Person
@@ -465,7 +475,7 @@ const Suppliers: React.FC = () => {
                   onChange={(e) =>
                     setFormData({ ...formData, contactPerson: e.target.value })
                   }
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
                   placeholder="Primary contact person"
                 />
               </div>
@@ -473,7 +483,7 @@ const Suppliers: React.FC = () => {
               <div>
                 <label
                   htmlFor="supplier-address"
-                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                 >
                   <FiMapPin className="w-3 h-3 inline mr-1 text-emerald-500" />
                   Address
@@ -485,7 +495,7 @@ const Suppliers: React.FC = () => {
                     setFormData({ ...formData, address: e.target.value })
                   }
                   rows={2}
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all resize-none"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all resize-none"
                   placeholder="Enter full address"
                 />
               </div>
@@ -493,7 +503,7 @@ const Suppliers: React.FC = () => {
               <div>
                 <label
                   htmlFor="supplier-notes"
-                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  className="block text-[11px] font-bold text-gray-700 dark:text-gray-300 mb-1 uppercase tracking-wide"
                 >
                   <FiFileText className="w-3 h-3 inline mr-1 text-emerald-500" />
                   Notes
@@ -505,7 +515,7 @@ const Suppliers: React.FC = () => {
                     setFormData({ ...formData, notes: e.target.value })
                   }
                   rows={2}
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all resize-none"
+                  className="w-full px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all resize-none"
                   placeholder="Additional notes"
                 />
               </div>
@@ -515,18 +525,18 @@ const Suppliers: React.FC = () => {
                   <button
                     type="button"
                     onClick={resetForm}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-xs"
                   >
-                    <FiX className="w-4 h-4" />
+                    <FiX className="w-3.5 h-3.5" />
                     Cancel
                   </button>
                 )}
                 <button
                   type="submit"
                   disabled={processing}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FiSave className="w-4 h-4" />
+                  <FiSave className="w-3.5 h-3.5" />
                   {processing
                     ? 'Saving...'
                     : editingSupplier
@@ -540,9 +550,9 @@ const Suppliers: React.FC = () => {
 
         {/* Right Side: Suppliers List */}
         <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Search Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="supplier-search"
@@ -601,7 +611,7 @@ const Suppliers: React.FC = () => {
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {/* Table Header */}
-                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                  <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide sticky top-0 z-10">
                     <div className="col-span-1">#</div>
                     <div className="col-span-2">Supplier</div>
                     <div className="col-span-2">Company</div>

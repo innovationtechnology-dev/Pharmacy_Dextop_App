@@ -1,17 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
-import { FiCalendar, FiSearch, FiRefreshCw } from 'react-icons/fi';
-import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown, FaArrowLeft } from 'react-icons/fa';
+import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText, FiTruck } from 'react-icons/fi';
+import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown, FaArrowLeft, FaUndo } from 'react-icons/fa';
+import ReportDetailModal from '../../components/common/DetailModal';
 import { exportPurchasesPdf, exportPurchasesCsv } from '../../utils/purchases';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { getAuthUser } from '../../utils/auth';
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: 'Rs.',
-  INR: 'Rs.',
-};
 
 interface PurchaseItem {
   medicineId: number;
@@ -51,7 +47,6 @@ const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
 export default function Purchases() {
   const [fromDate, setFromDate] = useState<string>(() => {
     const d = new Date();
-    // d.setDate(d.getDate() - 30); // Default to last 30 days
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${mm}-${dd}`;
@@ -63,23 +58,32 @@ export default function Purchases() {
     return `${d.getFullYear()}-${mm}-${dd}`;
   });
 
+  // Calculate limit for cashier (1 month ago)
+  const minFromDate = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
+  const [showDetailModal, setShowDetailModal] = useState(false);
   const pageSize = 10;
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   // Get currency symbol
-  const getCurrencySymbol = () => {
-    const currency = pharmacySettings.currency || 'USD';
-    return currencySymbols[currency] || currency;
-  };
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
   // Set header
   useEffect(() => {
     setHeader({
@@ -405,7 +409,7 @@ export default function Purchases() {
               Total Purchases
             </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -418,7 +422,7 @@ export default function Purchases() {
               Paid
             </span>
             <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -431,7 +435,7 @@ export default function Purchases() {
               Outstanding
             </span>
             <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -508,6 +512,7 @@ export default function Purchases() {
                 <input
                   type="date"
                   value={fromDate}
+                  min={isCashier ? minFromDate : undefined}
                   onChange={(e) => setFromDate(e.target.value)}
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                 />
@@ -559,43 +564,45 @@ export default function Purchases() {
                     />
                   </div>
                 </div>
-                {/* Download Dropdown */}
-                <div className="relative w-full sm:w-auto" ref={dropdownRef}>
-                  <button
-                    onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                    className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
-                  >
-                    {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
-                    Download
-                    {renderIcon(FaChevronDown, { className: `w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}` })}
-                  </button>
+                {/* Download Dropdown - Hidden for Cashiers */}
+                {!isCashier && (
+                  <div className="relative w-full sm:w-auto" ref={dropdownRef}>
+                    <button
+                      onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
+                      className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+                    >
+                      {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
+                      Download
+                      {renderIcon(FaChevronDown, { className: `w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}` })}
+                    </button>
 
-                  {/* Dropdown Menu */}
-                  {showDownloadDropdown && (
-                    <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
-                      <button
-                        onClick={() => { setShowDownloadDropdown(false); setShowPdfOptions(true); }}
-                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
-                      >
-                        {renderIcon(FaFilePdf, { className: "w-4 h-4 text-red-500" })}
-                        <div>
-                          <div className="font-bold">Export as PDF</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
-                        </div>
-                      </button>
-                      <button
-                        onClick={handleDownloadCsv}
-                        className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
-                      >
-                        {renderIcon(FaFileExcel, { className: "w-4 h-4 text-green-500" })}
-                        <div>
-                          <div className="font-bold">Export as CSV</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
-                        </div>
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    {/* Dropdown Menu */}
+                    {showDownloadDropdown && (
+                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
+                        <button
+                          onClick={() => { setShowDownloadDropdown(false); setShowPdfOptions(true); }}
+                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
+                        >
+                          {renderIcon(FaFilePdf, { className: "w-4 h-4 text-red-500" })}
+                          <div>
+                            <div className="font-bold">Export as PDF</div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
+                          </div>
+                        </button>
+                        <button
+                          onClick={handleDownloadCsv}
+                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
+                        >
+                          {renderIcon(FaFileExcel, { className: "w-4 h-4 text-green-500" })}
+                          <div>
+                            <div className="font-bold">Export as CSV</div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
+                          </div>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -607,8 +614,9 @@ export default function Purchases() {
               <div className="col-span-1">Invoice #</div>
               <div className="col-span-1 text-center">Items</div>
               <div className="col-span-1 text-right">Grand Total</div>
-              <div className="col-span-2 text-right">Paid</div>
+              <div className="col-span-1 text-right">Paid</div>
               <div className="col-span-2 text-right">Outstanding</div>
+              <div className="col-span-1 text-center">Actions</div>
             </div>
 
             {/* Table Body */}
@@ -628,54 +636,69 @@ export default function Purchases() {
                 </div>
               ) : (
                 pagedPurchases.map((purchase) => (
-                  <div key={purchase.id} className="grid grid-cols-12 gap-3 px-3 py-2 border-b border-gray-100 dark:border-gray-700 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                    <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
-                      <div className="text-[11px] text-gray-500 dark:text-gray-400">#{purchase.id}</div>
-                      {purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : '—'}
-                      {purchase.updatedAt && purchase.updatedAt !== purchase.createdAt && (
-                        <div className="text-[9px] text-blue-600 dark:text-blue-400 font-bold mt-1 inline-flex items-center gap-1 px-1 py-0.5 bg-blue-50 dark:bg-blue-900/20 rounded uppercase tracking-tighter">
-                          <FiRefreshCw className="w-2.5 h-2.5" />
-                          Updated: {new Date(purchase.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {new Date(purchase.updatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      )}
-                    </div>
-                    <div className="col-span-2">
-                      <div className="font-medium text-gray-900 dark:text-white truncate" title={purchase.supplierName}>{purchase.supplierName}</div>
-                    </div>
-                    <div className="col-span-1">
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium capitalize
-                        ${purchase.status === 'received' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
-                          purchase.status === 'completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
-                            'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
-                        {purchase.status || 'Ordered'}
-                      </span>
-                    </div>
-                    <div className="col-span-1 text-gray-500 dark:text-gray-400 truncate">
-                      {purchase.invoiceNumber || '-'}
-                    </div>
-                    <div className="col-span-1 text-center">
-                      <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
-                        {purchase.items.length}
-                      </span>
-                    </div>
-                    <div className="col-span-1 text-right">
-                      <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{purchase.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-                    </div>
-                    <div className="col-span-2 text-right text-blue-600 dark:text-blue-400">
-                      {getCurrencySymbol()}{purchase.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </div>
-                    <div className="col-span-2 text-right">
-                      {purchase.remainingBalance > 0 ? (
-                        <span className="text-orange-600 dark:text-orange-400 font-medium">
-                          {getCurrencySymbol()}{purchase.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  <div key={purchase.id} className="contents border-b border-gray-100 dark:border-gray-700">
+                    <div 
+                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
+                    >
+                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
+                        <div className="text-[11px] text-gray-500 dark:text-gray-400">#{purchase.id}</div>
+                        {purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : '—'}
+                        {purchase.updatedAt && purchase.updatedAt !== purchase.createdAt && (
+                          <div className="text-[9px] text-blue-600 dark:text-blue-400 font-bold mt-1 inline-flex items-center gap-1 px-1 py-0.5 bg-blue-50 dark:bg-blue-900/20 rounded uppercase tracking-tighter">
+                            <FiRefreshCw className="w-2.5 h-2.5" />
+                            Updated: {new Date(purchase.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2">
+                        <div className="font-medium text-gray-900 dark:text-white truncate" title={purchase.supplierName}>{purchase.supplierName}</div>
+                      </div>
+                      <div className="col-span-1">
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium capitalize
+                          ${purchase.status === 'received' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' :
+                            purchase.status === 'completed' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
+                              'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300'}`}>
+                          {purchase.status || 'Ordered'}
                         </span>
-                      ) : (
-                        <span className="text-green-500 dark:text-green-400 flex items-center justify-end gap-1">
-                          Paid
+                      </div>
+                      <div className="col-span-1 text-gray-500 dark:text-gray-400 truncate">
+                        {purchase.invoiceNumber || '-'}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold">
+                          {purchase.items.length}
                         </span>
-                      )}
+                      </div>
+                      <div className="col-span-1 text-right">
+                        <div className="font-bold text-emerald-600 dark:text-emerald-400">{getCurrencySymbol()}{purchase.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                      </div>
+                      <div className="col-span-1 text-right text-blue-600 dark:text-blue-400">
+                        {getCurrencySymbol()}{purchase.paymentAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div className="col-span-2 text-right">
+                        {purchase.remainingBalance > 0 ? (
+                          <span className="text-orange-600 dark:text-orange-400 font-medium">
+                            {getCurrencySymbol()}{purchase.remainingBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        ) : (
+                          <span className="text-green-500 dark:text-green-400 flex items-center justify-end gap-1 font-bold">
+                            Paid Fully
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-1 text-center">
+                        <button
+                          onClick={() => {
+                            setSelectedPurchase(purchase);
+                            setShowDetailModal(true);
+                          }}
+                          className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
+                          title="View Details"
+                        >
+                          View                       
+                        </button>
+                      </div>
                     </div>
-
                   </div>
                 ))
               )}
@@ -684,15 +707,15 @@ export default function Purchases() {
             {/* Totals Footer Row */}
             {!loading && !error && filteredPurchases.length > 0 && (
               <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
-                <div className="col-span-7 text-right text-gray-600 dark:text-gray-300 pr-4">Total</div>
+                <div className="col-span-6 text-right text-gray-600 dark:text-gray-300 pr-4">Total</div>
                 <div className="col-span-1 text-right text-emerald-700 dark:text-emerald-400">
-                  {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalPurchaseAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
-                <div className="col-span-2 text-right text-blue-700 dark:text-blue-400">
-                  {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                <div className="col-span-1 text-right text-blue-700 dark:text-blue-400">
+                  {getCurrencySymbol()}{totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
                 <div className="col-span-2 text-right text-orange-700 dark:text-orange-400">
-                  {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  {getCurrencySymbol()}{totalRemaining.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </div>
               </div>
             )}
@@ -725,6 +748,130 @@ export default function Purchases() {
           </div>
         </div>
       </div>
+
+      {/* Detail Modal */}
+      <ReportDetailModal
+        isOpen={showDetailModal && !!selectedPurchase}
+        onClose={() => setShowDetailModal(false)}
+        title="Purchase Record"
+        icon={FaShoppingBag}
+        colorTheme="emerald"
+        headerBadges={[
+          { label: 'PO #', value: String(selectedPurchase?.id || '') },
+          { label: 'Invoice', value: selectedPurchase?.invoiceNumber || 'N/A', isItalic: true }
+        ]}
+        infoCards={[
+          { 
+            title: 'Supplier Details', 
+            value: selectedPurchase?.supplierName || 'N/A', 
+            icon: FiTruck, 
+            theme: 'emerald' 
+          },
+          { 
+            title: 'Date & Status', 
+            value: selectedPurchase?.createdAt ? new Date(selectedPurchase.createdAt).toLocaleDateString() : 'N/A', 
+            icon: FiCalendar, 
+            theme: 'blue',
+            badge: {
+              label: selectedPurchase?.status || 'Ordered',
+              color: selectedPurchase?.status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' :
+                     selectedPurchase?.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' :
+                     'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
+            }
+          },
+          { 
+            title: 'Internal Notes', 
+            value: selectedPurchase?.notes || 'No notes provided.', 
+            icon: FiFileText, 
+            theme: 'purple' 
+          }
+        ]}
+        tableTitle="Medicines Breakdown"
+        tableItemsCount={selectedPurchase?.items.length || 0}
+        tableHeaders={['#', 'Medicine Name', 'Pack Info', 'Qty', 'Unit Price', 'Subtotal']}
+        items={selectedPurchase?.items || []}
+        renderTableRow={(item, idx) => (
+          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
+            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
+              {String(idx + 1).padStart(2, '0')}
+            </div>
+            <div className="col-span-4 translate-x-1">
+              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{item.medicineName}</div>
+              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal flex items-center gap-2">
+                 <span>ID: #{item.medicineId}</span>
+                 <span className="w-0.5 h-0.5 rounded-full bg-gray-300 dark:bg-gray-600"></span>
+                 <span className="text-orange-500/80 italic">Exp: {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'N/A'}</span>
+              </div>
+            </div>
+            <div className="col-span-2 text-center">
+              <div className="inline-block px-1.5 py-0.5 bg-gray-50/50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded text-[9px] font-normal text-gray-500 dark:text-gray-400">
+                {item.pillsPerPacket} pills/pack
+              </div>
+            </div>
+            <div className="col-span-1 text-right">
+              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {item.packetQuantity}
+              </span>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
+                {getCurrencySymbol()}{item.pricePerPacket.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+            <div className="col-span-2 text-right">
+              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
+                {getCurrencySymbol()}{item.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+          </div>
+        )}
+        remarks={{
+          title: 'Remarks',
+          content: (
+            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
+              Verified purchase record. Refer to PO# {selectedPurchase?.id} for any discrepancies.
+            </p>
+          )
+        }}
+        summaryItems={[
+          { label: 'Gross Total', value: `${getCurrencySymbol()}${selectedPurchase?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedPurchase?.discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedPurchase?.taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
+          { label: 'Net Total', type: 'total', value: `${getCurrencySymbol()}${selectedPurchase?.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+        ]}
+        footerStatus={{
+          label: 'System Record Verified',
+          color: 'blue'
+        }}
+      >
+        {/* Payment Progress */}
+        <div className="p-4 rounded-2xl border border-blue-50 dark:border-blue-900/20 bg-blue-50/10 dark:bg-blue-900/5 mt-3">
+          <div className="flex items-center justify-between gap-3 mb-3 px-1">
+            <div className="flex-1">
+              <div className="flex justify-between text-[8px] font-medium text-blue-400 uppercase tracking-widest mb-1.5">
+                <span>Progress</span>
+                <span className="italic">{selectedPurchase?.remainingBalance === 0 ? 'Fully Paid' : 'Pending'}</span>
+              </div>
+              <div className="h-1 bg-white dark:bg-gray-800 rounded-full overflow-hidden border border-blue-50 dark:border-blue-900/10">
+                <div 
+                  className="h-full bg-blue-400 transition-all duration-500"
+                   style={{ width: `${Math.min(100, ((selectedPurchase?.paymentAmount || 0) / (selectedPurchase?.grandTotal || 1)) * 100)}%` }}
+                ></div>
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <div className="flex-1 bg-white/50 dark:bg-gray-800/50 p-2 rounded-lg border border-blue-50 dark:border-gray-700/30">
+              <div className="text-[8px] font-medium text-gray-400 uppercase leading-none mb-1">Paid</div>
+              <div className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{getCurrencySymbol()}{(selectedPurchase?.paymentAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            </div>
+            <div className="flex-1 bg-white/50 dark:bg-gray-800/50 p-2 rounded-lg border border-orange-50 dark:border-gray-700/30">
+              <div className="text-[8px] font-medium text-gray-400 uppercase leading-none mb-1">Due</div>
+              <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400">{getCurrencySymbol()}{(selectedPurchase?.remainingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+        </div>
+      </ReportDetailModal>
     </div>
   );
 }

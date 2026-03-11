@@ -7,6 +7,8 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useToast, ToastContainer } from '../../components/common/Toast';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { getAuthUser } from '../../utils/auth';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -38,8 +40,9 @@ interface PurchaseItem {
   packetQuantity: number;
   pillsPerPacket: number;
   totalPills: number;
-  pricePerPacket: number;
-  pricePerPill: number;
+  totalAmount: number; // NEW: Total amount paid for all packets
+  pricePerPacket: number; // Calculated from totalAmount
+  pricePerPill: number; // Calculated from totalAmount
   discount: number;
   tax: number;
   discountAmount?: number;
@@ -52,12 +55,18 @@ interface PurchaseItem {
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
   const packetQuantity = Math.max(0, item.packetQuantity || 0);
   const pillsPerPacket = Math.max(1, item.pillsPerPacket || 1);
-  const pricePerPacket = Math.max(0, item.pricePerPacket || 0);
+  const totalAmount = Math.max(0, item.totalAmount || 0);
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
+  
+  // Calculate price per packet from total amount
+  const pricePerPacket = packetQuantity > 0 ? totalAmount / packetQuantity : 0;
+  
   const totalPills = packetQuantity * pillsPerPacket;
-  const pricePerPill = pillsPerPacket > 0 ? pricePerPacket / pillsPerPacket : 0;
-  const lineSubtotal = packetQuantity * pricePerPacket;
+  const pricePerPill = totalPills > 0 ? totalAmount / totalPills : 0;
+  
+  // Line subtotal is the total amount entered
+  const lineSubtotal = totalAmount;
   const discountAmount = (lineSubtotal * discountPercent) / 100;
   const taxableBase = lineSubtotal - discountAmount;
   const taxAmount = (taxableBase * taxPercent) / 100;
@@ -67,6 +76,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
     ...item,
     packetQuantity,
     pillsPerPacket,
+    totalAmount,
     pricePerPacket,
     discount: discountPercent,
     tax: taxPercent,
@@ -132,6 +142,8 @@ const PurchasingPanel: React.FC = () => {
       minute: '2-digit',
     });
   });
+  
+  const isCashier = getAuthUser()?.role === 'cashier';
 
   // Update time every minute
   useEffect(() => {
@@ -286,6 +298,7 @@ const PurchasingPanel: React.FC = () => {
         packetQuantity: 1,
         pillsPerPacket: medicine.pillQuantity || 1,
         totalPills: 0,
+        totalAmount: 0,
         pricePerPacket: 0,
         pricePerPill: 0,
         discount: 0,
@@ -602,17 +615,10 @@ const PurchasingPanel: React.FC = () => {
     }
   };
 
-  const currencySymbols: Record<string, string> = {
-    USD: 'Rs.',
-    EUR: 'Rs.',
-    GBP: 'Rs.',
-    PKR: 'Rs.',
-    INR: 'Rs.',
-  };
 
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || 'Rs.';
+    const symbol = getSymbol(currency);
     return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
@@ -620,7 +626,7 @@ const PurchasingPanel: React.FC = () => {
     value ? new Date(value).toLocaleDateString() : '—';
 
   const isWithin24Hours = (dateString?: string): boolean => {
-    if (!dateString) return false;
+    if (!dateString) return true;
     const purchaseDate = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - purchaseDate.getTime();
@@ -654,6 +660,10 @@ const PurchasingPanel: React.FC = () => {
             // Calculate tax percentage (tax is applied to taxable base after discount)
             const taxPercent = taxableBase > 0 ? (taxAmount / taxableBase) * 100 : 0;
 
+            // Calculate totalAmount from existing data
+            // For old purchases, totalAmount = packetQuantity * pricePerPacket
+            const totalAmount = item.totalAmount || (item.packetQuantity * item.pricePerPacket);
+
             return recalculatePurchaseItem({
               medicine: {
                 id: item.medicineId,
@@ -665,6 +675,7 @@ const PurchasingPanel: React.FC = () => {
               },
               packetQuantity: item.packetQuantity,
               pillsPerPacket: item.pillsPerPacket,
+              totalAmount: totalAmount,
               pricePerPacket: item.pricePerPacket,
               discount: discountPercent,
               tax: taxPercent,
@@ -887,7 +898,7 @@ const PurchasingPanel: React.FC = () => {
   }, [barcodeScanMode, handleBarcodeScan]);
 
   const currencyCode = pharmacySettings.currency || 'USD';
-  const symbol = currencySymbols[currencyCode] || `${currencyCode} `;
+  const symbol = getSymbol(currencyCode);
 
   return (
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
@@ -1288,7 +1299,7 @@ const PurchasingPanel: React.FC = () => {
                 <button
                   type="button"
                   onClick={handlePurchase}
-                  disabled={processing || cart.length === 0}
+                  disabled={processing || cart.length === 0 || (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))}
                   className="flex-1 py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-xs font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2 shadow-md"
                 >
                   {processing ? (
@@ -1565,7 +1576,7 @@ const PurchasingPanel: React.FC = () => {
                       <div className="col-span-3">Medicine</div>
                       <div className="col-span-1 text-center">Pkts</div>
                       <div className="col-span-1 text-center">Pills/Pkt</div>
-                      <div className="col-span-1 text-center">Price/Pkt</div>
+                      <div className="col-span-1 text-center">Total Amt</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-2 text-center">Expiry</div>
@@ -1611,10 +1622,12 @@ const PurchasingPanel: React.FC = () => {
                               min="1"
                               value={item.packetQuantity || ''}
                               onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                                e.currentTarget.select();
-                              }}
-                              onChange={(e) => {
-                                const val = e.target.value;
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               e.currentTarget.select();
+                             }}
+                             onChange={(e) => {
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               const val = e.target.value;
                                 if (val === '') {
                                   // Allow empty during typing
                                   updateCartItemField(item.medicine.id, 'packetQuantity', '' as any);
@@ -1626,13 +1639,15 @@ const PurchasingPanel: React.FC = () => {
                                 }
                               }}
                               onBlur={(e) => {
+                                if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                                 const val = e.target.value;
                                 if (val === '' || parseInt(val) < 1 || isNaN(parseInt(val))) {
                                   // Set to 1 if empty or invalid when leaving field
                                   updateCartItemField(item.medicine.id, 'packetQuantity', 1);
                                 }
                               }}
-                              className="w-full px-2 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                              readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                              className={`w-full px-2 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                           </div>
                         </div>
@@ -1647,35 +1662,39 @@ const PurchasingPanel: React.FC = () => {
                           />
                         </div>
 
-                        {/* Price / Packet */}
+                        {/* Total Amount (for all packets) */}
                         <div className="col-span-1 text-center">
                           <input
                             type="number"
                             min="0"
                             step="0.01"
-                            value={item.pricePerPacket || ''}
+                            value={item.totalAmount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
-                                updateCartItemField(item.medicine.id, 'pricePerPacket', '' as any);
+                                updateCartItemField(item.medicine.id, 'totalAmount', '' as any);
                               } else {
                                 const numVal = parseFloat(val);
                                 if (!isNaN(numVal) && numVal >= 0) {
-                                  updateCartItemField(item.medicine.id, 'pricePerPacket', numVal);
+                                  updateCartItemField(item.medicine.id, 'totalAmount', numVal);
                                 }
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
-                                updateCartItemField(item.medicine.id, 'pricePerPacket', 0);
+                                updateCartItemField(item.medicine.id, 'totalAmount', 0);
                               }
                             }}
                             placeholder="0.00"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1688,9 +1707,11 @@ const PurchasingPanel: React.FC = () => {
                             step="0.1"
                             value={item.discount || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
                                 updateCartItemField(item.medicine.id, 'discount', '' as any);
@@ -1702,13 +1723,15 @@ const PurchasingPanel: React.FC = () => {
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
                                 updateCartItemField(item.medicine.id, 'discount', 0);
                               }
                             }}
                             placeholder="0"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1721,9 +1744,11 @@ const PurchasingPanel: React.FC = () => {
                             step="0.1"
                             value={item.tax || ''}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               e.currentTarget.select();
                             }}
                             onChange={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '') {
                                 updateCartItemField(item.medicine.id, 'tax', '' as any);
@@ -1735,13 +1760,15 @@ const PurchasingPanel: React.FC = () => {
                               }
                             }}
                             onBlur={(e) => {
+                              if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                               const val = e.target.value;
                               if (val === '' || isNaN(parseFloat(val))) {
                                 updateCartItemField(item.medicine.id, 'tax', 0);
                               }
                             }}
                             placeholder="0"
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                            className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                           />
                         </div>
 
@@ -1752,11 +1779,16 @@ const PurchasingPanel: React.FC = () => {
                             value={item.expiryDate}
                             min={minExpiryDate}
                             onClick={(e: React.MouseEvent<HTMLInputElement>) => {
-                              e.currentTarget.select();
-                            }}
-                            onChange={(e) => updateCartItemField(item.medicine.id, 'expiryDate', e.target.value)}
-                            className="w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
-                          />
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               e.currentTarget.select();
+                             }}
+                             onChange={(e) => {
+                               if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                               updateCartItemField(item.medicine.id, 'expiryDate', e.target.value);
+                             }}
+                             readOnly={isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)}
+                             className={`w-full px-2 py-1.5 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                           />
                         </div>
 
                         {/* Line Total */}

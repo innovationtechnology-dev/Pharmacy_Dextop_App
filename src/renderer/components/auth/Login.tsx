@@ -58,12 +58,14 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setErrors({});
 
     try {
-      // Check if it's admin credentials
-      const isAdminEmail = formData.email.toLowerCase() === 'admin@pharmacy.com';
+      // Check if it's super admin credentials
+      const isSuperAdminEmail = 
+        formData.email.toLowerCase() === 'superadmin@pharmacy.com' ||
+        formData.email.toLowerCase() === 'admin@pharmacy.com';
 
-      if (isAdminEmail) {
+      if (isSuperAdminEmail) {
         // Try super admin login first
-        const adminResult = await superAdminLogin(formData.email, formData.password);
+        const adminResult = await superAdminLogin(formData.email.toLowerCase(), formData.password);
         if (adminResult.success) {
           // Handle Remember Me
           if (rememberMe) {
@@ -78,7 +80,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       }
 
       // Try regular user login
-      const result = await login(formData.email, formData.password);
+      const result = await login(formData.email.toLowerCase(), formData.password);
 
       if (result.success) {
         // Call onLogin callback if provided
@@ -125,19 +127,19 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center p-4 sm:p-6 lg:p-8">
+    return (
+    <div className="h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center p-2 overflow-hidden">
       {/* Main Container */}
-      <div className="w-full max-w-6xl bg-white shadow-xl rounded-2xl overflow-hidden">
-        <div className="flex flex-col lg:flex-row min-h-[600px] lg:min-h-[700px]">
+      <div className="w-full max-w-6xl bg-white shadow-xl rounded-2xl overflow-hidden max-h-[95vh]">
+        <div className="flex flex-col lg:flex-row h-full">
           {/* Left Side - Form Section */}
-          <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-8 lg:p-12 xl:p-16">
-            <div className="w-full max-w-md">
+          <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-8 lg:p-12 xl:p-16 overflow-y-auto">
+            <div className="w-full max-w-md py-4">
               {/* Header */}
-              <div className="text-center mb-8">
-                <div className="inline-flex items-center justify-center w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl mb-4 shadow-lg">
+              <div className="text-center mb-6">
+                <div className="inline-flex items-center justify-center w-12 h-12 sm:w-14 sm:h-14 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl mb-3 shadow-lg">
                   <svg
-                    className="w-8 h-8 sm:w-10 sm:h-10 text-white"
+                    className="w-6 h-6 sm:w-8 sm:h-8 text-white"
                     fill="none"
                     stroke="currentColor"
                     viewBox="0 0 24 24"
@@ -150,10 +152,16 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     />
                   </svg>
                 </div>
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-gray-900 mb-2">
+                {/* Mobile-only branding */}
+                <div className="lg:hidden mb-4">
+                  <h1 className="text-xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-emerald-600 to-teal-600 uppercase tracking-wider">
+                    Pharmacy Management System
+                  </h1>
+                </div>
+                <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-0.5">
                   Welcome Back
                 </h2>
-                <p className="text-sm sm:text-base text-gray-600">
+                <p className="text-[10px] sm:text-xs text-gray-500">
                   Sign in to your Pharmacy Management System
                 </p>
               </div>
@@ -306,12 +314,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     </span>
                   </label>
 
-                  <Link
+                  {/* <Link
                     to="/forgot-password"
-                    className="text-sm font-medium text-emerald-600 hover:text-emerald-700 hover:underline transition-colors"
+                    className="text-xs font-medium text-emerald-600 hover:text-emerald-700 hover:underline transition-colors"
                   >
                     Forgot password?
-                  </Link>
+                  </Link> */}
                 </div>
 
                 {/* Submit Button */}
@@ -364,12 +372,27 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   )}
                 </button>
 
+                {/* Mobile-only badges */}
+                <div className="lg:hidden flex justify-center gap-3 pt-4 border-t border-gray-100">
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-50 rounded-lg">
+                    <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+                    <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-tighter">Secure</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded-lg">
+                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+                    <span className="text-[10px] font-bold text-blue-700 uppercase tracking-tighter">Fast</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-indigo-50 rounded-lg">
+                    <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                    <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-tighter">Reliable</span>
+                  </div>
+                </div>
               </form>
             </div>
           </div>
 
           {/* Right Side - Image Section */}
-          <div className="hidden lg:flex w-full lg:w-1/2 bg-gradient-to-br from-gray-50 via-white to-gray-50 items-center justify-center p-6 xl:p-8 relative overflow-hidden">
+          <div className="hidden lg:flex w-full lg:w-1/2 bg-gradient-to-br from-gray-50 via-white to-gray-50 items-center justify-center p-2 xl:p-4 relative overflow-hidden">
             {/* Decorative Background Elements */}
             <div className="absolute inset-0 overflow-hidden">
               <div className="absolute top-0 right-0 w-96 h-96 bg-gray-100/40 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
@@ -385,10 +408,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                   className="w-full h-full object-cover object-center"
                 />
                 {/* Overlay Gradient */}
-                <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/40 via-emerald-800/20 to-transparent"></div>
+                <div className="absolute inset-0 bg-gradient-to-b from-emerald-900/60 via-emerald-800/20 to-transparent"></div>
                 
-                {/* Content Overlay */}
-                <div className="absolute bottom-0 left-0 right-0 p-8 text-white">
+                {/* Content Overlay - positioned at top */}
+                <div className="absolute top-0 left-0 right-0 p-8 text-white">
                   <div className="mb-4">
                     <h3 className="text-2xl xl:text-3xl font-bold mb-2 drop-shadow-lg">
                       Pharmacy Management System
@@ -397,7 +420,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       Streamline your pharmacy operations with our comprehensive solution
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-4 mt-6">
+                  <div className="flex flex-wrap gap-4 mt-6 opacity-70">
                     <div className="flex items-center gap-2 bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg">
                       <svg
                         className="w-5 h-5 text-emerald-200"

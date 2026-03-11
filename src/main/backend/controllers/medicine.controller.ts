@@ -2,6 +2,7 @@ import { ipcMain, IpcMainEvent, dialog } from 'electron';
 import { promises as fs } from 'fs';
 import { MedicineService, Medicine } from '../services/medicine.service';
 import { SalesService, Sale } from '../services/sales.service';
+import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 import { SupplierService } from '../services/supplier.service';
 import {
   PurchaseService,
@@ -144,6 +145,8 @@ export class MedicineController {
         const settings = args[2] || {};
         const rows = await this.salesService.getAllSalesFlatRowsByRange(fromDate, toDate);
         const total = rows.reduce((sum, r: any) => sum + (r.total || 0), 0);
+        const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+
         const html = `
           <html>
           <head>
@@ -217,17 +220,17 @@ export class MedicineController {
                     <td>${r.customerPhone || '-'}</td>
                     <td>${r.medicineName}</td>
                     <td class="text-center">${r.pills}</td>
-                    <td class="text-right">${r.unitPrice.toFixed(2)}</td>
-                    <td class="text-right">${r.subtotal.toFixed(2)}</td>
-                    <td class="text-right">${r.discountAmount.toFixed(2)}</td>
-                    <td class="text-right">${r.taxAmount.toFixed(2)}</td>
-                    <td class="text-right" style="font-weight: bold;">${r.total.toFixed(2)}</td>
+                    <td class="text-right">${currencySymbol}${r.unitPrice.toFixed(2)}</td>
+                    <td class="text-right">${currencySymbol}${r.subtotal.toFixed(2)}</td>
+                    <td class="text-right">${currencySymbol}${r.discountAmount.toFixed(2)}</td>
+                    <td class="text-right">${currencySymbol}${r.taxAmount.toFixed(2)}</td>
+                    <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.total.toFixed(2)}</td>
                   </tr>`).join('')}
               </tbody>
               <tfoot>
                 <tr>
                   <td colspan="10" class="text-right">Grand Total</td>
-                  <td class="text-right">${total.toFixed(2)}</td>
+                  <td class="text-right">${currencySymbol}${total.toFixed(2)}</td>
                 </tr>
               </tfoot>
             </table>

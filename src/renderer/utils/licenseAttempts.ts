@@ -3,7 +3,7 @@
  */
 
 const STORAGE_KEY = 'license_activation_attempts';
-const MAX_ATTEMPTS_PER_DAY = 5; // Increased from 5 to 20
+const MAX_ATTEMPTS_PER_DAY = 40; // Daily activation attempts limit
 
 interface AttemptData {
   date: string; // YYYY-MM-DD format

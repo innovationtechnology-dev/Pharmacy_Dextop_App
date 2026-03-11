@@ -16,8 +16,8 @@ import {
   FiCheck,
   FiTrendingUp,
   FiUsers,
-  FiCheckCircle,
   FiAlertCircle,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 
@@ -243,7 +243,7 @@ const Customers: React.FC = () => {
   }, [setHeader, headerActions]);
 
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
@@ -254,68 +254,77 @@ const Customers: React.FC = () => {
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3 flex-shrink-0">
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiUsers className="w-4 h-4 text-white" />
-            </div>
-            <FiTrendingUp className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+      {/* Stats Header - Single Row Design matching Medicines Page */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
+        {/* Total Customers */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiUsers className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Total Customers
+            </span>
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+              {stats.total}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.total}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Total Customers</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-blue-50/50 dark:from-gray-800 dark:to-blue-900/20 rounded-lg shadow-sm border border-blue-100/50 dark:border-blue-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 shadow-md">
-              <FiMail className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-blue-400 dark:text-blue-500" />
+        {/* With Email */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiMail className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              With Email
+            </span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {stats.withEmail}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.withEmail}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">With Email</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-purple-50/50 dark:from-gray-800 dark:to-purple-900/20 rounded-lg shadow-sm border border-purple-100/50 dark:border-purple-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600 shadow-md">
-              <FiMapPin className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-purple-400 dark:text-purple-500" />
+        {/* With Address */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-purple-50 dark:bg-purple-900/20 px-2.5 py-1.5 rounded-md border border-purple-200 dark:border-purple-600/50 shadow-sm">
+            <FiMapPin className="w-3.5 h-3.5 text-purple-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              With Address
+            </span>
+            <span className="text-xs font-bold text-purple-600 dark:text-purple-400 ml-1">
+              {stats.withAddress}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.withAddress}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">With Address</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiTrendingUp className="w-4 h-4 text-white" />
-            </div>
-            <FiAlertCircle className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+        {/* Recent */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiAlertCircle className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Recent (30 Days)
+            </span>
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+              {stats.recent}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.recent}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Recent (30 days)</p>
         </div>
+
+        {/* Refresh Button */}
+        <button
+          onClick={loadCustomers}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
       {/* Main Content: Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-3 flex-1 overflow-hidden min-h-0">
         {/* Left Side: Customer Form */}
         <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Form Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
@@ -325,7 +334,7 @@ const Customers: React.FC = () => {
                       <FiPlus className="w-4 h-4 text-white" />
                     )}
                   </div>
-                  <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                  <h3 className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     {editingCustomer ? 'Edit Customer' : 'New Customer'}
                   </h3>
                 </div>
@@ -494,9 +503,9 @@ const Customers: React.FC = () => {
 
         {/* Right Side: Customers List */}
         <div className="lg:col-span-3 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
             {/* Search Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="customer-search"
@@ -555,7 +564,7 @@ const Customers: React.FC = () => {
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {/* Table Header */}
-                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                  <div className="grid grid-cols-12 gap-2 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide sticky top-0 z-10">
                     <div className="col-span-1">#</div>
                     <div className="col-span-2">Customer</div>
                     <div className="col-span-2">Email</div>

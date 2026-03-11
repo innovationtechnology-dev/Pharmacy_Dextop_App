@@ -27,39 +27,106 @@ export interface License {
   updated_at: string;
 }
 
-export interface ActivationCode {
+export interface GeneratedLicense {
   id: number;
   code: string;
-  expiry_date: string;
+  pharmacy_name: string | null;
+  doctor_name: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  country: string | null;
+  generated_at: string;
   is_used: number;
-  used_by_user_id: number | null;
   used_at: string | null;
-  created_at: string;
 }
 
 export class SuperAdminService {
   private dbService = getDatabaseService();
-  private readonly SUPER_ADMIN_EMAIL = 'admin@pharmacy.com';
-  private readonly SUPER_ADMIN_PASSWORD = 'admin123'; // Default password
+  private readonly SUPER_ADMIN_EMAIL = 'superadmin@pharmacy.com';
+  private readonly SUPER_ADMIN_PASSWORD = 'superadmin@123'; // Default super admin password
+
+  // Default seeded users for core roles
+  private readonly DEFAULT_ADMIN_EMAIL = 'admin@pharmacy.com';
+  private readonly DEFAULT_ADMIN_PASSWORD = 'admin@123'; // Default admin password
+
+  private readonly DEFAULT_CASHIER_EMAIL = 'cashier@pharmacy.com';
+  private readonly DEFAULT_CASHIER_PASSWORD = 'cashier@123'; // Default cashier password
 
   constructor() {
-    this.initializeSuperAdmin();
   }
 
   /**
    * Initialize super admin user if it doesn't exist
    */
-  private async initializeSuperAdmin(): Promise<void> {
+  public async initializeSuperAdmin(): Promise<void> {
     try {
-      const existingAdmin = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}'`
+      const superAdminEmailEscaped = this.SUPER_ADMIN_EMAIL.replace(/'/g, "''");
+
+      // Ensure Super Admin user exists and has admin role
+      const existingSuperAdmin = await this.dbService.queryOne(
+        `SELECT * FROM users WHERE email = '${superAdminEmailEscaped}'`
       );
 
-      if (!existingAdmin) {
+      if (!existingSuperAdmin) {
         const passwordHash = this.hashPassword(this.SUPER_ADMIN_PASSWORD);
         await this.dbService.execute(
-          `INSERT INTO users (name, email, password_hash) VALUES ('Super Admin', '${this.SUPER_ADMIN_EMAIL.replace(/'/g, "''")}', '${passwordHash}')`
+          `INSERT INTO users (name, email, password_hash, role) VALUES ('Super Admin', '${superAdminEmailEscaped}', '${passwordHash}', 'admin')`
         );
+      } else {
+        // Make sure Super Admin is marked as admin role
+        await this.dbService.execute(
+          `UPDATE users SET role = 'admin' WHERE email = '${superAdminEmailEscaped}'`
+        );
+      }
+
+      // Ensure there is at least one additional admin user (non super-admin)
+      const adminCountRow = (await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND email != '${superAdminEmailEscaped}'`
+      )) as { count?: number } | null;
+
+      const adminCount =
+        adminCountRow && typeof (adminCountRow as any).count !== 'undefined'
+          ? Number((adminCountRow as any).count)
+          : 0;
+
+      if (adminCount === 0) {
+        const adminEmailEscaped = this.DEFAULT_ADMIN_EMAIL.replace(/'/g, "''");
+        const existingAdminUser = await this.dbService.queryOne(
+          `SELECT * FROM users WHERE email = '${adminEmailEscaped}'`
+        );
+
+        if (!existingAdminUser) {
+          const adminPasswordHash = this.hashPassword(this.DEFAULT_ADMIN_PASSWORD);
+          await this.dbService.execute(
+            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Admin', '${adminEmailEscaped}', '${adminPasswordHash}', 'admin')`
+          );
+        }
+      }
+
+      // Ensure there is at least one cashier user
+      const cashierCountRow = (await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM users WHERE role = 'cashier'`
+      )) as { count?: number } | null;
+
+      const cashierCount =
+        cashierCountRow && typeof (cashierCountRow as any).count !== 'undefined'
+          ? Number((cashierCountRow as any).count)
+          : 0;
+
+      if (cashierCount === 0) {
+        const cashierEmailEscaped = this.DEFAULT_CASHIER_EMAIL.replace(/'/g, "''");
+        const existingCashierUser = await this.dbService.queryOne(
+          `SELECT * FROM users WHERE email = '${cashierEmailEscaped}'`
+        );
+
+        if (!existingCashierUser) {
+          const cashierPasswordHash = this.hashPassword(this.DEFAULT_CASHIER_PASSWORD);
+          await this.dbService.execute(
+            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Cashier', '${cashierEmailEscaped}', '${cashierPasswordHash}', 'cashier')`
+          );
+        }
       }
     } catch (error) {
       // Error initializing super admin
@@ -293,20 +360,6 @@ export class SuperAdminService {
   }
 
   /**
-   * Get all activation codes
-   */
-  public async getAllActivationCodes(): Promise<ActivationCode[]> {
-    try {
-      const codes = await this.dbService.query(
-        'SELECT * FROM activation_codes ORDER BY code ASC'
-      );
-      return codes as ActivationCode[];
-    } catch (error) {
-      return [];
-    }
-  }
-
-  /**
    * Update license
    */
   public async updateLicense(
@@ -347,48 +400,155 @@ export class SuperAdminService {
     }
   }
 
-  /**
-   * Update activation code
-   */
-  public async updateActivationCode(
-    codeId: number,
-    code: string,
-    expiryDate: string,
-    isUsed: boolean
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.dbService.execute(
-        `UPDATE activation_codes SET code = '${code.replace(/'/g, "''")}', expiry_date = '${expiryDate}', is_used = ${isUsed ? 1 : 0} WHERE id = ${codeId}`
-      );
+  // ── Generated Licenses (14-char keys) ────────────────────────────────────
 
-      return {
-        success: true,
-      };
+  /**
+   * Get all generated license keys
+   */
+  public async getAllGeneratedLicenses(): Promise<GeneratedLicense[]> {
+    try {
+      const rows = await this.dbService.query(
+        'SELECT * FROM generated_licenses ORDER BY generated_at DESC'
+      );
+      return rows as GeneratedLicense[];
     } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to update activation code',
-      };
+      return [];
     }
   }
 
   /**
-   * Delete activation code
+   * Revoke a generated license (mark as unused so it can be re-activated)
    */
-  public async deleteActivationCode(codeId: number): Promise<{ success: boolean; error?: string }> {
+  public async revokeGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.dbService.execute(`DELETE FROM activation_codes WHERE id = ${codeId}`);
-      return {
-        success: true,
-      };
+      await this.dbService.execute(
+        `UPDATE generated_licenses SET is_used = 0, used_at = NULL WHERE id = ${id}`
+      );
+
+      // Also deactivate any live license that was activated with this code
+      const row = (await this.dbService.queryOne(
+        `SELECT code FROM generated_licenses WHERE id = ${id}`
+      )) as { code: string } | null;
+
+      if (row) {
+        await this.dbService.execute(
+          `UPDATE licenses SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+           WHERE activation_code = '${row.code.replace(/'/g, "''")}'`
+        );
+      }
+
+      return { success: true };
     } catch (error) {
-      return {
-        success: false,
-        error: 'Failed to delete activation code',
-      };
+      return { success: false, error: 'Failed to revoke license key' };
+    }
+  }
+
+  /**
+   * Delete a generated license key entirely
+   */
+  public async deleteGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `DELETE FROM generated_licenses WHERE id = ${id}`
+      );
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: 'Failed to delete generated license key' };
+    }
+  }
+
+  /**
+   * Import database file
+   */
+  public async importDatabase(filePath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!fs.existsSync(filePath)) {
+        return { success: false, error: 'Source file does not exist' };
+      }
+
+      // 1. Basic SQLite Validation
+      const sqlite3 = require('sqlite3').verbose();
+      const tempDb = new sqlite3.Database(filePath);
+
+      const schemaCheck = await new Promise<boolean>((resolve) => {
+        // Check for 'users' table as a proxy for a valid schema
+        tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
+          if (err || !row) {
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        });
+      });
+
+      // Close temp connection
+      await new Promise<void>((resolve) => tempDb.close(() => resolve()));
+
+      if (!schemaCheck) {
+        return { success: false, error: 'Incompatible database: Missing required tables' };
+      }
+
+      // 2. Rotate Database
+      const currentDbPath = this.getDatabasePath();
+      const backupPath = `${currentDbPath}.bak`;
+      const dbConnection = (require('../database/database.connection')).getDatabaseConnection();
+
+      // Close current connection
+      await dbConnection.close();
+
+      // Give Windows time to release the file handle
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Clean up sidecar files (WAL mode leftovers)
+      const walFile = `${currentDbPath}-wal`;
+      const shmFile = `${currentDbPath}-shm`;
+      if (fs.existsSync(walFile)) {
+        try { fs.unlinkSync(walFile); } catch (e) { console.error('Failed to unlink wal file:', e); }
+      }
+      if (fs.existsSync(shmFile)) {
+        try { fs.unlinkSync(shmFile); } catch (e) { console.error('Failed to unlink shm file:', e); }
+      }
+
+      try {
+        // Backup current (if it exists)
+        if (fs.existsSync(currentDbPath)) {
+          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
+          fs.renameSync(currentDbPath, backupPath);
+        }
+
+        // Copy new database
+        fs.copyFileSync(filePath, currentDbPath);
+
+        // Reconnect
+        await dbConnection.connect();
+
+        return { success: true };
+      } catch (err: any) {
+        console.error('Error during database rotation:', err);
+
+        // Detailed error for UI
+        let errorMessage = 'Failed to rotate database files';
+        if (err.code === 'EBUSY') {
+          errorMessage = 'Database file is currently in use by another process. Please close all other database tools and try again.';
+        }
+
+        // Rollback attempts
+        if (fs.existsSync(backupPath)) {
+          try {
+            if (fs.existsSync(currentDbPath)) fs.unlinkSync(currentDbPath);
+            fs.renameSync(backupPath, currentDbPath);
+            await dbConnection.connect();
+          } catch (rollbackErr) {
+            console.error('Critical: Rollback failed:', rollbackErr);
+          }
+        }
+        return { success: false, error: errorMessage };
+      }
+    } catch (error) {
+      console.error('Import database error:', error);
+      return { success: false, error: 'Database import failed' };
     }
   }
 }
 
 export default SuperAdminService;
-

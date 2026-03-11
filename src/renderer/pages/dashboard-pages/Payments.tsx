@@ -17,7 +17,7 @@ import {
   FiTrendingUp,
   FiTrendingDown,
   FiFileText,
-  FiUser,
+  FiUsers,
   FiPhone,
   FiMail,
   FiEye,
@@ -26,6 +26,7 @@ import {
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 // Types
 type PaymentMethod = 'cash' | 'bank_transfer' | 'check' | 'online';
@@ -91,14 +92,6 @@ interface SupplierAccount {
   lastPaymentAmount?: number;
 }
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-  AED: 'د.إ',
-};
 
 const paymentMethodLabels: Record<string, string> = {
   cash: 'Cash',
@@ -144,6 +137,7 @@ const Payments: React.FC = () => {
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  console.log("Payment Summary",paymentSummary);
   
   // Filter state
   const [activeTab, setActiveTab] = useState<'payments' | 'records' | 'accounts'>('payments');
@@ -190,7 +184,7 @@ const Payments: React.FC = () => {
   // Format helpers
   const formatCurrency = useCallback((value: number) => {
     const currency = pharmacySettings.currency || 'USD';
-    const symbol = currencySymbols[currency] || currency;
+    const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
@@ -298,7 +292,7 @@ const Payments: React.FC = () => {
         filters.periodType = 'custom';
       }
 
-      window.electron.ipcRenderer.once('payment-get-all-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-all-reply' as any, (response: any) => {
         if (response.success) {
           if (response.data.data) {
             // Paginated response
@@ -315,7 +309,7 @@ const Payments: React.FC = () => {
           console.error('Error loading payment records:', response.error);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-all', [filters, true]); // true = paginated
+      window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, true]); // true = paginated
     } catch (err) {
       console.error('Error loading payment records:', err);
     }
@@ -333,12 +327,12 @@ const Payments: React.FC = () => {
         }
       }
 
-      window.electron.ipcRenderer.once('payment-get-summary-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-summary-reply' as any, (response: any) => {
         if (response.success) {
           setPaymentSummary(response.data);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-summary', [filters]);
+      window.electron.ipcRenderer.sendMessage('payment-get-summary' as any, [filters]);
     } catch (err) {
       console.error('Error loading payment summary:', err);
     }
@@ -346,12 +340,12 @@ const Payments: React.FC = () => {
 
   const loadSupplierAccounts = useCallback(async () => {
     try {
-      window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply' as any, (response: any) => {
         if (response.success) {
           setSupplierAccounts(response.data || []);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts', []);
+      window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts' as any, []);
     } catch (err) {
       console.error('Error loading supplier accounts:', err);
     }
@@ -359,12 +353,12 @@ const Payments: React.FC = () => {
 
   const loadPurchasePayments = useCallback(async (purchaseId: number) => {
     try {
-      window.electron.ipcRenderer.once('payment-get-by-purchase-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
         if (response.success) {
           setPurchasePayments(response.data || []);
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-get-by-purchase', [purchaseId]);
+      window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
     } catch (err) {
       console.error('Error loading purchase payments:', err);
     }
@@ -479,7 +473,7 @@ const Payments: React.FC = () => {
 
   // Group records by date for timeline view
   const recordsByDate = useMemo(() => {
-    const grouped: Record<string, { records: PaymentRecord[]; total: number; date: Date }> = {};
+    const grouped: Record<string, { records: PaymentRecord[]; totalAmount: number; date: Date }> = {};
     displayRecords.forEach(record => {
       const recordDate = new Date(record.paymentDate);
       const dateKey = recordDate.toLocaleDateString('en-GB', {
@@ -488,15 +482,15 @@ const Payments: React.FC = () => {
         year: 'numeric'
       });
       if (!grouped[dateKey]) {
-        grouped[dateKey] = { records: [], total: 0, date: recordDate };
+        grouped[dateKey] = { records: [], totalAmount: 0, date: recordDate };
       }
       grouped[dateKey].records.push(record);
-      grouped[dateKey].total += record.amount;
+      grouped[dateKey].totalAmount += record.amount;
     });
     // Sort dates in descending order using the actual date object
     return Object.entries(grouped).sort((a, b) => {
       return b[1].date.getTime() - a[1].date.getTime();
-    }).map(([dateKey, data]) => [dateKey, { records: data.records, total: data.total }]);
+    });
   }, [displayRecords]);
 
   const filteredSupplierAccounts = useMemo(() => {
@@ -579,7 +573,7 @@ const Payments: React.FC = () => {
         paymentDate,
       };
 
-      window.electron.ipcRenderer.once('payment-create-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-create-reply' as any, (response: any) => {
         setProcessing(false);
         if (response.success) {
           resetPaymentForm();
@@ -589,7 +583,7 @@ const Payments: React.FC = () => {
           alert('Error recording payment: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-create', [paymentData]);
+      window.electron.ipcRenderer.sendMessage('payment-create' as any, [paymentData]);
     } catch (err) {
       setProcessing(false);
       alert('Error recording payment. Please try again.');
@@ -603,7 +597,7 @@ const Payments: React.FC = () => {
     
     setProcessing(true);
     try {
-      window.electron.ipcRenderer.once('payment-delete-reply', (response: any) => {
+      window.electron.ipcRenderer.once('payment-delete-reply' as any, (response: any) => {
         setProcessing(false);
         if (response.success) {
           loadAllData();
@@ -615,7 +609,7 @@ const Payments: React.FC = () => {
           alert('Error deleting payment: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-delete', [paymentId]);
+      window.electron.ipcRenderer.sendMessage('payment-delete' as any, [paymentId]);
     } catch (err) {
       setProcessing(false);
       alert('Error deleting payment. Please try again.');
@@ -660,7 +654,7 @@ const Payments: React.FC = () => {
   const hasActiveFilters = selectedSupplierId || selectedPaymentMethod || periodType !== 'all' || searchTerm;
 
   return (
-    <div className="space-y-4 pb-16">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Tab navigation */}
       <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700">
         <div className="flex">
@@ -694,7 +688,7 @@ const Payments: React.FC = () => {
             }`}
           onClick={() => setActiveTab('accounts')}
         >
-            <FiUser className="w-4 h-4 inline mr-2" />
+            <FiUsers className="w-4 h-4 inline mr-2" />
             Supplier Accounts
         </button>
         </div>
@@ -715,71 +709,52 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      {/* Summary Cards - Always visible */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <FiDollarSign className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Purchases</span>
-            </div>
-          <div className="text-xl font-bold text-gray-900 dark:text-white">{formatCurrency(paymentSummary?.totalPurchases || totalStats.totalPurchases)}</div>
-            </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
-              <FiTrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-              </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Total Paid</span>
-            </div>
-          <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(paymentSummary?.totalPaid || totalStats.totalPaid)}</div>
-          </div>
+      {/* Stats Header - Matching Sales Report Design */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+          <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
+          <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+            {formatCurrency(paymentSummary?.totalPurchases || 0)}
+          </span>
+        </div>
 
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30">
-              <FiTrendingDown className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Outstanding</span>
-          </div>
-          <div className="text-xl font-bold text-orange-600 dark:text-orange-400">{formatCurrency(paymentSummary?.totalRemaining || totalStats.totalRemaining)}</div>
+        <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+          <FiTrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Paid</span>
+          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+            {formatCurrency(paymentSummary?.totalPaid || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
-              <FiDollarSign className="w-4 h-4 text-green-600 dark:text-green-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Cash</span>
-          </div>
-          <div className="text-lg font-bold text-green-600 dark:text-green-400">{formatCurrency(paymentSummary?.cashPayments || 0)}</div>
+
+        <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+          <FiTrendingDown className="w-3.5 h-3.5 text-orange-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Outstanding</span>
+          <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+            {formatCurrency(paymentSummary?.totalRemaining || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-              <FiCreditCard className="w-4 h-4 text-blue-600 dark:text-blue-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Bank Transfer</span>
-          </div>
-          <div className="text-lg font-bold text-blue-600 dark:text-blue-400">{formatCurrency(paymentSummary?.bankTransferPayments || 0)}</div>
+
+        <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-900/20 px-2.5 py-1.5 rounded-md border border-green-200 dark:border-green-600/50 shadow-sm">
+          <FiDollarSign className="w-3.5 h-3.5 text-green-500" />
+          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Cash</span>
+          <span className="text-xs font-bold text-green-600 dark:text-green-400 ml-1">
+            {formatCurrency(paymentSummary?.cashPayments || 0)}
+          </span>
         </div>
-        
-        <div className="rounded-xl border border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 shadow-sm">
-          <div className="flex items-center gap-2 mb-2">
-            <div className="p-2 rounded-lg bg-amber-100 dark:bg-amber-900/30">
-              <FiFileText className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-            </div>
-            <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Check/Online</span>
-          </div>
-          <div className="text-lg font-bold text-amber-600 dark:text-amber-400">{formatCurrency((paymentSummary?.checkPayments || 0) + (paymentSummary?.onlinePayments || 0))}</div>
-        </div>
+
+        <button
+          onClick={loadAllData}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
 
+
       {/* Date Selection - Prominent */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4 shadow-sm">
+      <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md p-3 mb-2 flex-shrink-0">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-2">
             <FiCalendar className="w-5 h-5 text-gray-500 dark:text-gray-400" />
@@ -1204,34 +1179,34 @@ const Payments: React.FC = () => {
             ) : (
               /* Timeline View - Grouped by Date */
               <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                {recordsByDate.map(([dateKey, { records, total }]) => (
+                {recordsByDate.map(([dateKey, group]) => (
                   <div key={dateKey} className="p-6 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
                     {/* Date Header */}
                     <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
-                          {new Date(dateKey).getDate()}
+                          {group.date.getDate()}
                         </div>
                         <div>
                           <div className="font-semibold text-gray-900 dark:text-white text-lg">
                             {dateKey}
                           </div>
                           <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {records.length} payment{records.length !== 1 ? 's' : ''}
+                            {group.records.length} payment{group.records.length !== 1 ? 's' : ''}
                           </div>
                         </div>
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Daily Total</div>
                         <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(total)}
+                          {formatCurrency(group.totalAmount)}
                         </div>
                       </div>
                     </div>
 
                     {/* Records for this date */}
                     <div className="space-y-3">
-                      {records.map((record) => {
+                      {group.records.map((record: PaymentRecord) => {
                         const methodColor = getPaymentMethodColor(record.paymentMethod);
                         return (
                           <div
@@ -1384,7 +1359,7 @@ const Payments: React.FC = () => {
             </div>
           ) : filteredSupplierAccounts.length === 0 ? (
             <div className="p-12 text-center bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
-              <FiUser className="w-16 h-16 mx-auto text-gray-300 mb-4" />
+              <FiUsers className="w-16 h-16 mx-auto text-gray-300 mb-4" />
               <p className="text-gray-500 dark:text-gray-400 font-medium">No supplier accounts found</p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
                 Supplier accounts will appear here after making purchases

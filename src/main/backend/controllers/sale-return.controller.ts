@@ -1,5 +1,6 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { SaleReturnService, SaleReturn } from '../services/sale-return.service';
+import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 
 export class SaleReturnController {
   private saleReturnService: SaleReturnService;
@@ -148,8 +149,8 @@ export class SaleReturnController {
                 quantity: item.pills,
                 unitPrice: item.unitPrice.toFixed(2),
                 subtotal: item.subtotal.toFixed(2),
-                discount: item.discountAmount.toFixed(2),
-                tax: item.taxAmount.toFixed(2),
+                discount: (item.discountAmount || 0).toFixed(2),
+                tax: (item.taxAmount || 0).toFixed(2),
                 total: item.total.toFixed(2),
                 reason: item.reason || sr.reason || ''
               };
@@ -190,6 +191,8 @@ export class SaleReturnController {
           : await this.saleReturnService.getAllSaleReturns();
 
         const total = saleReturns.reduce((sum, sr) => sum + sr.total, 0);
+
+        const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
 
         const html = `
           <html>
@@ -267,11 +270,11 @@ export class SaleReturnController {
                         <td>${sr.customerName || ''}</td>
                         <td>${item.medicineName}</td>
                         <td class="text-center">${item.pills}</td>
-                        <td class="text-right">${item.unitPrice.toFixed(2)}</td>
-                        <td class="text-right">${item.subtotal.toFixed(2)}</td>
-                        <td class="text-right">${item.discountAmount.toFixed(2)}</td>
-                        <td class="text-right">${item.taxAmount.toFixed(2)}</td>
-                        <td class="text-right" style="font-weight: bold;">${item.total.toFixed(2)}</td>
+                        <td class="text-right">${currencySymbol}${item.unitPrice.toFixed(2)}</td>
+                        <td class="text-right">${currencySymbol}${item.subtotal.toFixed(2)}</td>
+                        <td class="text-right">${currencySymbol}${(item.discountAmount || 0).toFixed(2)}</td>
+                        <td class="text-right">${currencySymbol}${(item.taxAmount || 0).toFixed(2)}</td>
+                        <td class="text-right" style="font-weight: bold;">${currencySymbol}${item.total.toFixed(2)}</td>
                         <td>${item.reason || sr.reason || ''}</td>
                       </tr>`
                     )
@@ -281,7 +284,7 @@ export class SaleReturnController {
               <tfoot>
                 <tr>
                   <td colspan="10" class="text-right">Total</td>
-                  <td class="text-right">${total.toFixed(2)}</td>
+                  <td class="text-right">${currencySymbol}${total.toFixed(2)}</td>
                   <td></td>
                 </tr>
               </tfoot>

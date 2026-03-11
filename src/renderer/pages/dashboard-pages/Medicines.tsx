@@ -12,17 +12,12 @@ import {
   FiAlertCircle,
   FiCheckCircle,
   FiClock,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 
-const currencySymbols: Record<string, string> = {
-  USD: '$',
-  EUR: '€',
-  GBP: '£',
-  PKR: '₨',
-  INR: '₹',
-};
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -101,6 +96,7 @@ export default function MedicinesPage() {
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [editingMedicineId, setEditingMedicineId] = useState<number | null>(null);
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -110,10 +106,7 @@ export default function MedicinesPage() {
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
 
   // Get currency symbol
-  const getCurrencySymbol = () => {
-    const currency = pharmacySettings.currency || 'USD';
-    return currencySymbols[currency] || currency;
-  };
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
   const loadMedicines = useCallback(() => {
     if (!window?.electron) {
       setLoadError('Electron bridge unavailable. Please restart the app.');
@@ -308,14 +301,22 @@ export default function MedicinesPage() {
       status: medicine.status,
     });
     setEditingMedicineId(medicine.id);
+    setEditingMedicine(medicine);
   }, []);
 
   const resetForm = useCallback(() => {
     setNewMedicine(emptyMedicineForm);
     setEditingMedicineId(null);
+    setEditingMedicine(null);
     setFormError(null);
     setFormSuccess(null);
   }, []);
+
+  // Check if editing medicine has been used in transactions
+  const isEditingMedicineUsed = useMemo(() => {
+    if (!editingMedicine) return false;
+    return editingMedicine.totalAvailablePills > 0 || editingMedicine.sellablePills > 0;
+  }, [editingMedicine]);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
     try {
@@ -357,7 +358,7 @@ export default function MedicinesPage() {
   }, [setHeader, headerActions]);
 
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       {/* Confirm Dialog */}
       <ConfirmDialog
         isOpen={deleteConfirm !== null}
@@ -391,67 +392,75 @@ export default function MedicinesPage() {
         </div>
       )}
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3 flex-shrink-0">
-        <div className="bg-gradient-to-br from-white to-emerald-50/50 dark:from-gray-800 dark:to-emerald-900/20 rounded-lg shadow-sm border border-emerald-100/50 dark:border-emerald-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 shadow-md">
-              <FiPackage className="w-4 h-4 text-white" />
-            </div>
-            <FiTrendingUp className="w-4 h-4 text-emerald-400 dark:text-emerald-500" />
+      {/* Stats Header - Matching Sales Report Design */}
+      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
+        {/* Total Products */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiPackage className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Total Products
+            </span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {stats.totalProducts}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.totalProducts}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Total Products</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-green-50/50 dark:from-gray-800 dark:to-green-900/20 rounded-lg shadow-sm border border-green-100/50 dark:border-green-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-green-500 to-green-600 shadow-md">
-              <FiCheckCircle className="w-4 h-4 text-white" />
-            </div>
-            <FiCheckCircle className="w-4 h-4 text-green-400 dark:text-green-500" />
+        {/* Active */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiCheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Active
+            </span>
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+              {stats.active}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.active}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Active</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-yellow-50/50 dark:from-gray-800 dark:to-yellow-900/20 rounded-lg shadow-sm border border-yellow-100/50 dark:border-yellow-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-yellow-500 to-yellow-600 shadow-md">
-              <FiAlertCircle className="w-4 h-4 text-white" />
-            </div>
-            <FiAlertCircle className="w-4 h-4 text-yellow-400 dark:text-yellow-500" />
+        {/* Expiring Soon */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiAlertCircle className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Expiring Soon
+            </span>
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+              {stats.expiringSoon}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.inactive}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Inactive</p>
         </div>
 
-        <div className="bg-gradient-to-br from-white to-red-50/50 dark:from-gray-800 dark:to-red-900/20 rounded-lg shadow-sm border border-red-100/50 dark:border-red-800/30 p-3">
-          <div className="flex items-center justify-between mb-2">
-            <div className="p-2 rounded-lg bg-gradient-to-br from-red-500 to-red-600 shadow-md">
-              <FiX className="w-4 h-4 text-white" />
-            </div>
-            <FiX className="w-4 h-4 text-red-400 dark:text-red-500" />
+        {/* Discontinued */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-md border border-red-200 dark:border-red-600/50 shadow-sm">
+            <FiX className="w-3.5 h-3.5 text-red-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              Discontinued
+            </span>
+            <span className="text-xs font-bold text-red-600 dark:text-red-400 ml-1">
+              {stats.discontinued}
+            </span>
           </div>
-          <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-0.5">
-            {stats.discontinued}
-          </h3>
-          <p className="text-xs text-gray-600 dark:text-gray-400">Discontinued</p>
         </div>
+
+        <button
+          onClick={loadMedicines}
+          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        >
+          <FiRefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+          Refresh
+        </button>
       </div>
       {/* Main Content: Split Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
         {/* Left Side: Medicine Form */}
-        <div className="lg:col-span-1 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+        <div className="lg:col-span-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Form Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-2 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
@@ -480,6 +489,17 @@ export default function MedicinesPage() {
 
             {/* Form Content */}
             <form onSubmit={handleAddMedicine} className="flex-1 overflow-y-auto p-4 space-y-4">
+              {/* Warning for editing used medicine */}
+              {isEditingMedicineUsed && (
+                <div className="p-3 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded border border-orange-200 dark:border-orange-800 flex items-start gap-2">
+                  <FiAlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold mb-1">Limited Editing</div>
+                    <div>This medicine has been used in transactions. You can only change its status. Name, barcode, and pills/packet are read-only to preserve data integrity.</div>
+                  </div>
+                </div>
+              )}
+              
               {/* Success & Error */}
               {formError && (
                 <div className="p-3 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm rounded border border-red-200 dark:border-red-800">
@@ -498,13 +518,21 @@ export default function MedicinesPage() {
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
                   Medicine Name <span className="text-red-500">*</span>
+                  {isEditingMedicineUsed && (
+                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
+                  )}
                 </label>
                 <input
                   id="medicine-name"
                   type="text"
                   value={newMedicine.name}
                   onChange={(e) => handleNewMedicineChange('name', e.target.value)}
-                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  disabled={isEditingMedicineUsed}
+                  className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                    isEditingMedicineUsed
+                      ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                  }`}
                   required
                   placeholder="Enter medicine name"
                 />
@@ -517,13 +545,21 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Barcode <span className="text-red-500">*</span>
+                    {isEditingMedicineUsed && (
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                    )}
                   </label>
                   <input
                     id="medicine-barcode"
                     type="text"
                     value={newMedicine.barcode}
                     onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    disabled={isEditingMedicineUsed}
+                    className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                      isEditingMedicineUsed
+                        ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                    }`}
                     placeholder="Scan or enter"
                     required
                   />
@@ -534,13 +570,21 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Pills/Packet <span className="text-red-500">*</span>
+                    {isEditingMedicineUsed && (
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                    )}
                   </label>
                   <input
                     id="medicine-pill-quantity"
                     type="number"
                     value={newMedicine.pillQuantity}
                     onChange={(e) => handleNewMedicineChange('pillQuantity', e.target.value)}
-                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    disabled={isEditingMedicineUsed}
+                    className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
+                      isEditingMedicineUsed
+                        ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                    }`}
                     placeholder="e.g. 10"
                     required
                   />
@@ -595,10 +639,10 @@ export default function MedicinesPage() {
         </div>
 
         {/* Right Side: Medicines List */}
-        <div className="lg:col-span-2 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
+        <div className="lg:col-span-2 flex flex-col overflow-visible md:overflow-hidden min-h-0">
+          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Search Header */}
-            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30 flex-shrink-0">
+            <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
               <div className="flex items-center gap-2">
                 <label
                   htmlFor="medicine-search"
@@ -760,10 +804,24 @@ export default function MedicinesPage() {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
+                            // Check if medicine has any stock (has been purchased)
+                            if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
+                              alert('Cannot edit medicine with existing stock. This medicine has been used in transactions. You can only change its status (active/inactive).');
+                              return;
+                            }
                             handleEdit(medicine);
                           }}
-                          className="p-1.5 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded transition-colors"
-                          title="Edit"
+                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
+                          className={`p-1.5 rounded transition-colors ${
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                              : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                          }`}
+                          title={
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'Cannot edit: Medicine has been used in transactions (you can only change status)'
+                              : 'Edit'
+                          }
                         >
                           <FiEdit2 className="w-3.5 h-3.5" />
                         </button>
@@ -772,11 +830,25 @@ export default function MedicinesPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (medicine.id) {
+                              // Check if medicine has any stock (has been purchased)
+                              if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
+                                alert('Cannot delete medicine with existing stock. This medicine has been used in transactions. You can mark it as inactive instead.');
+                                return;
+                              }
                               setDeleteConfirm({ id: medicine.id, name: medicine.name });
                             }
                           }}
-                          className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-                          title="Delete"
+                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
+                          className={`p-1.5 rounded transition-colors ${
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+                              : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'
+                          }`}
+                          title={
+                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                              ? 'Cannot delete: Medicine has been used in transactions'
+                              : 'Delete'
+                          }
                         >
                           <FiTrash2 className="w-3.5 h-3.5" />
                         </button>

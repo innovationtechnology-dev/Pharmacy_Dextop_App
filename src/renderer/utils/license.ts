@@ -32,7 +32,7 @@ export interface ActivateLicenseResponse {
  */
 export const activateLicense = async (userId: number, activationCode: string): Promise<ActivateLicenseResponse> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('license-activate-reply', (response: ActivateLicenseResponse) => {
+    window.electron.ipcRenderer.once('license-activate-reply', (response: any) => {
       resolve(response);
     });
 
@@ -45,7 +45,7 @@ export const activateLicense = async (userId: number, activationCode: string): P
  */
 export const getLicenseStatus = async (userId: number): Promise<LicenseStatus> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('license-get-status-reply', (status: LicenseStatus) => {
+    window.electron.ipcRenderer.once('license-get-status-reply', (status: any) => {
       resolve(status);
     });
 
@@ -58,7 +58,7 @@ export const getLicenseStatus = async (userId: number): Promise<LicenseStatus> =
  */
 export const getLicense = async (userId: number): Promise<License | null> => {
   return new Promise((resolve) => {
-    window.electron.ipcRenderer.once('license-get-reply', (license: License | null) => {
+    window.electron.ipcRenderer.once('license-get-reply', (license: any) => {
       resolve(license);
     });
 
