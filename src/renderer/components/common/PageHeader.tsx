@@ -30,8 +30,8 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
             title="Back to Main Menu"
           >
             <div className="relative">
-              <FiHome className="w-4 h-4 text-gray-600 dark:text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors" />
-              <FiChevronLeft className="w-3 h-3 text-emerald-600 dark:text-emerald-400 absolute -left-1 top-0 opacity-0 group-hover:opacity-100 group-hover:-translate-x-0.5 transition-all duration-200" />
+              {/* <FiHome className="w-4 h-4 text-gray-600 dark:text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors" /> */}
+              <FiChevronLeft className="w-4 h-4 text-gray-600 dark:text-gray-400 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors" />
             </div>
           </Link>
         )}
