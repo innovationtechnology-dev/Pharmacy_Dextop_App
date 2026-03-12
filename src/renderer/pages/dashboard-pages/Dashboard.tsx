@@ -65,6 +65,7 @@ type MedicineRecord = {
   pillQuantity: number;
   totalAvailablePills?: number;
   sellablePills?: number;
+  averageSellablePricePerPill?: number | null;
   status: string;
 };
 
@@ -76,17 +77,30 @@ const getDateKey = (date: Date) => date.toISOString().slice(0, 10);
 const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
   
+  // Calculate COGS using actual purchase costs from medicine inventory
   let costOfGoodsSold = 0;
+  const medicineMap = new Map(medicines.map(m => [m.id, m]));
+  
   sales.forEach((sale) => {
     sale.items?.forEach((item) => {
-      const estimatedCost = (item.unitPrice || 0) * 0.6;
-      costOfGoodsSold += estimatedCost * (item.pills || 0);
+      const medicine = medicineMap.get(item.medicineId);
+      
+      // Use average sellable price per pill as cost if available
+      // This represents the weighted average cost of inventory that can be sold
+      let actualCost = 0;
+      
+      if (medicine?.averageSellablePricePerPill && medicine.averageSellablePricePerPill > 0) {
+        // Use the average cost from purchase_items (this is the actual purchase cost)
+        actualCost = medicine.averageSellablePricePerPill;
+      } else {
+        // Fallback: Use 70% of selling price as conservative estimate
+        // This should rarely happen if purchases are properly recorded
+        actualCost = (item.unitPrice || 0) * 0.7;
+      }
+      
+      costOfGoodsSold += actualCost * (item.pills || 0);
     });
   });
-
-  if (costOfGoodsSold === 0 && revenue > 0) {
-    costOfGoodsSold = revenue * 0.7;
-  }
 
   const netRevenue = revenue - saleReturnsTotal;
   const profit = netRevenue - costOfGoodsSold;

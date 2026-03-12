@@ -191,6 +191,9 @@ export class SalesService {
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_items_medicine_id ON sale_items(medicine_id)
     `);
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)
+    `);
   }
 
   private async migrateLegacySales(): Promise<void> {
@@ -320,14 +323,25 @@ export class SalesService {
       ]);
       const saleId = (saleResult as any).lastID;
 
+      // Batch fetch all cost prices at once to avoid N+1 query problem
+      const medicineIds = computedItems.map(item => item.medicineId);
+      const uniqueMedicineIds = [...new Set(medicineIds)];
+      const placeholders = uniqueMedicineIds.map(() => '?').join(',');
+      
+      const costResults = await this.dbService.query(`
+        SELECT 
+          medicine_id,
+          AVG(price_per_pill) as avg_cost 
+        FROM purchase_items 
+        WHERE medicine_id IN (${placeholders})
+          AND available_pills > 0
+        GROUP BY medicine_id
+      `, uniqueMedicineIds);
+
+      const costMap = new Map(costResults.map((r: any) => [r.medicine_id, r.avg_cost || 0]));
+
       for (const item of computedItems) {
-        // Fetch cost price (average of available batches)
-        const costResult = await this.dbService.queryOne(`
-          SELECT AVG(price_per_pill) as avg_cost 
-          FROM purchase_items 
-          WHERE medicine_id = ? AND available_pills > 0
-        `, [item.medicineId]);
-        const costPrice = costResult?.avg_cost || 0;
+        const costPrice = costMap.get(item.medicineId) || 0;
         const costSubtotal = costPrice * item.pills;
 
         const insertItemSql = `

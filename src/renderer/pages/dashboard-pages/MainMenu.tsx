@@ -600,8 +600,8 @@ const MainMenu: React.FC = () => {
                 </p>
               </div>
               {currentUser && (
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-medium shadow-sm">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <div className="inline-flex items-center uppercase gap-2 px-3 py-1 rounded-md bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-xs font-medium shadow-sm">
+                  <span className="w-2 h-2 rounded-md bg-emerald-500" />
                   <span>{currentUser.name || 'User'}</span>
                   <span className="w-px h-3 bg-emerald-300/70 dark:bg-emerald-600/70" />
                   <span className="uppercase tracking-wide">{roleLabel}</span>

@@ -84,7 +84,9 @@ export const buildThermalReceiptHtml = (
     const returned = returnedQuantities.get(item.medicine.id) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
-    return sum + (itemSubtotal * item.tax) / 100;
+    const itemDiscount = (itemSubtotal * item.discount) / 100;
+    const discountedAmount = itemSubtotal - itemDiscount;
+    return sum + (discountedAmount * item.tax) / 100;
   }, 0);
 
   const grandTotal = subtotal - discountTotal + taxTotal;

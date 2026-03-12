@@ -23,6 +23,7 @@ import {
   FiChevronRight,
   FiChevronDown,
   FiRotateCcw,
+  FiRefreshCw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
@@ -355,11 +356,15 @@ const SellingPanel: React.FC = () => {
 
           let nextValue = value;
           if (field === 'pills') {
-            nextValue = Math.max(1, parseInt(value, 10) || 1);
-            const available = item.medicine.sellablePills ?? Infinity;
-            if (nextValue > available) {
-              alert(`Only ${available} pills available for sale!`);
-              return item;
+            if (value === '') {
+              nextValue = 0;
+            } else {
+              nextValue = Math.max(0, parseInt(value, 10) || 0);
+              const available = item.medicine.sellablePills ?? Infinity;
+              if (nextValue > available) {
+                alert(`Only ${available} pills available for sale!`);
+                return item;
+              }
             }
           }
           if (
@@ -367,7 +372,7 @@ const SellingPanel: React.FC = () => {
             field === 'discount' ||
             field === 'tax'
           ) {
-            nextValue = Math.max(0, parseFloat(value) || 0);
+            nextValue = value === '' ? 0 : Math.max(0, parseFloat(value) || 0);
           }
 
           const updatedItem: CartItem = recalculateSaleItem({
@@ -825,22 +830,21 @@ const SellingPanel: React.FC = () => {
   };
 
   const setCartItemQuantity = (medicineId: number, quantity: number) => {
-    if (quantity <= 0) {
-      removeFromCart(medicineId);
-      return;
-    }
+    // Note: We don't remove from cart here anymore to allow user to clear the input (0)
+    // and type a new number. Removal is handled by the trash button.
+    const finalQuantity = isNaN(quantity) ? 0 : quantity;
 
     setCart((prevCart) => {
       return prevCart.map((item) => {
         if (item.medicine.id === medicineId) {
           const available = item.medicine.sellablePills ?? Infinity;
-          if (quantity > available) {
+          if (finalQuantity > available) {
             alert(`Only ${available} pills available in stock!`);
             return item;
           }
           const updatedItem = recalculateSaleItem({
             ...item,
-            pills: quantity,
+            pills: finalQuantity,
           });
           return updatedItem;
         }
@@ -1036,7 +1040,9 @@ const SellingPanel: React.FC = () => {
     const returned = returnedQuantities.get(item.medicine.id) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
-    return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
+    const itemDiscount = (itemSubtotal * item.discount) / 100;
+    const discountedAmount = itemSubtotal - itemDiscount;
+    return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
   }, 0);
 
   const grandTotal = subtotalValue - discountValue + taxValue;
@@ -1861,12 +1867,27 @@ const SellingPanel: React.FC = () => {
                   />
                 </div>
 
+                <div className="flex-1"></div>
+
+                {/* NEW SALE BTN */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearFormForNewBill();
+                    setCurrentBillIndex(-1);
+                    setSelectedSaleId(null);
+                  }}
+                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-md flex items-center gap-2"
+                >
+                  NEW SALE
+                </button>
+
                 {/* HISTORY BTN */}
                 <Link
                   to="/sales"
-                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-e-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
+                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-all shadow-sm border border-gray-200 dark:border-gray-600"
                 >
-                  History
+                  HISTORY
                 </Link>
               </div>
             </div>
@@ -2125,14 +2146,19 @@ const SellingPanel: React.FC = () => {
                                   ? item.medicine.sellablePills + item.pills
                                   : undefined
                               }
-                              value={item.pills}
+                              value={item.pills === 0 ? '' : item.pills}
                               readOnly={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
-                              onChange={(
-                                e: React.ChangeEvent<HTMLInputElement>
-                              ) => {
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                 if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
-                                let val = parseInt(e.target.value, 10);
-                                if (Number.isNaN(val) || val < 1) val = 1;
+                                const rawValue = e.target.value;
+                                if (rawValue === '') {
+                                  setCartItemQuantity(item.medicine.id, 0);
+                                  return;
+                                }
+                                let val = parseInt(rawValue, 10);
+                                if (Number.isNaN(val)) val = 1;
+                                if (val < 0) val = 0;
                                 const maxAvailable = typeof item.medicine.sellablePills === 'number'
                                   ? item.medicine.sellablePills + item.pills
                                   : Infinity;
@@ -2182,14 +2208,15 @@ const SellingPanel: React.FC = () => {
                             min={0}
                             max={100}
                             step={0.1}
-                            value={item.discount || 0}
+                            value={item.discount === 0 ? '' : (item.discount || 0)}
+                            onFocus={(e) => e.target.select()}
                             onChange={(
                               e: React.ChangeEvent<HTMLInputElement>
                             ) =>
                               updateCartItemField(
                                 item.medicine.id,
                                 'discount',
-                                parseFloat(e.target.value) || 0
+                                e.target.value === '' ? '' : e.target.value
                               )
                             }
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
@@ -2202,14 +2229,15 @@ const SellingPanel: React.FC = () => {
                             min={0}
                             max={100}
                             step={0.1}
-                            value={item.tax || 0}
+                            value={item.tax === 0 ? '' : (item.tax || 0)}
+                            onFocus={(e) => e.target.select()}
                             onChange={(
                               e: React.ChangeEvent<HTMLInputElement>
                             ) =>
                               updateCartItemField(
                                 item.medicine.id,
                                 'tax',
-                                parseFloat(e.target.value) || 0
+                                e.target.value === '' ? '' : e.target.value
                               )
                             }
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
@@ -2262,7 +2290,7 @@ const SellingPanel: React.FC = () => {
                   Sale Summary
                 </h3>
               </div>
-              <div className="flex-1 flex flex-col p-3 gap-3 min-h-0 overflow-y-auto">
+              <div className="flex-1 flex flex-col p-3 gap-2 min-h-0 overflow-y-auto">
                 {/* Net Payable - Most Prominent */}
                 <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-2 border border-emerald-600 dark:border-emerald-500 shadow-lg">
                   <div className="flex items-center justify-between mb-0">
@@ -2354,6 +2382,7 @@ const SellingPanel: React.FC = () => {
                       <input
                         type="number"
                         value={receivedAmount}
+                        onFocus={(e) => e.target.select()}
                         onChange={(e) => setReceivedAmount(e.target.value)}
                         placeholder="0.00"
                         className="w-full bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-700 rounded px-2 py-1 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
@@ -2457,7 +2486,7 @@ const SellingPanel: React.FC = () => {
                       <button
                         type="button"
                         onClick={handleOpenReturnModal}
-                        className="w-full py-3 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        className="w-full py-2.5 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
                       >
                         <FiRotateCcw className="w-4 h-4" />
                         <span>Return Items</span>
@@ -2477,25 +2506,38 @@ const SellingPanel: React.FC = () => {
                       </button>
                     </>
                   ) : (
-                    // When creating new sale - Show Complete Sale button
-                    <button
-                      type="button"
-                      onClick={handleCheckout}
-                      disabled={processing || cart.length === 0}
-                      className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                    >
-                      {processing ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          <span>Processing Sale...</span>
-                        </>
-                      ) : (
-                        <>
-                          <FiCheck className="w-5 h-5" />
-                          <span>Complete Sale</span>
-                        </>
-                      )}
-                    </button>
+                    // When creating new sale - Show Checkout Actions
+                    <div className="flex gap-2">
+                      
+
+                      <button
+                        type="button"
+                        onClick={clearCart}
+                        disabled={cart.length === 0}
+                        className="w-[30%] py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                      >
+                        < FiRefreshCw className="w-4 h-4" />
+                        <span>CLEAR</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCheckout}
+                        disabled={processing || cart.length === 0}
+                        className="w-[70%] py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                      >
+                        {processing ? (
+                          <>
+                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>PROCESSING...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FiCheck className="w-5 h-5" />
+                            <span>COMPLETE SALE</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

@@ -475,7 +475,7 @@ const Dashboard_Layout: React.FC = () => {
                       location.pathname.includes('/dashboard')
                       ? 'gap-2'
                       : ''
-                      }`}
+                      } mr-3 md:mr-5`}
                   >
                     {/* Current role badge */}
                     <div className="hidden xs:flex items-center px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium mr-1">
@@ -511,7 +511,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/dashboard')
                           ? 'p-2.5 rounded-lg'
                           : 'p-3 rounded-xl'
-                          } bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-700/50 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-lg hover:border-emerald-300 dark:hover:border-emerald-600 transition-all duration-200 group`}
+                          } bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all duration-200 group`}
                         onClick={() => setNotificationsOpen((prev) => !prev)}
                         aria-label="View alerts"
                       >
@@ -625,7 +625,7 @@ const Dashboard_Layout: React.FC = () => {
 
                           ? 'gap-1.5 p-1.5 rounded-lg'
                           : 'gap-3 p-2 rounded-xl'
-                          } bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-700/50 border border-gray-200 dark:border-gray-700 hover:shadow-lg hover:border-emerald-300 dark:hover:border-emerald-600 transition-all duration-200 group`}
+                          } bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all duration-200 group`}
                       >
                         <div className="relative">
                           <img
