@@ -64,6 +64,8 @@ interface MenuBarItem {
   }[];
 }
 
+import WelcomeNotification from '../../components/WelcomeNotification';
+
 const MainMenu: React.FC = () => {
   const navigate = useNavigate();
   const { theme } = useTheme();
@@ -72,7 +74,21 @@ const MainMenu: React.FC = () => {
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
   const menuBarRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const shouldShow = sessionStorage.getItem('shouldShowWelcome');
+    if (shouldShow === 'true') {
+      const timer = setTimeout(() => setShowWelcomeNotification(true), 500);
+      return () => clearTimeout(timer);
+    }
+  }, []);
+
+  const handleCloseWelcomeNotification = () => {
+    setShowWelcomeNotification(false);
+    sessionStorage.removeItem('shouldShowWelcome');
+  };
 
   useEffect(() => {
     const updateDateTime = () => {
@@ -375,6 +391,9 @@ const MainMenu: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50 dark:bg-gray-900 overflow-hidden">
+      {showWelcomeNotification && (
+        <WelcomeNotification onClose={handleCloseWelcomeNotification} />
+      )}
       {/* Menu Bar */}
       <div 
         ref={menuBarRef}

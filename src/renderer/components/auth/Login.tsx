@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
-import { login } from '../../utils/auth';
+import { login, changePassword, setPasswordChangeRequired } from '../../utils/auth';
 import { superAdminLogin } from '../../utils/super-admin';
 import pharmacist_1 from '../../public/images/pharmacist-1.jpg';
 
@@ -23,6 +23,19 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+
+  // Password change modal state
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [passwordChangeData, setPasswordChangeData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [loggedInUserId, setLoggedInUserId] = useState<number | null>(null);
+  const [showModalNewPassword, setShowModalNewPassword] = useState(false);
+  const [showModalConfirmPassword, setShowModalConfirmPassword] = useState(false);
 
   useEffect(() => {
     const savedEmail = localStorage.getItem('rememberedEmail');
@@ -47,6 +60,45 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const handlePasswordChange = async () => {
+    setPasswordChangeError('');
+
+    if (!passwordChangeData.newPassword || !passwordChangeData.confirmPassword) {
+      setPasswordChangeError('Please fill in all fields.');
+      return;
+    }
+    if (passwordChangeData.newPassword.length < 6) {
+      setPasswordChangeError('New password must be at least 6 characters.');
+      return;
+    }
+    if (passwordChangeData.newPassword !== passwordChangeData.confirmPassword) {
+      setPasswordChangeError('Passwords do not match.');
+      return;
+    }
+
+    if (!loggedInUserId) return;
+
+    setPasswordChangeLoading(true);
+    try {
+      const result = await changePassword(
+        loggedInUserId,
+        passwordChangeData.currentPassword,
+        passwordChangeData.newPassword
+      );
+      if (result.success) {
+        setShowPasswordChangeModal(false);
+        sessionStorage.setItem('shouldShowWelcome', 'true');
+        navigate('/main-menu');
+      } else {
+        setPasswordChangeError(result.error || 'Failed to change password.');
+      }
+    } catch {
+      setPasswordChangeError('An error occurred. Please try again.');
+    } finally {
+      setPasswordChangeLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,6 +151,18 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           localStorage.removeItem('rememberedEmail');
         }
 
+        // Check if password change is required
+        if (result.passwordChangeRequired) {
+          setLoggedInUserId(result.user?.id ?? null);
+          setPasswordChangeData({
+            currentPassword: formData.password,
+            newPassword: '',
+            confirmPassword: '',
+          });
+          setShowPasswordChangeModal(true);
+          return;
+        }
+
         // Show welcome notification on next page
         sessionStorage.setItem('shouldShowWelcome', 'true');
 
@@ -135,6 +199,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   };
 
     return (
+    <>
     <div className={`h-screen flex items-center justify-center p-2 overflow-hidden transition-colors duration-300 ${
       theme === 'dark' ? 'bg-gray-950' : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
     }`}>
@@ -500,6 +565,154 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         </div>
       </div>
     </div>
+      {/* Password Change Required Modal */}
+      {showPasswordChangeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className={`w-full max-w-md mx-4 p-8 rounded-2xl shadow-2xl border ${
+            theme === 'dark'
+              ? 'bg-gray-900 border-gray-700'
+              : 'bg-white border-gray-200'
+          }`}>
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl mb-4 shadow-lg">
+                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                Password Change Required
+              </h3>
+              <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
+                Your administrator requires you to change your password before continuing.
+              </p>
+            </div>
+
+            {passwordChangeError && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">
+                {passwordChangeError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-sm font-semibold mb-1.5 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                  New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showModalNewPassword ? 'text' : 'password'}
+                    value={passwordChangeData.newPassword}
+                    onChange={(e) => setPasswordChangeData(prev => ({ ...prev, newPassword: e.target.value }))}
+                    placeholder="Enter new password"
+                    className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-sm outline-none transition-all ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowModalNewPassword(!showModalNewPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded p-1"
+                    aria-label={showModalNewPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showModalNewPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className={`block text-sm font-semibold mb-1.5 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showModalConfirmPassword ? 'text' : 'password'}
+                    value={passwordChangeData.confirmPassword}
+                    onChange={(e) => setPasswordChangeData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                    placeholder="Re-enter new password"
+                    className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-sm outline-none transition-all ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowModalConfirmPassword(!showModalConfirmPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded p-1"
+                    aria-label={showModalConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showModalConfirmPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePasswordChange}
+              disabled={passwordChangeLoading}
+              className="w-full mt-6 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3 rounded-xl font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {passwordChangeLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Changing Password...
+                </>
+              ) : (
+                'Change Password & Continue'
+              )}
+            </button>
+            <button
+              onClick={async () => {
+                if (loggedInUserId) {
+                  setPasswordChangeLoading(true);
+                  try {
+                    await setPasswordChangeRequired(loggedInUserId, false);
+                  } catch (error) {
+                    console.error('Failed to clear password change required flag:', error);
+                  } finally {
+                    setPasswordChangeLoading(false);
+                  }
+                }
+                setShowPasswordChangeModal(false);
+                setPasswordChangeData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+                setPasswordChangeError('');
+                setLoggedInUserId(null);
+                sessionStorage.removeItem('passwordChangeRequired');
+                localStorage.removeItem('auth_user');
+                localStorage.removeItem('auth_token');
+              }}
+              disabled={passwordChangeLoading}
+              className={`w-full mt-3 py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                theme === 'dark'
+                  ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white border border-gray-700'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 hover:text-gray-900 border border-gray-200'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Cancel & Log Out
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

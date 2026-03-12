@@ -114,9 +114,14 @@ const PurchasingPanel: React.FC = () => {
   const [checkNumber, setCheckNumber] = useState('');
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
-  const [paymentDate, setPaymentDate] = useState<string>(() => {
-    return new Date().toISOString().split('T')[0];
-  });
+  const today = useMemo(() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
+  const [paymentDate, setPaymentDate] = useState<string>(today);
   const [paymentNotes, setPaymentNotes] = useState('');
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
@@ -1352,6 +1357,7 @@ const PurchasingPanel: React.FC = () => {
                     <input
                       type="date"
                       value={paymentDate}
+                      max={today}
                       onChange={(e) => setPaymentDate(e.target.value)}
                       className="w-full px-1.5 py-1 text-[10px] border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none bg-white dark:bg-gray-700/50 dark:text-white"
                     />

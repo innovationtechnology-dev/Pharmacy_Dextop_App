@@ -208,6 +208,7 @@
       "node_modules",
       "package.json"
     ],
+    "npmRebuild": false,
     "afterSign": ".erb/scripts/notarize.js",
     "mac": {
       "target": {

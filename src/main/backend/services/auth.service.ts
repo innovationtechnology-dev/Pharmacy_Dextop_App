@@ -14,6 +14,7 @@ export interface LoginResult {
   success: boolean;
   token?: string;
   user?: { id: number; name: string; email: string; role: string; phone?: string; address?: string; profilePicture?: string };
+  passwordChangeRequired?: boolean;
   error?: string;
 }
 
@@ -72,19 +73,26 @@ export class AuthService {
    * Add phone, address, profile_photo columns to users if they do not exist
    */
   private async ensureProfileColumns(): Promise<void> {
-    const columns = [
+    const tableInfo = await this.dbService.query('PRAGMA table_info(users)');
+    const existingColumns = tableInfo.map((col: any) => col.name);
+
+    const columnsToAdd = [
       { name: 'phone', sql: 'ALTER TABLE users ADD COLUMN phone TEXT' },
       { name: 'address', sql: 'ALTER TABLE users ADD COLUMN address TEXT' },
       { name: 'profile_photo', sql: 'ALTER TABLE users ADD COLUMN profile_photo TEXT' },
+      { name: 'password_change_required', sql: 'ALTER TABLE users ADD COLUMN password_change_required INTEGER DEFAULT 0' },
     ];
-    for (const col of columns) {
-      try {
-        await this.dbService.execute(col.sql);
-      } catch (err: any) {
-        if (err?.message?.includes('duplicate column name')) {
-          // Column already exists, ignore
-        } else {
-          throw err;
+
+    for (const col of columnsToAdd) {
+      if (!existingColumns.includes(col.name)) {
+        try {
+          await this.dbService.execute(col.sql);
+        } catch (err: any) {
+          if (err?.message?.includes('duplicate column name')) {
+            // Still ignore just in case of race conditions
+          } else {
+            throw err;
+          }
         }
       }
     }
@@ -176,6 +184,7 @@ export class AuthService {
       // Generate token
       const token = this.generateToken(user.id, user.email);
       const u = user as any;
+      const passwordChangeRequired = !!(u.password_change_required);
       return {
         success: true,
         token,
@@ -188,6 +197,7 @@ export class AuthService {
           address: u.address ?? undefined,
           profilePicture: u.profile_photo ?? undefined,
         },
+        passwordChangeRequired,
       };
     } catch (error) {
       console.error('Login error:', error);
@@ -219,12 +229,13 @@ export class AuthService {
   public async getUserById(userId: number): Promise<User | null> {
     try {
       const user = await this.dbService.queryOne(
-        `SELECT id, name, email, role, created_at, phone, address, profile_photo FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, role, created_at, phone, address, profile_photo, password_change_required FROM users WHERE id = ${userId}`
       ) as any;
       if (!user) return null;
       return {
         ...user,
         profilePicture: user.profile_photo,
+        passwordChangeRequired: !!(user.password_change_required),
       };
     } catch (error) {
       console.error('Get user error:', error);
@@ -275,6 +286,52 @@ export class AuthService {
     } catch (error) {
       console.error('Update profile error:', error);
       return { success: false, error: 'Failed to update profile' };
+    }
+  }
+
+  /**
+   * Set password_change_required flag for a user
+   */
+  public async setPasswordChangeRequired(userId: number, required: boolean): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.dbService.execute(
+        `UPDATE users SET password_change_required = ${required ? 1 : 0} WHERE id = ${userId}`
+      );
+      return { success: true };
+    } catch (error) {
+      console.error('Set password change required error:', error);
+      return { success: false, error: 'Failed to update setting' };
+    }
+  }
+
+  /**
+   * Change user password and clear the password_change_required flag
+   */
+  public async changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const user = await this.dbService.queryOne(
+        `SELECT password_hash FROM users WHERE id = ${userId}`
+      ) as any;
+      if (!user) {
+        return { success: false, error: 'User not found' };
+      }
+
+      // Verify current password
+      const currentHash = this.hashPassword(currentPassword);
+      if (user.password_hash !== currentHash) {
+        return { success: false, error: 'Current password is incorrect' };
+      }
+
+      // Hash and set new password, clear the flag
+      const newHash = this.hashPassword(newPassword);
+      await this.dbService.execute(
+        `UPDATE users SET password_hash = '${newHash}', password_change_required = 0 WHERE id = ${userId}`
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('Change password error:', error);
+      return { success: false, error: 'Failed to change password' };
     }
   }
 }

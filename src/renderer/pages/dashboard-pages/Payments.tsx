@@ -159,7 +159,14 @@ const Payments: React.FC = () => {
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
-  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
+  const today = useMemo(() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
+  const [paymentDate, setPaymentDate] = useState(today);
   const [processing, setProcessing] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
@@ -827,11 +834,8 @@ const Payments: React.FC = () => {
                 if (!showDatePicker) {
                   setPeriodType('custom');
                   if (!customFromDate || !customToDate) {
-                    const today = new Date();
-                    const lastMonth = new Date();
-                    lastMonth.setMonth(lastMonth.getMonth() - 1);
-                    setCustomFromDate(lastMonth.toISOString().split('T')[0]);
-                    setCustomToDate(today.toISOString().split('T')[0]);
+                    setCustomFromDate(today);
+                    setCustomToDate(today);
                   }
                 }
               }}
@@ -870,6 +874,7 @@ const Payments: React.FC = () => {
               <input
                 type="date"
                 value={customFromDate}
+                max={today}
                 onChange={(e) => setCustomFromDate(e.target.value)}
                 className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
               />
@@ -879,6 +884,7 @@ const Payments: React.FC = () => {
               <input
                 type="date"
                 value={customToDate}
+                max={today}
                 onChange={(e) => setCustomToDate(e.target.value)}
                 className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
               />
@@ -943,7 +949,7 @@ const Payments: React.FC = () => {
       {activeTab === 'payments' && (
         <>
           {/* Status Filter Tabs */}
-          <div className="flex gap-2">
+          <div className="flex gap-2 m-2">
             <button
               onClick={() => setPurchaseFilter('all')}
               className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
@@ -952,7 +958,7 @@ const Payments: React.FC = () => {
                   : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
               }`}
             >
-              All ({purchases.length})
+              All {purchases.length}
             </button>
             <button
               onClick={() => setPurchaseFilter('pending')}
@@ -962,7 +968,7 @@ const Payments: React.FC = () => {
                   : 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50'
               }`}
             >
-              Pending ({totalStats.pendingCount})
+              Pending {totalStats.pendingCount}
             </button>
             <button
               onClick={() => setPurchaseFilter('paid')}
@@ -972,7 +978,7 @@ const Payments: React.FC = () => {
                   : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
               }`}
             >
-              Fully Paid ({totalStats.paidCount})
+              Fully Paid {totalStats.paidCount}
             </button>
           </div>
 
@@ -1520,6 +1526,7 @@ const Payments: React.FC = () => {
                 <input
                   type="date"
                   value={paymentDate}
+                  max={today}
                   onChange={(e) => setPaymentDate(e.target.value)}
                   className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
                 />
@@ -1872,6 +1879,7 @@ const Payments: React.FC = () => {
                     <input
                       type="date"
                       value={exportFromDate}
+                      max={today}
                       onChange={(e) => setExportFromDate(e.target.value)}
                       className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
                     />
@@ -1881,6 +1889,7 @@ const Payments: React.FC = () => {
                     <input
                       type="date"
                       value={exportToDate}
+                      max={today}
                       onChange={(e) => setExportToDate(e.target.value)}
                       className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
                     />

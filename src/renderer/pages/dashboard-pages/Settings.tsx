@@ -12,8 +12,9 @@ import {
     FiBriefcase,
     FiDollarSign,
     FiHome,
+    FiCheckCircle,
 } from 'react-icons/fi';
-import { getAuthUser, updateProfile } from '../../utils/auth';
+import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -93,6 +94,17 @@ const Settings: React.FC = () => {
                     address: authUser.address || '',
                     profilePicture: authUser.profilePicture || undefined,
                 });
+
+                // Fetch full user data to get security settings
+                window.electron.ipcRenderer.sendMessage('auth-get-user', [authUser.id]);
+                window.electron.ipcRenderer.once('auth-get-user-reply', (fullUser: any) => {
+                    if (fullUser) {
+                        setSecurity(prev => ({
+                            ...prev,
+                            passwordChangeRequired: fullUser.passwordChangeRequired || false
+                        }));
+                    }
+                });
             }
         };
         fetchUser();
@@ -145,6 +157,13 @@ const Settings: React.FC = () => {
                 } else {
                     alert(result.error || 'Failed to update profile.');
                 }
+            } else if (activeSection === 'security' && user?.id) {
+                const result = await setPasswordChangeRequired(user.id, security.passwordChangeRequired);
+                if (result.success) {
+                    alert('Security settings updated successfully!');
+                } else {
+                    alert(result.error || 'Failed to update security settings.');
+                }
             } else {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 alert('Settings updated successfully!');
@@ -154,7 +173,7 @@ const Settings: React.FC = () => {
         } finally {
             setSaving(false);
         }
-    }, [activeSection, pharmacySettings, profileData, user]);
+    }, [activeSection, pharmacySettings, profileData, user, security]);
 
     const handleProfilePictureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -174,7 +193,7 @@ const Settings: React.FC = () => {
     const settingsSections = [
         { id: 'profile' as SettingsSection, label: 'Profile', icon: FiUser },
         { id: 'pharmacy' as SettingsSection, label: 'Pharmacy', icon: FiHome },
-        { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
+        // { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
         { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
     ].filter(section => {
@@ -191,98 +210,118 @@ const Settings: React.FC = () => {
         switch (activeSection) {
             case 'profile':
                 return (
-                    <div className="space-y-8">
-                        {/* Profile Picture */}
-                        <div className="flex items-start gap-8 p-6 bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/30 dark:to-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
-                            <div className="relative">
-                                <div className="w-24 h-24 rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center text-white text-3xl font-semibold">
-                                    {profileData.firstName?.[0]?.toUpperCase() || 'U'}
-                                    {profileData.lastName?.[0]?.toUpperCase() || ''}
-                                </div>
-                                {profileData.profilePicture && (
-                                    <img
-                                        src={profileData.profilePicture}
-                                        alt="Profile"
-                                        className="w-24 h-24 rounded-lg object-cover absolute top-0 left-0"
-                                    />
-                                )}
-                            </div>
-                            <div className="flex-1">
-                                <label className="block mb-2">
-                                    <input
-                                        type="file"
-                                        accept="image/jpeg,image/jpg,image/gif,image/png"
-                                        onChange={handleProfilePictureChange}
-                                        className="hidden"
-                                        id="profile-picture-input"
-                                    />
-                                    <span className="inline-block px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition-colors">
-                                        Change Photo
-                                    </span>
-                                </label>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">JPG, GIF or PNG. Max 1MB</p>
-                            </div>
-                        </div>
-
-                        {/* Form Fields */}
-                        <div className="space-y-6">
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white border-b border-gray-200 dark:border-gray-700 pb-2">
-                                Personal Information
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">First Name</label>
-                                    <input
-                                        type="text"
-                                        value={profileData.firstName}
-                                        onChange={(e) => handleProfileChange('firstName', e.target.value)}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="Enter first name"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Last Name</label>
-                                    <input
-                                        type="text"
-                                        value={profileData.lastName}
-                                        onChange={(e) => handleProfileChange('lastName', e.target.value)}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="Enter last name"
-                                    />
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* Profile Identity Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-purple-500 to-purple-600">
+                                        <FiUser className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Account Identity
+                                    </h3>
                                 </div>
                             </div>
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="flex flex-col md:flex-row items-center gap-8 mb-8 pb-6 border-b border-gray-100 dark:border-gray-700">
+                                    <div className="relative group" title="Upload Profile Picture">
+                                        <div className="w-28 h-28 rounded-2xl bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-white text-4xl font-bold shadow-lg shadow-purple-200 dark:shadow-none overflow-hidden border-4 border-white dark:border-gray-700">
+                                            {profileData.profilePicture ? (
+                                                <img
+                                                    src={profileData.profilePicture}
+                                                    alt="Profile"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            ) : (
+                                                <span>
+                                                    {profileData.firstName?.[0]?.toUpperCase() || 'U'}
+                                                    {profileData.lastName?.[0]?.toUpperCase() || ''}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <label className="absolute -bottom-2 -right-2 bg-emerald-500 hover:bg-emerald-600 text-white p-2 rounded-lg shadow-lg cursor-pointer transition-all transform hover:scale-110">
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                onChange={handleProfilePictureChange}
+                                                className="hidden"
+                                            />
+                                            <FiPackage className="w-4 h-4"/>
+                                        </label>
+                                    </div>
+                                    <div className="text-center md:text-left">
+                                        <h4 className="text-lg font-bold text-gray-900 dark:text-white">
+                                            {profileData.firstName} {profileData.lastName}
+                                        </h4>
+                                        <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2 italic">Format: JPG, PNG • Max size: 1MB</p>
+                                    </div>
+                                </div>
 
-                            <div className="pt-4">
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email Address</label>
-                                <input
-                                    type="email"
-                                    value={profileData.email}
-                                    onChange={(e) => handleProfileChange('email', e.target.value)}
-                                    className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                    placeholder="Enter email address"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Phone Number</label>
-                                <input
-                                    type="tel"
-                                    value={profileData.phone}
-                                    onChange={(e) => handleProfileChange('phone', e.target.value)}
-                                    className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                    placeholder="Enter phone number"
-                                />
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Address</label>
-                                <textarea
-                                    value={profileData.address}
-                                    onChange={(e) => handleProfileChange('address', e.target.value)}
-                                    rows={3}
-                                    className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none resize-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                    placeholder="Enter your address"
-                                />
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            First Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={profileData.firstName}
+                                            onChange={(e) => handleProfileChange('firstName', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 outline-none transition-all"
+                                            placeholder="Enter first name"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Last Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={profileData.lastName}
+                                            onChange={(e) => handleProfileChange('lastName', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 outline-none transition-all"
+                                            placeholder="Enter last name"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Email Address
+                                        </label>
+                                        <input
+                                            type="email"
+                                            value={profileData.email}
+                                            onChange={(e) => handleProfileChange('email', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 outline-none transition-all"
+                                            placeholder="Enter email address"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Phone Number
+                                        </label>
+                                        <input
+                                            type="tel"
+                                            value={profileData.phone}
+                                            onChange={(e) => handleProfileChange('phone', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 outline-none transition-all"
+                                            placeholder="Enter phone number"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Home Address
+                                        </label>
+                                        <textarea
+                                            value={profileData.address}
+                                            onChange={(e) => handleProfileChange('address', e.target.value)}
+                                            rows={2}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-purple-500/30 focus:border-purple-500 outline-none transition-all resize-none"
+                                            placeholder="Enter your permanent address"
+                                        />
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -290,199 +329,178 @@ const Settings: React.FC = () => {
 
             case 'pharmacy':
                 return (
-                    <div className="space-y-8">
-                        <div className="p-6 bg-gradient-to-br from-blue-50 to-white dark:from-blue-900/20 dark:to-gray-800/50 rounded-xl border border-blue-200 dark:border-blue-800/50">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-blue-500 rounded-lg">
-                                    <FiBriefcase className="w-5 h-5 text-white" />
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* Pharmacy Info Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
+                                        <FiBriefcase className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Establishment Profile
+                                    </h3>
                                 </div>
-                                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Pharmacy Information</h3>
                             </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Pharmacy Name</label>
-                                    <input
-                                        type="text"
-                                        value={pharmacySettings.pharmacyName}
-                                        onChange={(e) => handlePharmacyChange('pharmacyName', e.target.value)}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="Enter pharmacy name"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">License Number</label>
-                                    <input
-                                        type="text"
-                                        value={pharmacySettings.licenseNumber}
-                                        onChange={(e) => handlePharmacyChange('licenseNumber', e.target.value)}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="Enter pharmacy license number"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Address</label>
-                                    <textarea
-                                        value={pharmacySettings.address}
-                                        onChange={(e) => handlePharmacyChange('address', e.target.value)}
-                                        rows={3}
-                                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none"
-                                        placeholder="Enter pharmacy address"
-                                    />
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Phone Number</label>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Pharmacy Name
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={pharmacySettings.pharmacyName}
+                                            onChange={(e) => handlePharmacyChange('pharmacyName', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none transition-all"
+                                            placeholder="Enter pharmacy name"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            License Number
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={pharmacySettings.licenseNumber}
+                                            onChange={(e) => handlePharmacyChange('licenseNumber', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none transition-all"
+                                            placeholder="REG-XXX-XXX"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Contact Phone
+                                        </label>
                                         <input
                                             type="tel"
                                             value={pharmacySettings.phone}
                                             onChange={(e) => handlePharmacyChange('phone', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="Enter phone number"
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none transition-all"
+                                            placeholder="Support line"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Email</label>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Official Email
+                                        </label>
                                         <input
                                             type="email"
                                             value={pharmacySettings.email}
                                             onChange={(e) => handlePharmacyChange('email', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="Enter email address"
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none transition-all"
+                                            placeholder="billing@pharmacy.com"
+                                        />
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Business Address
+                                        </label>
+                                        <textarea
+                                            value={pharmacySettings.address}
+                                            onChange={(e) => handlePharmacyChange('address', e.target.value)}
+                                            rows={2}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 outline-none transition-all resize-none"
+                                            placeholder="Store physical location"
                                         />
                                     </div>
                                 </div>
-                            </div>
-                        </div>
 
-                        <div className="p-6 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/20 dark:to-gray-800/50 rounded-xl border border-emerald-200 dark:border-emerald-800/50">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-emerald-500 rounded-lg">
-                                    <FiDollarSign className="w-5 h-5 text-white" />
-                                </div>
-                                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Business Settings</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tax Rate (%)</label>
-                                        <input
-                                            type="number"
-                                            value={pharmacySettings.taxRate}
-                                            onChange={(e) => handlePharmacyChange('taxRate', parseFloat(e.target.value) || 0)}
-                                            min={0}
-                                            max={100}
-                                            step="0.01"
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="0.00"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Currency</label>
+                                <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                                    <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        Operational Currency
+                                    </label>
+                                    <div className="relative">
+                                        <FiDollarSign className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-3.5 h-3.5" />
                                         <select
                                             value={pharmacySettings.currency}
                                             onChange={(e) => handlePharmacyChange('currency', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
+                                            className="w-full pl-9 pr-4 py-2 text-xs font-bold bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded outline-none appearance-none focus:ring-2 focus:ring-blue-500/30"
                                         >
-                                            <option value="USD">USD ($)</option>
-                                            <option value="EUR">EUR (€)</option>
-                                            <option value="GBP">GBP (£)</option>
-                                            <option value="PKR">PKR (Rs.)</option>
-                                            <option value="INR">INR (Rs.)</option>
+                                            <option value="PKR">PKR (Rs.) - Pakistani Rupee</option>
+                                            <option value="USD">USD ($) - US Dollar</option>
+                                            <option value="EUR">EUR (€) - Euro</option>
+                                            <option value="GBP">GBP (£) - British Pound</option>
+                                            <option value="INR">INR (Rs.) - Indian Rupee</option>
                                         </select>
                                     </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Low Stock Threshold</label>
-                                    <input
-                                        type="number"
-                                        value={pharmacySettings.lowStockThreshold}
-                                        onChange={(e) => handlePharmacyChange('lowStockThreshold', parseInt(e.target.value) || 0)}
-                                        min={1}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="10"
-                                    />
-                                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Get alerts when medicine stock falls below this number</p>
-                                </div>
-
-                                <div className="flex items-center justify-between p-5 bg-white dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all hover:border-emerald-300 dark:hover:border-emerald-700">
-                                    <div>
-                                        <h4 className="font-medium text-gray-900 dark:text-white">Expired Medicines Alert</h4>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">Get notified about medicines nearing expiration</p>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={pharmacySettings.expiredMedicinesAlert}
-                                            onChange={(e) => handlePharmacyChange('expiredMedicinesAlert', e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className={toggleSwitchClass}></div>
-                                    </label>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="p-6 bg-gradient-to-br from-purple-50 to-white dark:from-purple-900/20 dark:to-gray-800/50 rounded-xl border border-purple-200 dark:border-purple-800/50">
-                            <div className="flex items-center gap-3 mb-6">
-                                <div className="p-2 bg-purple-500 rounded-lg">
-                                    <FiPackage className="w-5 h-5 text-white" />
+                        {/* Branding Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                                        <FiPackage className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Branding & Invoice
+                                    </h3>
                                 </div>
-                                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Branding & Invoice</h3>
                             </div>
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mb-6">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tagline / Slogan</label>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Brand Tagline
+                                        </label>
                                         <input
                                             type="text"
                                             value={pharmacySettings.tagline}
                                             onChange={(e) => handlePharmacyChange('tagline', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="Caring for every prescription..."
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                                            placeholder="Slogan for header"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Website</label>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Website URL
+                                        </label>
                                         <input
                                             type="text"
                                             value={pharmacySettings.website}
                                             onChange={(e) => handlePharmacyChange('website', e.target.value)}
-                                            className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                            placeholder="https://yourpharmacy.com"
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                                            placeholder="https://..."
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            Tax / Registration ID
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={pharmacySettings.taxId}
+                                            onChange={(e) => handlePharmacyChange('taxId', e.target.value)}
+                                            className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                                            placeholder="GST / NTN / VAT number"
                                         />
                                     </div>
                                 </div>
 
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Tax / Registration ID</label>
-                                    <input
-                                        type="text"
-                                        value={pharmacySettings.taxId}
-                                        onChange={(e) => handlePharmacyChange('taxId', e.target.value)}
-                                        className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all hover:border-gray-400 dark:hover:border-gray-500"
-                                        placeholder="GST / NTN / VAT number"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Pharmacy logo (for receipt & invoices)</label>
-                                    <div className="flex flex-wrap items-center gap-4">
-                                        <div className="w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-700 flex items-center justify-center overflow-hidden border border-gray-300 dark:border-gray-600">
-                                            {pharmacySettings.logoUrl ? (
-                                                <img src={pharmacySettings.logoUrl} alt="Logo" className="w-full h-full object-contain" />
-                                            ) : (
-                                                <span className="text-gray-400 dark:text-gray-500 text-xs">No logo</span>
-                                            )}
-                                        </div>
-                                        <div className="flex flex-col gap-2">
-                                            <label className="inline-block">
+                                <div className="flex flex-col sm:flex-row items-center gap-6 p-4 bg-gray-50 dark:bg-gray-700/30 rounded-lg border border-gray-200 dark:border-gray-600 mb-6">
+                                    <div className="w-20 h-20 rounded-xl bg-white dark:bg-gray-800 flex items-center justify-center border-2 border-dashed border-gray-300 dark:border-gray-600 overflow-hidden shadow-inner flex-shrink-0">
+                                        {pharmacySettings.logoUrl ? (
+                                            <img src={pharmacySettings.logoUrl} alt="Branding" className="w-full h-full object-contain p-2" />
+                                        ) : (
+                                            <FiPackage className="w-8 h-8 text-gray-300" />
+                                        )}
+                                    </div>
+                                    <div className="flex-1 text-center sm:text-left">
+                                        <h5 className="text-xs font-bold text-gray-900 dark:text-white mb-1">Pharmacy Logo</h5>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mb-3">Visible on receipts and PDF exports</p>
+                                        <div className="flex flex-wrap justify-center sm:justify-start gap-3">
+                                            <label className="px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-[10px] font-bold text-gray-700 dark:text-gray-200 rounded hover:bg-emerald-50 cursor-pointer shadow-sm transition-all">
+                                                Upload Image
                                                 <input
                                                     type="file"
-                                                    accept="image/jpeg,image/jpg,image/png,image/gif"
+                                                    accept="image/*"
                                                     onChange={(e) => {
                                                         const file = e.target.files?.[0];
                                                         if (file) {
@@ -491,41 +509,36 @@ const Settings: React.FC = () => {
                                                                 return;
                                                             }
                                                             const reader = new FileReader();
-                                                            reader.onloadend = () => {
-                                                                handlePharmacyChange('logoUrl', reader.result as string);
-                                                            };
+                                                            reader.onloadend = () => handlePharmacyChange('logoUrl', reader.result as string);
                                                             reader.readAsDataURL(file);
                                                         }
-                                                        e.target.value = '';
                                                     }}
                                                     className="hidden"
                                                 />
-                                                <span className="inline-block px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-300 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 cursor-pointer transition-colors text-sm font-medium">
-                                                    Upload logo
-                                                </span>
                                             </label>
                                             {pharmacySettings.logoUrl && (
                                                 <button
-                                                    type="button"
                                                     onClick={() => handlePharmacyChange('logoUrl', '')}
-                                                    className="text-sm text-red-600 dark:text-red-400 hover:underline"
+                                                    className="px-3 py-1.5 text-[10px] font-bold text-red-600 hover:text-red-700"
                                                 >
-                                                    Remove logo
+                                                    Remove Logo
                                                 </button>
                                             )}
                                         </div>
                                     </div>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">JPG or PNG, max 500 KB. Uploaded image is embedded in receipts so it always prints correctly. Click <strong>Save Changes</strong> (top right) after uploading.</p>
+                                    <p className="text-[10px] text-gray-500 dark:text-gray-400 italic">JPG/PNG, max 500 KB. Click Save Changes (top right) after uploading.</p>
                                 </div>
 
                                 <div>
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Invoice Footer Note</label>
+                                    <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        Invoice Footer Remarks
+                                    </label>
                                     <textarea
                                         value={pharmacySettings.invoiceNotes}
                                         onChange={(e) => handlePharmacyChange('invoiceNotes', e.target.value)}
-                                        rows={3}
-                                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-none"
-                                        placeholder="Thank you for choosing us. Please call if you have any questions about your medicine."
+                                        rows={2}
+                                        className="w-full px-4 py-2 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all resize-none"
+                                        placeholder="Note at the bottom of customer receipts"
                                     />
                                 </div>
                             </div>
@@ -535,125 +548,148 @@ const Settings: React.FC = () => {
 
             case 'appearance':
                 return (
-                    <div className="space-y-8">
-                        {/* Theme Mode */}
-                        <div className="p-6 bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/30 dark:to-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Theme Mode</h3>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Choose how the application looks across all screens.</p>
-                            <div className="grid grid-cols-2 gap-4">
-                                <button
-                                    onClick={() => handleThemeChange('light')}
-                                    className={`relative p-6 border-2 rounded-xl transition-all transform hover:scale-105 ${theme === 'light'
-                                        ? 'border-emerald-500 dark:border-emerald-400 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/40 dark:to-emerald-900/20 shadow-lg shadow-emerald-500/20'
-                                        : 'border-gray-300 dark:border-gray-600 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-gray-700/30'
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* Theme Mode Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                                        <FiSun className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Theme Configuration
+                                    </h3>
+                                </div>
+                            </div>
+                            {/* Content */}
+                            <div className="p-4">
+                                <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-4">
+                                    Select viewing mode
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <button
+                                        onClick={() => handleThemeChange('light')}
+                                        className={`group relative p-4 border rounded-lg transition-all flex items-center gap-4 ${
+                                            theme === 'light'
+                                                ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 shadow-sm'
+                                                : 'bg-white dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 hover:border-emerald-300'
                                         }`}
-                                >
-                                    <FiSun className={`w-8 h-8 mx-auto mb-3 ${theme === 'light' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`} />
-                                    <span className={`font-semibold text-base ${theme === 'light' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-300'}`}>Light Mode</span>
-                                    {theme === 'light' && (
-                                        <div className="absolute top-2 right-2">
-                                            <FiCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                                    >
+                                        <div className={`p-3 rounded-lg transition-colors ${
+                                            theme === 'light' ? 'bg-emerald-500 text-white' : 'bg-gray-100 dark:bg-gray-600 text-gray-400 group-hover:bg-emerald-100 group-hover:text-emerald-500'
+                                        }`}>
+                                            <FiSun className="w-6 h-6" />
                                         </div>
-                                    )}
-                                </button>
-                                <button
-                                    onClick={() => handleThemeChange('dark')}
-                                    className={`relative p-6 border-2 rounded-xl transition-all transform hover:scale-105 ${theme === 'dark'
-                                        ? 'border-emerald-500 dark:border-emerald-400 bg-gradient-to-br from-emerald-50 to-white dark:from-emerald-900/40 dark:to-emerald-900/20 shadow-lg shadow-emerald-500/20'
-                                        : 'border-gray-300 dark:border-gray-600 hover:border-emerald-300 dark:hover:border-emerald-700 bg-white dark:bg-gray-700/30'
+                                        <div className="text-left">
+                                            <div className={`text-sm font-bold ${theme === 'light' ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-200'}`}>Light Universe</div>
+                                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Clean and bright workspace</div>
+                                        </div>
+                                        {theme === 'light' && (
+                                            <FiCheckCircle className="absolute top-2 right-2 w-4 h-4 text-emerald-600" />
+                                        )}
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleThemeChange('dark')}
+                                        className={`group relative p-4 border rounded-lg transition-all flex items-center gap-4 ${
+                                            theme === 'dark'
+                                                ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-500 shadow-sm'
+                                                : 'bg-white dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 hover:border-emerald-300'
                                         }`}
-                                >
-                                    <FiMoon className={`w-8 h-8 mx-auto mb-3 ${theme === 'dark' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-400 dark:text-gray-500'}`} />
-                                    <span className={`font-semibold text-base ${theme === 'dark' ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-300'}`}>Dark Mode</span>
-                                    {theme === 'dark' && (
-                                        <div className="absolute top-2 right-2">
-                                            <FiCheck className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                                    >
+                                        <div className={`p-3 rounded-lg transition-colors ${
+                                            theme === 'dark' ? 'bg-emerald-500 text-white' : 'bg-gray-100 dark:bg-gray-600 text-gray-400 group-hover:bg-emerald-100 group-hover:text-emerald-500'
+                                        }`}>
+                                            <FiMoon className="w-6 h-6" />
                                         </div>
-                                    )}
-                                </button>
+                                        <div className="text-left">
+                                            <div className={`text-sm font-bold ${theme === 'dark' ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-700 dark:text-gray-200'}`}>Dark Nebula</div>
+                                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Sleek and eye-friendly</div>
+                                        </div>
+                                        {theme === 'dark' && (
+                                            <FiCheckCircle className="absolute top-2 right-2 w-4 h-4 text-emerald-600" />
+                                        )}
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
-                        {/* Theme Color */}
-                        <div className="p-6 bg-gradient-to-br from-gray-50 to-white dark:from-gray-700/30 dark:to-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
-                            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">Theme Color</h3>
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">Select an accent color that is applied across the entire application.</p>
-
-                            {/* Color swatch cards */}
-                            <div className="grid grid-cols-5 gap-3 mb-6">
-                                {(Object.values(colorThemes) as typeof colorThemes[ColorTheme][]).map((t) => {
-                                    const isActive = colorTheme === t.id;
-                                    return (
-                                        <button
-                                            key={t.id}
-                                            onClick={() => setColorTheme(t.id as ColorTheme)}
-                                            title={t.name}
-                                            className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:scale-105 focus:outline-none ${
-                                                isActive
-                                                    ? 'border-emerald-500 dark:border-emerald-400 shadow-lg bg-white dark:bg-gray-700/50'
-                                                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-500 bg-white dark:bg-gray-700/30'
-                                            }`}
-                                        >
-                                            <span
-                                                className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 flex-shrink-0"
-                                                style={{
-                                                    backgroundColor: t.accent,
-                                                    boxShadow: isActive ? `0 0 0 2px white, 0 0 0 4px ${t.accent}` : 'none',
-                                                }}
-                                            />
-                                            <span className={`text-xs font-medium leading-tight text-center ${isActive ? 'text-gray-900 dark:text-white' : 'text-gray-500 dark:text-gray-400'}`}>
-                                                {t.name}
-                                            </span>
-                                            {isActive && (
-                                                <div className="absolute top-1.5 right-1.5">
-                                                    <FiCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                                                </div>
-                                            )}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-
-                            {/* Dropdown selector */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                    Selected Theme
-                                </label>
-                                <div className="relative">
-                                    <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center">
-                                        <span
-                                            className="w-4 h-4 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: colorThemes[colorTheme].accent }}
-                                        />
+                        {/* Accent Color Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
+                                        <div className="w-4 h-4 rounded-full border-2 border-white"></div>
                                     </div>
-                                    <select
-                                        value={colorTheme}
-                                        onChange={(e) => setColorTheme(e.target.value as ColorTheme)}
-                                        className="w-full pl-9 pr-10 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm font-medium appearance-none focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-colors"
-                                    >
-                                        {(Object.values(colorThemes) as typeof colorThemes[ColorTheme][]).map((t) => (
-                                            <option key={t.id} value={t.id}>
-                                                {t.name} — {t.description}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                                        <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                        </svg>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Accent Customization
+                                    </h3>
+                                </div>
+                            </div>
+                            {/* Content */}
+                            <div className="p-4">
+                                <p className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-4">
+                                    System primary color
+                                </p>
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
+                                    {(Object.values(colorThemes) as typeof colorThemes[ColorTheme][]).map((t) => {
+                                        const isActive = colorTheme === t.id;
+                                        return (
+                                            <button
+                                                key={t.id}
+                                                onClick={() => setColorTheme(t.id as ColorTheme)}
+                                                className={`group relative flex flex-col items-center gap-2 p-3 border rounded-lg transition-all ${
+                                                    isActive
+                                                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-500 shadow-sm scale-105 z-10'
+                                                        : 'bg-white dark:bg-gray-700/50 border-gray-200 dark:border-gray-600 hover:border-blue-300'
+                                                }`}
+                                            >
+                                                <div 
+                                                    className={`w-8 h-8 rounded-full border-2 shadow-sm transition-transform group-hover:scale-110 ${
+                                                        isActive ? 'border-white ring-2 ring-blue-500' : 'border-transparent'
+                                                    }`}
+                                                    style={{ backgroundColor: t.accent }}
+                                                />
+                                                <span className={`text-[10px] font-bold ${isActive ? 'text-blue-700 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>
+                                                    {t.name}
+                                                </span>
+                                                {isActive && (
+                                                    <div className="absolute -top-1.5 -right-1.5 bg-blue-500 text-white rounded-full p-0.5 shadow-md">
+                                                        <FiCheckCircle className="w-3 h-3" />
+                                                    </div>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Selection Details (Styled like report inputs) */}
+                                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700">
+                                    <label className="block text-[10px] font-bold mb-2 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                        Color Profile Info
+                                    </label>
+                                    <div className="flex items-center gap-3 p-3 bg-white dark:bg-gray-700/30 border border-gray-200 dark:border-gray-600 rounded-md">
+                                        <div className="w-10 h-10 rounded-lg shadow-inner flex-shrink-0" style={{ backgroundColor: colorThemes[colorTheme].accent }}></div>
+                                        <div>
+                                            <div className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-tight">
+                                                {colorThemes[colorTheme].name} Mode Active
+                                            </div>
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400 italic">
+                                                {colorThemes[colorTheme].description}
+                                            </p>
+                                        </div>
                                     </div>
                                 </div>
-                                <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-                                    Changes apply instantly across the entire application.
-                                </p>
                             </div>
                         </div>
                     </div>
                 );
 
-            case 'notifications':
+            /* case 'notifications':
                 return (
-                    <div className="space-y-6">
+                    <div className="space-y-4">
                         <div className="space-y-3">
                             <div className="flex items-center justify-between p-5 bg-white dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all hover:border-emerald-300 dark:hover:border-emerald-700">
                                 <div>
@@ -768,56 +804,59 @@ const Settings: React.FC = () => {
                             </div>
                         </div>
                     </div>
-                );
+                ); */
 
             case 'security':
                 return (
-                    <div className="space-y-6">
-                        <div className="flex items-center justify-between p-5 bg-white dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all hover:border-red-300 dark:hover:border-red-700">
-                            <div>
-                                <h4 className="font-medium text-gray-900 dark:text-white">Two-Factor Authentication</h4>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Add an extra layer of security to your account</p>
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* Security Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-amber-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-amber-900/10 rounded-lg border border-amber-200/50 dark:border-amber-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-amber-50 to-amber-100/50 dark:from-amber-900/20 dark:to-amber-800/10 border-b border-amber-200/50 dark:border-amber-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-amber-500 to-amber-600">
+                                        <FiShield className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Access & Protection
+                                    </h3>
+                                </div>
                             </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={security.twoFactorAuth}
-                                    onChange={(e) => handleSecurityChange('twoFactorAuth', e.target.checked)}
-                                    className="sr-only peer"
-                                />
-                                <div className={toggleSwitchClass}></div>
-                            </label>
-                        </div>
+                            {/* Content */}
+                            <div className="p-6">
+                                <div className="flex items-center justify-between p-4 bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg hover:border-amber-400 transition-all group">
+                                    <div className="flex items-center gap-4">
+                                        <div className="p-3 bg-amber-50 dark:bg-amber-900/30 text-amber-600 rounded-xl group-hover:scale-110 transition-transform">
+                                            <FiShield className="w-6 h-6" />
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-bold text-gray-900 dark:text-white">Mandatory Password Rotation</h4>
+                                            <p className="text-[10px] text-gray-500 dark:text-gray-400">Force user to change password on their next login session</p>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={security.passwordChangeRequired}
+                                            onChange={(e) => handleSecurityChange('passwordChangeRequired', e.target.checked)}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-amber-500"></div>
+                                    </label>
+                                </div>
 
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                                Session Timeout (minutes)
-                            </label>
-                            <input
-                                type="number"
-                                value={security.sessionTimeout}
-                                onChange={(e) => handleSecurityChange('sessionTimeout', parseInt(e.target.value))}
-                                min={5}
-                                max={120}
-                                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                            />
-                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Automatically log out after period of inactivity</p>
-                        </div>
-
-                        <div className="flex items-center justify-between p-5 bg-white dark:bg-gray-700/30 border border-gray-200 dark:border-gray-700 rounded-xl hover:shadow-md transition-all hover:border-amber-300 dark:hover:border-amber-700">
-                            <div>
-                                <h4 className="font-medium text-gray-900 dark:text-white">Password Change Required</h4>
-                                <p className="text-sm text-gray-500 dark:text-gray-400">Require password change on next login</p>
+                                <div className="mt-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                                    <div className="flex gap-3">
+                                        <FiShield className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                                        <div>
+                                            <h5 className="text-[11px] font-bold text-blue-800 dark:text-blue-300 uppercase">Security Note</h5>
+                                            <p className="text-[10px] text-blue-600 dark:text-blue-400 mt-1">
+                                                Changes to security settings are logged for auditing purposes. Ensure you notify relevant staff members before toggling mandatory password resets.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                            <label className="relative inline-flex items-center cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={security.passwordChangeRequired}
-                                    onChange={(e) => handleSecurityChange('passwordChangeRequired', e.target.checked)}
-                                    className="sr-only peer"
-                                />
-                                <div className={toggleSwitchClass}></div>
-                            </label>
                         </div>
                     </div>
                 );
@@ -839,11 +878,11 @@ const Settings: React.FC = () => {
                     title: 'Pharmacy Settings',
                     subtitle: 'Configure business details and operational preferences',
                 };
-            case 'notifications':
+            /* case 'notifications':
                 return {
                     title: 'Notification Settings',
                     subtitle: 'Choose when and how the pharmacy alerts you',
-                };
+                }; */
             case 'security':
                 return {
                     title: 'Security Settings',
@@ -865,7 +904,8 @@ const Settings: React.FC = () => {
     const canSave =
         activeSection === 'profile' ||
         activeSection === 'pharmacy' ||
-        activeSection === 'appearance';
+        activeSection === 'appearance' ||
+        activeSection === 'security';
 
     const headerActions = useMemo(() => {
         if (!canSave) {

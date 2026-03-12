@@ -190,10 +190,10 @@ const Dashboard_Layout: React.FC = () => {
 
   return (
     <LicenseOverlay>
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100">
+      <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100">
         {/* Scrollable Main Content */}
         <main
-          className={`min-h-screen ${location.pathname.includes('/selling-panel') ||
+          className={`h-screen ${location.pathname.includes('/selling-panel') ||
             location.pathname.includes('/purchasing-panel') ||
             location.pathname.includes('/suppliers') ||
             location.pathname.includes('/customers') ||

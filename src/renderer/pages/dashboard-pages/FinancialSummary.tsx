@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import {
   FiCalendar,
   FiTrendingUp,
@@ -43,12 +43,15 @@ type FinancialData = {
 const FinancialSummary = () => {
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
-  const [fromDate, setFromDate] = useState<string>(() => {
+  const today = useMemo(() => {
     const d = new Date();
-    d.setDate(1); // Start of month
-    return d.toISOString().split('T')[0];
-  });
-  const [toDate, setToDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
+  const [fromDate, setFromDate] = useState<string>(today);
+  const [toDate, setToDate] = useState<string>(today);
   const [loading, setLoading] = useState(true);
   const [financialData, setFinancialData] = useState<FinancialData>({
     purchasingTotal: 0,
@@ -234,6 +237,7 @@ const FinancialSummary = () => {
                 <input
                   type="date"
                   value={fromDate}
+                  max={today}
                   onChange={(e) => setFromDate(e.target.value)}
                   onBlur={handleDateRangeChange}
                   className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 outline-none focus:ring-1 focus:ring-emerald-500"
@@ -244,6 +248,7 @@ const FinancialSummary = () => {
                 <input
                   type="date"
                   value={toDate}
+                  max={today}
                   onChange={(e) => setToDate(e.target.value)}
                   onBlur={handleDateRangeChange}
                   className="px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 outline-none focus:ring-1 focus:ring-emerald-500"

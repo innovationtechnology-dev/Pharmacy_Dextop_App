@@ -22,7 +22,7 @@ export const defaultPharmacySettings: PharmacySettings = {
   phone: '',
   email: '',
   taxRate: 0,
-  currency: 'USD',
+  currency: 'PKR',
   lowStockThreshold: 10,
   expiredMedicinesAlert: true,
   tagline: '',

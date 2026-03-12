@@ -12,18 +12,15 @@ import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common
 export default function SaleReturn() {
   const isCashier = getAuthUser()?.role === 'cashier';
 
-  const [fromDate, setFromDate] = useState<string>(() => {
+  const today = useMemo(() => {
     const d = new Date();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${mm}-${dd}`;
-  });
-  const [toDate, setToDate] = useState<string>(() => {
-    const d = new Date();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    return `${d.getFullYear()}-${mm}-${dd}`;
-  });
+  }, []);
+
+  const [fromDate, setFromDate] = useState<string>(today);
+  const [toDate, setToDate] = useState<string>(today);
 
   // Calculate limit for cashier (1 month ago)
   const minFromDate = useMemo(() => {
@@ -303,6 +300,7 @@ export default function SaleReturn() {
                   type="date"
                   value={fromDate}
                   min={isCashier ? minFromDate : undefined}
+                  max={today}
                   onChange={(e) => setFromDate(e.target.value)}
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
                 />
@@ -314,6 +312,7 @@ export default function SaleReturn() {
                 <input
                   type="date"
                   value={toDate}
+                  max={today}
                   onChange={(e) => setToDate(e.target.value)}
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
                 />

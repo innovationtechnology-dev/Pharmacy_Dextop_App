@@ -80,12 +80,18 @@ export const isAuthenticated = (): boolean => {
 /**
  * Login user
  */
-export const login = async (email: string, password: string): Promise<AuthResponse> => {
+export const login = async (email: string, password: string): Promise<AuthResponse & { passwordChangeRequired?: boolean }> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('auth-login-reply', (response: any) => {
       if (response.success && response.token && response.user) {
         setAuthToken(response.token);
         setAuthUser(response.user);
+        // Store password change required flag
+        if (response.passwordChangeRequired) {
+          sessionStorage.setItem('passwordChangeRequired', 'true');
+        } else {
+          sessionStorage.removeItem('passwordChangeRequired');
+        }
       }
       resolve(response);
     });
@@ -117,6 +123,7 @@ export const signup = async (name: string, email: string, password: string, role
 export const logout = (): void => {
   removeAuthToken();
   removeAuthUser();
+  sessionStorage.removeItem('passwordChangeRequired');
 };
 
 /**
@@ -154,3 +161,31 @@ export const updateProfile = async (userId: number, params: UpdateProfileParams)
     window.electron.ipcRenderer.sendMessage('auth-update-profile', [userId, params] as any);
   });
 };
+
+/**
+ * Set password change required flag for a user (admin action)
+ */
+export const setPasswordChangeRequired = async (userId: number, required: boolean): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('auth-set-password-change-required-reply', (response: any) => {
+      resolve(response);
+    });
+    window.electron.ipcRenderer.sendMessage('auth-set-password-change-required', [userId, required] as any);
+  });
+};
+
+/**
+ * Change user password (verifies current password, sets new one, clears password_change_required flag)
+ */
+export const changePassword = async (userId: number, currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('auth-change-password-reply', (response: any) => {
+      if (response.success) {
+        sessionStorage.removeItem('passwordChangeRequired');
+      }
+      resolve(response);
+    });
+    window.electron.ipcRenderer.sendMessage('auth-change-password', [userId, currentPassword, newPassword] as any);
+  });
+};
+

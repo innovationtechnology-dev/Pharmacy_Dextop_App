@@ -58,7 +58,7 @@ export const buildThermalReceiptHtml = (
   if (!cart.length) return '';
 
   const profile = pharmacyInfo;
-  const currencyCode = profile.currency || 'USD';
+  const currencyCode = profile.currency || 'PKR';
   const symbol = getSymbol(currencyCode);
 
   // Logo: use when non-empty (data URL from Settings → Pharmacy upload, or URL)

@@ -23,7 +23,6 @@ import {
   FiPackage,
   FiRefreshCw,
 } from 'react-icons/fi';
-import WelcomeNotification from '../../components/WelcomeNotification';
 import { invokeIpc } from '../../utils/ipcHelpers';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
@@ -209,8 +208,6 @@ const Dashboard = () => {
   const [range, setRange] = useState<'this_month' | 'last_month' | 'this_year'>('this_month');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
-
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
     const symbol = getSymbol(currency);
@@ -299,19 +296,6 @@ const Dashboard = () => {
     return () => setHeader(null);
   }, [setHeader, loadData, loading]);
 
-  useEffect(() => {
-    const shouldShow = sessionStorage.getItem('shouldShowWelcome');
-    if (shouldShow === 'true') {
-      const timer = setTimeout(() => setShowWelcomeNotification(true), 500);
-      return () => clearTimeout(timer);
-    }
-  }, []);
-
-  const handleCloseWelcomeNotification = () => {
-    setShowWelcomeNotification(false);
-    sessionStorage.removeItem('shouldShowWelcome');
-  };
-
   const totals = useMemo(
     () => buildTotals(sales, purchases, medicines, saleReturnsTotal),
     [sales, purchases, medicines, saleReturnsTotal]
@@ -373,14 +357,10 @@ const Dashboard = () => {
 
   const chartData = useMemo(() => buildSalesSeries(sales, range), [sales, range]);
   const sparkData = useMemo(() => buildRevenueSpark(sales), [sales]);
-  const recentOrders = useMemo(() => sales.slice(0, 5), [sales]);
+  const recentOrders = useMemo(() => sales.slice(0, 50), [sales]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
-      {showWelcomeNotification && (
-        <WelcomeNotification onClose={handleCloseWelcomeNotification} />
-      )}
-
       {error && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 mb-2">
           {error}
@@ -640,25 +620,25 @@ const Dashboard = () => {
                   Recent Sales
                 </h3>
               </div>
-              <div className="p-4 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 dark:border-gray-700">
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">ID</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Customer</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Amount</th>
+              <div className="overflow-x-auto overflow-y-auto max-h-[150px] custom-scrollbar rounded-b-lg">
+                <table className="w-full text-left text-xs relative">
+                  <thead className="sticky top-0 bg-gray-50 dark:bg-gray-800/90 backdrop-blur-md z-10 shadow-sm">
+                    <tr>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">ID</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">Customer</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">Date</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right border-b border-gray-100 dark:border-gray-700">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                     {recentOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                        <td className="py-2 px-2 font-bold text-gray-900 dark:text-white">#{order.id}</td>
-                        <td className="py-2 px-2 text-gray-600 dark:text-gray-300">{order.customerName || 'Walk-in'}</td>
-                        <td className="py-2 px-2 text-gray-500 dark:text-gray-400">
+                      <tr key={order.id} className="hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-colors group">
+                        <td className="py-2.5 px-4 font-bold text-gray-900 dark:text-white">#{order.id}</td>
+                        <td className="py-2.5 px-4 text-gray-600 dark:text-gray-300 font-medium">{order.customerName || 'Walk-in'}</td>
+                        <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400">
                           {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '-'}
                         </td>
-                        <td className="py-2 px-2 font-bold text-gray-900 dark:text-white text-right">{formatCurrency(order.total)}</td>
+                        <td className="py-2.5 px-4 font-bold text-gray-900 dark:text-white text-right">{formatCurrency(order.total)}</td>
                       </tr>
                     ))}
                   </tbody>
