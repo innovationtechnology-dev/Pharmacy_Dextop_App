@@ -88,7 +88,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <h3 className={`text-xl font-bold tracking-tight flex items-center gap-2 ${
                                             theme === 'dark' ? 'text-white' : 'text-emerald-700'
                                         }`}>
-                                            Welcome to {pharmacySettings.pharmacyName} ! <span className="inline-block animate-bounce origin-bottom">🎉</span>
+                                            Welcome to {pharmacySettings.pharmacyName} ! <span className="inline-block animate-bounce origin-bottom p-2">🎉</span>
                                         </h3>
                                         <p className={`text-[12px] font-medium mt-0.5 ${
                                             theme === 'dark' ? 'text-emerald-200/70' : 'text-gray-600/80'
@@ -99,14 +99,14 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                 </div>
                                 <button
                                     onClick={handleClose}
-                                    className={`p-2 rounded-xl transition-all duration-300 transform hover:rotate-90 ${
+                                    className={`p-2 rounded-lg transition-all duration-300 transform hover:rotate-90 ${
                                         theme === 'dark'
-                                            ? 'bg-slate-800/60 hover:bg-slate-700 text-slate-400 hover:text-white'
+                                            ? 'bg-slate-800/90 hover:bg-slate-700 text-slate-400 hover:text-white'
                                             : 'bg-gray-100 hover:bg-gray-200 text-gray-400 hover:text-gray-700'
                                     }`}
                                     aria-label="Close notification"
                                 >
-                                    <FiX className="w-5 h-5" />
+                                    <FiX className="w-4 h-4" />
                                 </button>
                             </div>
 

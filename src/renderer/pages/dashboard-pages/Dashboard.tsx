@@ -351,6 +351,12 @@ const Dashboard = () => {
         value: formatCurrency(totals.charityTotal),
         icon: <FiPackage />,
       },
+      {
+        id: 'saleReturns',
+        title: 'Return Amount',
+        value: formatCurrency(totals.saleReturnsTotal),
+        icon: <FiRefreshCw />,
+      },
     ],
     [totals]
   );
@@ -387,6 +393,7 @@ const Dashboard = () => {
                   metric.id === 'customers' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
                   metric.id === 'family' ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-600/50' :
                   metric.id === 'charity' ? 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-600/50' :
+                  metric.id === 'saleReturns' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-600/50' :
                   'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-600/50'
                 }`}>
                   <div className={
@@ -397,6 +404,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-500' :
                     metric.id === 'family' ? 'text-purple-500' :
                     metric.id === 'charity' ? 'text-pink-500' :
+                    metric.id === 'saleReturns' ? 'text-red-500' :
                     'text-amber-500'
                   }>
                     {React.cloneElement(metric.icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
@@ -412,6 +420,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-600 dark:text-teal-400' :
                     metric.id === 'family' ? 'text-purple-600 dark:text-purple-400' :
                     metric.id === 'charity' ? 'text-pink-600 dark:text-pink-400' :
+                    metric.id === 'saleReturns' ? 'text-red-600 dark:text-red-400' :
                     'text-amber-600 dark:text-amber-400'
                   }`}>
                     {metric.value}

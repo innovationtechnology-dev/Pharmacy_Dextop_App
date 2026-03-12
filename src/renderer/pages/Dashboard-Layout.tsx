@@ -542,24 +542,24 @@ const Dashboard_Layout: React.FC = () => {
                         )}
                       </button>
                       {notificationsOpen && (
-                        <div className="absolute right-0 mt-1 w-80 bg-[#1e293b] dark:bg-[#1a2130] rounded-lg shadow-2xl border border-[#2d3a4f] dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
+                        <div className="absolute right-0 mt-1 w-80 bg-white dark:bg-[#1a2130] rounded-lg shadow-2xl border border-gray-200 dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
                           {/* Header section */}
-                          <div className="px-4 py-2.5 bg-[#1e293b] dark:bg-[#1a2130]">
-                            <p className="text-[13px] font-semibold text-white flex items-center gap-2">
-                              <FiBell className="w-3.5 h-3.5 text-blue-400" />
+                          <div className="px-4 py-2.5 bg-white dark:bg-[#1a2130]">
+                            <p className="text-[13px] font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                              <FiBell className="w-3.5 h-3.5 text-emerald-500 dark:text-blue-400" />
                               Alerts & Notifications
                             </p>
-                            <p className="text-[10px] text-gray-400 mt-0.5 font-medium">
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-bold">
                               {expiringAlertCount > 0
                                 ? `You have ${expiringAlertCount} medicine${expiringAlertCount > 1 ? 's' : ''} expiring soon.`
                                 : 'All medicines are healthy for now.'}
                             </p>
                           </div>
 
-                          {/* Body section with even darker background */}
-                          <div className="bg-[#1a2130] dark:bg-[#151b27] border-y border-[#2d3a4f] dark:border-[#242d3d]">
+                          {/* Body section with subtler background */}
+                          <div className="bg-gray-50 dark:bg-[#151b27] border-y border-gray-100 dark:border-[#242d3d]">
                             {expiringAlertCount > 0 ? (
-                              <div className="max-h-64 overflow-y-auto divide-y divide-[#2d3a4f] dark:divide-[#242d3d]">
+                              <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-[#242d3d]">
                                 {expiringAlerts.slice(0, 4).map((alert) => (
                                   <button
                                     key={alert.id}
@@ -567,14 +567,14 @@ const Dashboard_Layout: React.FC = () => {
                                       navigate('/alerts');
                                       setNotificationsOpen(false);
                                     }}
-                                    className="w-full text-left px-4 py-2.5 hover:bg-[#2d3a4f] transition-colors group"
+                                    className="w-full text-left px-4 py-2.5 hover:bg-white dark:hover:bg-[#2d3a4f] transition-colors group"
                                   >
-                                    <p className="text-[11px] font-semibold text-white group-hover:text-blue-400">
+                                    <p className="text-[11px] font-bold text-gray-700 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-blue-400">
                                       {alert.name}
                                     </p>
-                                    <div className="text-[8px] text-gray-500 mt-0.5 flex justify-between font-bold">
+                                    <div className="text-[8px] text-gray-400 dark:text-gray-500 mt-0.5 flex justify-between font-black">
                                       <span>{alert.barcode || '—'}</span>
-                                      <span className="text-orange-500/60">
+                                      <span className="text-orange-600 dark:text-orange-500/60">
                                         {Math.max(alert.daysUntilExpiry, 0)} days left
                                       </span>
                                     </div>
@@ -582,17 +582,17 @@ const Dashboard_Layout: React.FC = () => {
                                 ))}
                               </div>
                             ) : (
-                              <div className="px-4 py-6 text-[12px] text-gray-500 text-center font-medium">
+                              <div className="px-4 py-6 text-[12px] text-gray-400 dark:text-gray-500 text-center font-bold">
                                 No expiring medicines detected.
                               </div>
                             )}
                           </div>
 
                           {/* Footer section */}
-                          <div className="px-5 py-3 bg-[#1e293b] dark:bg-[#1a2130]">
+                          <div className="px-5 py-3 bg-white dark:bg-[#1a2130]">
                             <Link
                               to="/alerts"
-                              className="text-[11px] font-semibold text-[#3b82f6] hover:text-blue-400 transition-colors"
+                              className="text-[11px] font-bold text-emerald-600 dark:text-[#3b82f6] hover:text-emerald-700 dark:hover:text-blue-400 transition-colors"
                               onClick={() => setNotificationsOpen((prev) => !prev)}
                             >
                               View Alerts Center
@@ -716,39 +716,39 @@ const Dashboard_Layout: React.FC = () => {
                         />
                       </button>
                       {profileMenuOpen && (
-                        <div className="absolute right-0 mt-1 w-60 bg-[#1e293b] dark:bg-[#1a2130] rounded-lg shadow-2xl border border-[#2d3a4f] dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
+                        <div className="absolute right-0 mt-1 w-60 bg-white dark:bg-[#1a2130] rounded-lg shadow-2xl border border-gray-200 dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
                           {/* Profile Header */}
-                          <div className="px-5 py-4 bg-[#1e293b] dark:bg-[#1a2130]">
+                          <div className="px-5 py-4 bg-white dark:bg-[#1a2130]">
                             <div className="flex items-center gap-3">
                               <div className="relative">
                                 <img
                                   src={user?.profilePicture || user?.avatar || `https://i.pravatar.cc/80?img=32`}
                                   alt="avatar"
-                                  className="w-10 h-10 rounded-full border-2 border-blue-500/30 object-cover"
+                                  className="w-10 h-10 rounded-full border-2 border-emerald-500/20 dark:border-blue-500/30 object-cover"
                                 />
-                                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-[#1e293b] rounded-full" />
+                                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white dark:border-[#1e293b] rounded-full" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <div className="text-[11px] font-bold text-white truncate">
+                                <div className="text-[11px] font-bold text-gray-800 dark:text-white truncate">
                                   {user?.name || 'Wali Cashier'}
                                 </div>
-                                <div className="text-[7.5px] font-semibold text-blue-400 uppercase tracking-widest mt-0.5">
+                                <div className="text-[7.5px] font-bold text-emerald-600 dark:text-blue-400 uppercase tracking-widest mt-0.5">
                                   {user?.role === 'admin' ? 'Administrator' : 'Cashier'}
                                 </div>
                               </div>
                             </div>
                           </div>
 
-                          {/* Email/Info section with darker background */}
-                          <div className="px-4 py-1.5 bg-[#1a2130] dark:bg-[#151b27] border-y border-[#2d3a4f] dark:border-[#242d3d]">
-                            <div className="text-[8px] font-semibold text-gray-500 uppercase tracking-tight">Signed in as</div>
-                            <div className="text-[9px] font-semibold text-gray-300 truncate mt-0.5">
+                          {/* Email/Info section with subtler background */}
+                          <div className="px-4 py-1.5 bg-gray-50 dark:bg-[#151b27] border-y border-gray-100 dark:border-[#242d3d]">
+                            <div className="text-[8px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-tight">Signed in as</div>
+                            <div className="text-[9px] font-bold text-gray-600 dark:text-gray-300 truncate mt-0.5">
                               {user?.email || 'admin@pharmacy.com'}
                             </div>
                           </div>
 
                           {/* Actions */}
-                          <div className="p-1.5 bg-[#1e293b] dark:bg-[#1a2130]">
+                          <div className="p-1.5 bg-white dark:bg-[#1a2130]">
                             <button
                               type="button"
                               onClick={() => {
