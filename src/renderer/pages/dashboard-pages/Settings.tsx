@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
     FiSettings,
     FiUser,
@@ -13,6 +14,8 @@ import {
     FiDollarSign,
     FiHome,
     FiCheckCircle,
+    FiTrash2,
+    FiUpload,
 } from 'react-icons/fi';
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -48,7 +51,15 @@ interface SecuritySettings {
 }
 
 const Settings: React.FC = () => {
+    const location = useLocation();
     const [activeSection, setActiveSection] = useState<SettingsSection>('profile');
+
+    useEffect(() => {
+        if (location.state?.section) {
+            setActiveSection(location.state.section as SettingsSection);
+        }
+    }, [location.state]);
+
     const [user, setUser] = useState<any>(null);
     const { theme, setTheme, colorTheme, setColorTheme } = useTheme();
     const [saving, setSaving] = useState(false);
@@ -92,7 +103,7 @@ const Settings: React.FC = () => {
                     email: authUser.email || '',
                     phone: authUser.phone || '',
                     address: authUser.address || '',
-                    profilePicture: authUser.profilePicture || undefined,
+                    profilePicture: authUser.profilePicture || '',
                 });
 
                 // Fetch full user data to get security settings
@@ -149,7 +160,7 @@ const Settings: React.FC = () => {
                     email: profileData.email,
                     phone: profileData.phone || undefined,
                     address: profileData.address || undefined,
-                    profilePicture: profileData.profilePicture || undefined,
+                    profilePicture: profileData.profilePicture,
                 });
                 if (result.success) {
                     setUser(result.user ?? user);
@@ -249,7 +260,7 @@ const Settings: React.FC = () => {
                                                 onChange={handleProfilePictureChange}
                                                 className="hidden"
                                             />
-                                            <FiPackage className="w-4 h-4"/>
+                                            <FiUpload className="w-4 h-4"/>
                                         </label>
                                     </div>
                                     <div className="text-center md:text-left">
@@ -257,6 +268,16 @@ const Settings: React.FC = () => {
                                             {profileData.firstName} {profileData.lastName}
                                         </h4>
                                         <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-2 italic">Format: JPG, PNG • Max size: 1MB</p>
+                                        {profileData.profilePicture && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setProfileData(prev => ({ ...prev, profilePicture: '' }))}
+                                                className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-lg border border-red-200 dark:border-red-800 transition-all group"
+                                            >
+                                                <FiTrash2 className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                                                Remove Photo
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 

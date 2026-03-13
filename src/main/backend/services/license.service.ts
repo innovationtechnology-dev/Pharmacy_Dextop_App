@@ -327,7 +327,7 @@ export class LicenseService {
         (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
       );
       const isExpired = daysUntilExpiry < 0;
-      const isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
+      const isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 20;
       const isActiveInDb =
         (license.is_active as unknown) === 1 || license.is_active === true;
 

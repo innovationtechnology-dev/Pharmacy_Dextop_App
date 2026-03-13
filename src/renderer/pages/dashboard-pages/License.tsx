@@ -136,11 +136,13 @@ const License: React.FC = () => {
     return () => setHeader(null);
   }, [setHeader]);
 
-  const loadLicenseData = useCallback(async () => {
+  const loadLicenseData = useCallback(async (isInitial = false) => {
     if (!userId) return;
 
     try {
-      setLoading(true);
+      if (isInitial) setLoading(true);
+      setRefreshing(true);
+      
       const [status, licenseData] = await Promise.all([
         getLicenseStatus(userId),
         getLicense(userId),
@@ -156,9 +158,9 @@ const License: React.FC = () => {
   }, [userId]);
 
   useEffect(() => {
-    loadLicenseData();
-    // Refresh every 30 seconds
-    const interval = setInterval(loadLicenseData, 30000);
+    loadLicenseData(true);
+    // Refresh every 30 seconds in background
+    const interval = setInterval(() => loadLicenseData(false), 30000);
     return () => clearInterval(interval);
   }, [loadLicenseData]);
 

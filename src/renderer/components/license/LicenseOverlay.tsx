@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FiAlertTriangle, FiX } from 'react-icons/fi';
+import { FiAlertTriangle, FiX, FiCheckCircle } from 'react-icons/fi';
 import { useNavigate } from 'react-router-dom';
 import { getAuthUser, logout, User as AuthUser } from '../../utils/auth';
 import { getLicenseStatus, activateLicense, LicenseStatus } from '../../utils/license';
@@ -22,11 +22,15 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   const checkLicenseStatus = useCallback(async () => {
     try {
       const user = getAuthUser();
-      setCurrentUser(user);
+      
+      // Only update if something changed to avoid unnecessary re-renders
+      if (JSON.stringify(user) !== JSON.stringify(currentUser)) {
+        setCurrentUser(user);
+      }
 
-      // Only enforce license for cashier role. Admin/super admin can always use the app.
-      if (!user || user.role !== 'cashier') {
+      if (!user) {
         setLoading(false);
+        setLicenseStatus(null);
         return;
       }
 
@@ -34,17 +38,13 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
       setLicenseStatus(status);
       setLoading(false);
     } catch (error) {
-      // Error checking license status
       setLoading(false);
     }
-  }, []);
+  }, [currentUser]);
 
   const checkAlerts = useCallback(() => {
     if (!licenseStatus) return;
-
     const { isExpired, isExpiringSoon } = licenseStatus;
-
-    // Show alert if expiring soon (within 7 days) but not expired
     if (isExpiringSoon && !isExpired) {
       setShowAlert(true);
     }
@@ -52,7 +52,6 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
 
   useEffect(() => {
     checkLicenseStatus();
-    // Check license status every minute
     const interval = setInterval(checkLicenseStatus, 60000);
     return () => clearInterval(interval);
   }, [checkLicenseStatus]);
@@ -60,198 +59,137 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   useEffect(() => {
     if (licenseStatus) {
       checkAlerts();
-      // Auto-show activation dialog if expired
       if (licenseStatus.isExpired) {
         setShowActivationDialog(true);
       }
     }
   }, [licenseStatus, checkAlerts]);
 
-  const handleActivateLicense = async (
-    activationCode: string
-  ): Promise<{ success: boolean; error?: string }> => {
+  const handleActivateLicense = async (activationCode: string) => {
     try {
       const user = getAuthUser();
-      if (!user || user.role !== 'cashier') {
-        return { success: false, error: 'User not found' };
+      if (!user) {
+        return { success: false, error: 'Authorization error' };
       }
 
       const result = await activateLicense(user.id, activationCode);
       if (result.success) {
-        // Reset attempts on success
         resetAttempts();
         setShowActivationDialog(false);
         await checkLicenseStatus();
         setShowAlert(false);
-        // Show success alert
         setShowSuccessAlert(true);
-        // Auto-hide after 5 seconds
-        setTimeout(() => {
-          setShowSuccessAlert(false);
-        }, 5000);
+        setTimeout(() => setShowSuccessAlert(false), 5000);
       }
       return result;
     } catch (error) {
-      return { success: false, error: 'Failed to activate license' };
+      return { success: false, error: 'Failed to connect to license server' };
     }
   };
 
-  // If there is no authenticated user or the user is not a cashier,
-  // bypass all license checks and just render the children.
-  if (!currentUser || currentUser.role !== 'cashier') {
-    return <>{children}</>;
-  }
-
-  if (loading) {
-    return <>{children}</>;
-  }
-
+  const [adminDismissed, setAdminDismissed] = useState(false);
+  const isCashier = currentUser?.role === 'cashier';
+  const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
   const { isExpired, daysUntilExpiry, isExpiringSoon } = licenseStatus || {};
+
+  // Don't show modal if admin dismissed it for this session
+  const shouldShowExpiredModal = isExpired && (!isAdmin || !adminDismissed);
 
   return (
     <>
-      {/* Block all interactions if expired */}
-      {isExpired && (
-        <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          {/* Main modal card - Clean and minimal */}
-          <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden animate-fade-in-up">
-            {/* Top accent bar */}
-            <div className="h-1 bg-gradient-to-r from-red-500 to-orange-500" />
-
-            {/* Content */}
-            <div className="px-8 py-10 text-center">
-              {/* Icon */}
-              <div className="mb-6 flex justify-center">
-                <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center">
-                  <FiAlertTriangle className="w-10 h-10 text-red-500" />
-                </div>
+      {/* Expired License Modal - Minimal & Professional */}
+      {shouldShowExpiredModal && (
+        <div className="fixed inset-0 z-[9997] flex items-center justify-center bg-gray-900/60 backdrop-blur-sm">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden border border-gray-100 dark:border-gray-700">
+            <div className="p-8 text-center">
+              <div className="w-14 h-14 bg-red-50 dark:bg-red-900/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <FiAlertTriangle className="w-7 h-7 text-red-600" />
               </div>
 
-              {/* Title */}
-              <h2 className="text-2xl font-semibold text-gray-900 mb-3">License Expired</h2>
-
-              {/* Message */}
-              <p className="text-gray-600 mb-8 leading-relaxed">
-                Your license has expired. Please activate a new license to continue using the
-                application.
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">License Required</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 leading-relaxed">
+                The software license has expired. Please provide a valid activation key to continue using pharmacy services.
               </p>
 
-              {/* Buttons */}
-              <div className="space-y-3">
+              <div className="flex flex-col gap-3">
                 <button
                   type="button"
                   onClick={() => setShowActivationDialog(true)}
-                  className="w-full px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors shadow-sm"
                 >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
-                    />
-                  </svg>
                   Activate License
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    logout();
-                    navigate('/login');
-                  }}
-                  className="w-full px-6 py-3 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors duration-200 flex items-center justify-center gap-2"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"
-                    />
-                  </svg>
-                  Logout
-                </button>
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => setAdminDismissed(true)}
+                    className="w-full py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg transition-colors shadow-sm"
+                  >
+                    Continue as Admin
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      logout();
+                      navigate('/login');
+                    }}
+                    className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+                  >
+                    Return to Login
+                  </button>
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Disable pointer events on children when expired */}
-      <div style={{ pointerEvents: isExpired ? 'none' : 'auto' }}>{children}</div>
+      {/* Main Content Area - Stable structure to prevent remounting */}
+      <div 
+        style={{ 
+          pointerEvents: (isCashier && isExpired) ? 'none' : 'auto',
+          filter: (isCashier && isExpired) ? 'blur(1px)' : 'none'
+        }}
+      >
+        {children}
+      </div>
 
-      {/* Alert Banner - Only show for expiring soon (not expired) */}
+      {/* Alert Bar - Understated & Clean */}
       {showAlert && isExpiringSoon && !isExpired && (
-        <div className="fixed top-0 left-0 right-0 z-[9999] bg-amber-50 border-b border-amber-200 shadow-sm animate-slide-in-left">
-          <div className="container mx-auto px-6 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
-                <FiAlertTriangle className="w-5 h-5 text-amber-600" />
-              </div>
-              <div>
-                <p className="font-semibold text-gray-900 mb-1">License Expiring Soon</p>
-                <p className="text-sm text-gray-600">
-                  {daysUntilExpiry !== null
-                    ? `Your license will expire in ${daysUntilExpiry} day${daysUntilExpiry !== 1 ? 's' : ''
-                    }. Please renew your license to avoid interruption.`
-                    : 'Please activate your license to continue using all features.'}
-                </p>
-              </div>
-            </div>
+        <div className="fixed top-0 left-0 right-0 z-[9999] bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800/50">
+          <div className="container mx-auto px-6 py-3 flex items-center justify-between">
             <div className="flex items-center gap-3">
+              <FiAlertTriangle className="w-4 h-4 text-amber-600" />
+              <p className="text-sm text-gray-800 dark:text-gray-200 font-medium">
+                License expires in <span className="font-bold underline text-amber-700 dark:text-amber-400">{daysUntilExpiry} days</span>. 
+                Please renew soon to avoid session interruption.
+              </p>
+            </div>
+            <div className="flex items-center gap-4">
               <button
                 type="button"
                 onClick={() => setShowActivationDialog(true)}
-                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg transition-colors duration-200"
+                className="text-xs font-bold text-amber-700 dark:text-amber-400 hover:underline px-2 py-1"
               >
-                Activate Now
+                Renew Now
               </button>
-              <button
-                type="button"
-                onClick={() => setShowAlert(false)}
-                className="p-2 hover:bg-amber-100 rounded-lg transition-colors"
-              >
-                <FiX className="w-5 h-5 text-gray-600" />
+              <button onClick={() => setShowAlert(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <FiX className="w-4 h-4" />
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Success Alert */}
+      {/* Success Notification */}
       {showSuccessAlert && (
-        <div className="fixed top-6 right-6 z-[10000] animate-fade-in-up">
-          <div className="bg-white rounded-xl shadow-xl border border-gray-200 p-5 min-w-[360px]">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-emerald-50 rounded-full flex items-center justify-center flex-shrink-0">
-                <svg
-                  className="w-6 h-6 text-emerald-500"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
-              </div>
-              <div className="flex-1">
-                <h3 className="font-semibold text-gray-900 mb-1">Welcome Back!</h3>
-                <p className="text-sm text-gray-600 leading-relaxed">
-                  Your license has been successfully activated. Enjoy full access to all features!
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowSuccessAlert(false)}
-                className="flex-shrink-0 p-1 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                <FiX className="w-5 h-5 text-gray-400" />
-              </button>
+        <div className="fixed bottom-6 right-6 z-[10000]">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-100 dark:border-gray-700 p-4 flex items-center gap-4 min-w-[300px]">
+            <FiCheckCircle className="w-6 h-6 text-emerald-500" />
+            <div>
+              <p className="text-sm font-bold text-gray-900 dark:text-white">Success</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">License updated for 6 months.</p>
             </div>
           </div>
         </div>

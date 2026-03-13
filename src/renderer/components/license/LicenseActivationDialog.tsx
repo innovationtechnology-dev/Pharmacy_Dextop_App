@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FiX, FiAlertCircle } from 'react-icons/fi';
+import { FiX, FiAlertCircle, FiKey, FiCheckCircle, FiClock } from 'react-icons/fi';
 import {
   hasExceededLimit,
   getRemainingAttempts,
@@ -7,7 +7,7 @@ import {
   resetAttempts,
 } from '../../utils/licenseAttempts';
 
-const MAX_ATTEMPTS_PER_DAY = 40; // Daily activation attempts limit
+const MAX_ATTEMPTS_PER_DAY = 40;
 
 interface LicenseActivationDialogProps {
   onClose: () => void;
@@ -36,14 +36,12 @@ const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
     e.preventDefault();
 
     if (isBlocked) {
-      setError(
-        'You have exceeded the maximum number of attempts for today. Please try again tomorrow.'
-      );
+      setError('Daily limit reached. Please contact support or try again tomorrow.');
       return;
     }
 
     if (!activationCode.trim()) {
-      setError('Please enter an activation code');
+      setError('Please enter your license key.');
       return;
     }
 
@@ -51,203 +49,137 @@ const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
     setError(null);
 
     try {
-      const result = await onActivate(activationCode.trim());
+      const result = await onActivate(activationCode.trim().toUpperCase());
 
       if (result.success) {
-        // Reset attempts on success
         resetAttempts();
-        setRemainingAttempts(MAX_ATTEMPTS_PER_DAY);
-        setIsBlocked(false);
         setSuccess(true);
-        setTimeout(() => {
-          onClose();
-        }, 2000);
+        setTimeout(() => onClose(), 2000);
       } else {
-        // Increment failed attempt
         incrementAttempt();
         const newRemaining = getRemainingAttempts();
         setRemainingAttempts(newRemaining);
         setIsBlocked(hasExceededLimit());
-
-        // Show specific error message
-        if (result.error?.includes('Invalid')) {
-          setError(
-            `Wrong license code. You have ${newRemaining} attempt${newRemaining !== 1 ? 's' : ''
-            } remaining today.`
-          );
-        } else {
-          setError(result.error || 'Invalid activation code. Please try again.');
-        }
+        setError(result.error || 'Invalid activation code. Please verify your key.');
       }
     } catch (err) {
-      incrementAttempt();
-      const newRemaining = getRemainingAttempts();
-      setRemainingAttempts(newRemaining);
-      setIsBlocked(hasExceededLimit());
-      setError('An error occurred. Please try again.');
+      setError('A system error occurred. Please try again later.');
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full mx-4 overflow-hidden">
-        {/* Header */}
-        <div
-          className={`px-6 py-4 ${isExpired
-            ? 'bg-gradient-to-r from-red-500 to-orange-500'
-            : 'bg-gradient-to-r from-emerald-500 to-teal-500'
-            } text-white`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-6 h-6 rounded bg-white/20 flex items-center justify-center">
-                <span className="text-sm font-bold">🔑</span>
-              </div>
-              <h2 className="text-xl font-bold">
-                {isExpired ? 'License Activation Required' : 'Activate License'}
-              </h2>
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              className="p-1 hover:bg-white/20 rounded-lg transition-colors"
-            >
-              <FiX className="w-5 h-5" />
-            </button>
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-gray-900/50 backdrop-blur-sm">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-md w-full mx-4 border border-gray-200 dark:border-gray-700 overflow-hidden">
+        {/* Header - Clean & Professional */}
+        <div className="px-6 py-4 flex items-center justify-between border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+          <div className="flex items-center gap-3">
+            <FiKey className={`w-5 h-5 ${isExpired ? 'text-red-600' : 'text-emerald-600'}`} />
+            <h2 className="text-lg font-bold text-gray-900 dark:text-white">
+              {isExpired ? 'System Activation' : 'License Renewal'}
+            </h2>
           </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg text-gray-400 transition-colors"
+          >
+            <FiX className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Content */}
         <div className="p-6">
           {success ? (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4">
-                <svg
-                  className="w-10 h-10 text-white"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={3}
-                    d="M5 13l4 4L19 7"
-                  />
-                </svg>
+            <div className="text-center py-6">
+              <div className="w-12 h-12 bg-emerald-100 dark:bg-emerald-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+                <FiCheckCircle className="w-7 h-7 text-emerald-600" />
               </div>
-              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                License Activated Successfully!
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400">
-                Your license has been activated for 6 months. You can now use all features.
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Activated Successfully</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm">
+                Your system has been updated. This window will close automatically.
               </p>
             </div>
           ) : (
             <>
               <div className="mb-6">
-                <p className="text-gray-700 dark:text-gray-300 mb-4">
-                  {isExpired
-                    ? 'Your license has expired. Please enter a valid activation code to continue using the application.'
-                    : 'Enter your activation code to activate your license for 6 months.'}
+                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+                  {isExpired 
+                    ? 'The current license has expired. Enter a valid activation key to restore full access to pharmacy operations.'
+                    : 'Enter your 14-character activation key below to extend your current license term.'}
                 </p>
-                {isBlocked ? (
-                  <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
-                    <div className="flex items-center gap-2 text-red-800 dark:text-red-300">
-                      <FiAlertCircle className="w-5 h-5" />
-                      <p className="text-sm font-semibold">
-                        Maximum attempts reached. Please try again tomorrow.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-                    <p className="text-sm text-blue-800 dark:text-blue-300">
-                      <strong>Note:</strong> Entering a valid activation code will extend your
-                      license for 6 months from today.
+              </div>
+
+              {isBlocked ? (
+                <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-900/30 rounded-lg flex items-start gap-3">
+                  <FiAlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-700 dark:text-red-400 font-medium leading-relaxed">
+                    Security lock active. Too many failed attempts. Please try again in 24 hours or contact your administrator.
+                  </p>
+                </div>
+              ) : (
+                <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-100 dark:border-blue-900/30 rounded-lg flex items-start gap-3">
+                  <FiClock className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                      Note: Valid keys provide 6 months of system access.
                     </p>
                     {remainingAttempts < MAX_ATTEMPTS_PER_DAY && (
-                      <p className="text-sm text-blue-700 dark:text-blue-400 mt-2">
-                        <strong>Attempts remaining today:</strong> {remainingAttempts} of{' '}
-                        {MAX_ATTEMPTS_PER_DAY}
+                      <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-1">
+                        Attempts remaining today: <strong>{remainingAttempts}</strong>
                       </p>
                     )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
 
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
-                  {/* eslint-disable-next-line jsx-a11y/label-has-associated-control */}
-                  <label
-                    htmlFor="activation-code"
-                    className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
-                  >
-                    Activation Code
+                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
+                    License Key
                   </label>
                   <input
-                  id="activation-code"
-                  type="text"
-                  value={activationCode}
-                  onChange={(e) => {
-                      setActivationCode(e.target.value);
+                    type="text"
+                    value={activationCode}
+                    onChange={(e) => {
+                      setActivationCode(e.target.value.toUpperCase());
                       setError(null);
                     }}
-                    placeholder="Enter activation code"
-                    disabled={isLoading}
-                    className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    placeholder="Enter 14-character code"
+                    disabled={isLoading || isBlocked}
+                    className="w-full px-4 py-3 bg-gray-50 text-gray-600 dark:bg-gray-800 border  border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all text-md font-mono tracking-widest disabled:opacity-50"
                   />
                 </div>
 
                 {error && (
-                  <div className="flex items-center gap-2 text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
-                    <FiAlertCircle className="w-5 h-5 flex-shrink-0" />
-                    <p className="text-sm">{error}</p>
+                  <div className="p-3 bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-lg flex items-center gap-3">
+                    <FiAlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />
+                    <p className="text-xs text-red-700 dark:text-red-400 font-medium">{error}</p>
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-2">
+                <div className="flex items-center gap-3 mt-8">
                   <button
                     type="button"
                     onClick={onClose}
                     disabled={isLoading}
-                    className="flex-1 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-4 py-2.5 text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     disabled={isLoading || !activationCode.trim() || isBlocked}
-                    className="flex-1 px-4 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 text-white rounded-lg font-semibold hover:from-emerald-600 hover:to-teal-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg"
+                    className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-all shadow-sm flex items-center justify-center gap-2"
                   >
                     {isLoading ? (
-                      <span className="flex items-center justify-center gap-2">
-                        <svg
-                          className="animate-spin h-5 w-5"
-                          xmlns="http://www.w3.org/2000/svg"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                          />
-                        </svg>
-                        Activating...
-                      </span>
+                      <>
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        Validating...
+                      </>
                     ) : (
-                      'Activate License'
+                      'Activate System'
                     )}
                   </button>
                 </div>

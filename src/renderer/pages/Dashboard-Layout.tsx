@@ -14,6 +14,9 @@ import {
   FiChevronDown,
   FiHelpCircle,
   FiLogOut,
+  FiUser,
+  FiSun,
+  FiSettings,
 } from 'react-icons/fi';
 import { getAuthUser, getAuthToken, logout as authLogout } from '../utils/auth';
 import {
@@ -748,7 +751,33 @@ const Dashboard_Layout: React.FC = () => {
                           </div>
 
                           {/* Actions */}
-                          <div className="p-1.5 bg-white dark:bg-[#1a2130]">
+                          <div className="p-1.5 bg-white dark:bg-[#1a2130] space-y-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProfileMenuOpen(false);
+                                navigate('/settings', { state: { section: 'profile' } });
+                              }}
+                              className="w-full h-8 flex items-center px-3 gap-3 rounded-lg hover:bg-emerald-500/5 text-gray-600 dark:text-gray-300 text-[10px] font-semibold transition-all group"
+                            >
+                              <FiUser className="w-3 h-3 text-emerald-500/60 dark:text-gray-400 group-hover:text-emerald-500 transition-colors" />
+                              Profile
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProfileMenuOpen(false);
+                                navigate('/settings', { state: { section: 'appearance' } });
+                              }}
+                              className="w-full h-8 flex items-center px-3 gap-3 rounded-lg hover:bg-emerald-500/5 text-gray-600 dark:text-gray-300 text-[10px] font-semibold transition-all group"
+                            >
+                              <FiSun className="w-3 h-3 text-emerald-500/60 dark:text-gray-400 group-hover:text-emerald-500 transition-colors" />
+                              Theme
+                            </button>
+
+                            <div className="h-px bg-gray-100 dark:bg-[#242d3d] my-1 mx-2" />
+
                             <button
                               type="button"
                               onClick={() => {

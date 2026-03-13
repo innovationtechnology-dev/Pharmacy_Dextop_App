@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { FiX, FiMail, FiPhone, FiInfo, FiCheckCircle, FiChevronRight } from 'react-icons/fi';
 import { useTheme } from '../contexts/ThemeContext';
 import { getStoredPharmacySettings } from '../types/pharmacy';
+import { getAuthUser } from '../utils/auth';
 
 interface WelcomeNotificationProps {
     onClose: () => void;
@@ -11,6 +12,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
     const { theme } = useTheme();
     const [isVisible, setIsVisible] = useState(false);
     const [pharmacySettings] = useState(() => getStoredPharmacySettings());
+    const [user] = useState(() => getAuthUser());
 
     useEffect(() => {
         // Animate in after component mounts
@@ -66,7 +68,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                     )}
 
                     {/* Main card */}
-                    <div className={`relative rounded-3xl overflow-hidden shadow-2xl transition-colors duration-300 ring-1 ${
+                    <div className={`relative rounded-2xl overflow-hidden shadow-2xl transition-colors duration-300 ring-1 ${
                         theme === 'dark' 
                             ? 'bg-[#1a1f2e] ring-white/5 shadow-black/80' 
                             : 'bg-white ring-gray-200 shadow-emerald-900/5'
@@ -79,8 +81,8 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                             <div className="flex items-start justify-between mb-5">
                                 <div className="flex items-center gap-3">
                                     <div className="relative">
-                                        <div className={`absolute -inset-1 rounded-2xl blur-md opacity-40 transition-colors bg-emerald-500`}></div>
-                                        <div className={`relative w-12 h-12 rounded-2xl flex items-center justify-center shadow-lg bg-emerald-600 shadow-emerald-900/50`}>
+                                        <div className={`absolute -inset-1 rounded-lg blur-md opacity-10 transition-colors bg-emerald-500`}></div>
+                                        <div className={`relative w-12 h-12 rounded-lg flex items-center justify-center shadow-lg bg-emerald-600 shadow-emerald-900/50`}>
                                             <FiCheckCircle className="w-6 h-6 text-white" />
                                         </div>
                                     </div>
@@ -88,12 +90,14 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <h3 className={`text-xl font-bold tracking-tight flex items-center gap-2 ${
                                             theme === 'dark' ? 'text-white' : 'text-emerald-700'
                                         }`}>
-                                            Welcome to {pharmacySettings.pharmacyName} ! <span className="inline-block animate-bounce origin-bottom p-2">🎉</span>
+                                            Welcome back, {user?.name || 'Guest User'}! <span className="inline-block animate-bounce origin-bottom p-2">🎉</span>
                                         </h3>
-                                        <p className={`text-[12px] font-medium mt-0.5 ${
-                                            theme === 'dark' ? 'text-emerald-200/70' : 'text-gray-600/80'
+                                        <p className={`text-[11px] font-bold mt-0.5 uppercase tracking-wider flex items-center gap-2 ${
+                                            theme === 'dark' ? 'text-emerald-400' : 'text-emerald-600'
                                         }`}>
-                                            Pharmacy Management System
+                                            <span>{user?.role === 'admin' ? 'Administrator' : 'Cashier Access'}</span>
+                                            <span className="w-1 h-1 rounded-full bg-current opacity-30"></span>
+                                            <span className="opacity-80">{pharmacySettings.pharmacyName}</span>
                                         </p>
                                     </div>
                                 </div>
@@ -134,7 +138,7 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                             }`}>
                                                 A Project Created By
                                             </p>
-                                            <p className={`text-lg font-bold mb-1.5 ${
+                                            <p className={`text-lg font-semibold mb-1.5 uppercase ${
                                                 theme === 'dark' ? 'text-emerald-400' : 'text-emerald-700'
                                             }`}>
                                                 Innovation Technology
@@ -165,8 +169,8 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <FiMail className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1">
-                                        <p className={`text-[9px] font-bold uppercase tracking-widest ${
-                                            theme === 'dark' ? 'text-slate-400' : 'text-gray-500'
+                                        <p className={`text-[10px] font-semibold uppercase tracking-widest ${
+                                            theme === 'dark' ? 'text-white/80' : 'text-black/80'
                                         }`}>Email</p>
                                         <p className={`text-[13px] font-semibold leading-non mt-0.5 transition-colors ${
                                             theme === 'dark' ? 'text-gray-200 group-hover:text-white' : 'text-gray-800'
@@ -191,8 +195,8 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         <FiPhone className="w-4 h-4" />
                                     </div>
                                     <div className="flex-1">
-                                        <p className={`text-[9px] font-bold uppercase tracking-widest ${
-                                            theme === 'dark' ? 'text-slate-400' : 'text-gray-500'
+                                        <p className={`text-[10px] font-semibold uppercase tracking-widest ${
+                                            theme === 'dark' ? 'text-white/80' : 'text-black/80'
                                         }`}>Contact Number</p>
                                         <p className={`text-[14px] font-semibold leading-none mt-0.5 transition-colors ${
                                             theme === 'dark' ? 'text-gray-200 group-hover:text-white' : 'text-gray-800'
@@ -219,8 +223,8 @@ const WelcomeNotification: React.FC<WelcomeNotificationProps> = ({ onClose }) =>
                                         </svg>
                                     </div>
                                     <div className="flex-1">
-                                        <p className={`text-[9px] font-bold uppercase tracking-widest ${
-                                            theme === 'dark' ? 'text-slate-400' : 'text-gray-500'
+                                        <p className={`text-[10px] font-semibold uppercase tracking-widest ${
+                                            theme === 'dark' ? 'text-white/80' : 'text-black/80'
                                         }`}>WhatsApp</p>
                                         <p className={`text-[14px] font-semibold leading-none mt-0.5 transition-colors ${
                                             theme === 'dark' ? 'text-gray-200 group-hover:text-white' : 'text-gray-800'

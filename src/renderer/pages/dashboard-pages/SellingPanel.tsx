@@ -1500,7 +1500,7 @@ const SellingPanel: React.FC = () => {
                                 <span className="text-xs font-semibold text-green-600 dark:text-green-400">
                                   {(
                                     medicine.averageSellablePricePerPill || 0
-                                  ).toFixed(2)}
+                                  ).toFixed(1)}
                                 </span>
                                 <span
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${(medicine.sellablePills ?? 0) > 0
@@ -2008,7 +2008,7 @@ const SellingPanel: React.FC = () => {
                                 Price:{' '}
                                 {(
                                   medicine.averageSellablePricePerPill || 0
-                                ).toFixed(2)}
+                                ).toFixed(1)}
                               </span>
                               <span
                                 className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${(medicine.sellablePills ?? 0) > 0
@@ -2197,7 +2197,7 @@ const SellingPanel: React.FC = () => {
                             type="number"
                             min={0}
                             step={0.01}
-                            value={item.unitPrice}
+                            value={item.unitPrice.toFixed(1)}
                             readOnly
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
                           />
@@ -2251,7 +2251,7 @@ const SellingPanel: React.FC = () => {
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
                             const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
-                            return (itemSubtotal - itemDiscount + itemTax).toFixed(2);
+                            return (itemSubtotal - itemDiscount + itemTax).toFixed(1);
                           })()}
                         </div>
                         <div className="col-span-1 text-center">
@@ -2860,7 +2860,7 @@ const SellingPanel: React.FC = () => {
                                     {item.availableToReturn} PILLS AVAILABLE
                                   </div>
                                   <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
-                                    {symbol}{item.unitPrice.toFixed(2)} / unit
+                                    {symbol}{item.unitPrice.toFixed(1)} / unit
                                   </div>
 
                                   {/* Compact Financial Stats */}

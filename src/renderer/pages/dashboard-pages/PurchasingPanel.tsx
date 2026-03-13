@@ -1366,7 +1366,8 @@ const PurchasingPanel: React.FC = () => {
                             </div>
                             <div className="flex items-center gap-2 mt-1">
                               <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                {symbol}{item.pricePerPacket.toFixed(2)}
+                                {/*Price Per Pill*/}
+                                {symbol}{item.pricePerPacket.toFixed(1)}
                               </span>
                               {item.medicine.barcode && (
                                 <span className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
