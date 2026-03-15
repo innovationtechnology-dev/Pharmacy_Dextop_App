@@ -859,6 +859,59 @@ export class PurchaseService {
       throw error;
     }
   }
+
+  /**
+   * Get all purchase items as flat rows (one row per medicine item) for reporting
+   * Similar to sales flat rows but for purchases
+   */
+  public async getAllPurchaseFlatRows(fromDate?: string, toDate?: string, supplierId?: number): Promise<any[]> {
+    let query = `
+      SELECT 
+        p.id as purchaseId,
+        p.created_at as createdAt,
+        p.supplier_id as supplierId,
+        p.supplier_name as supplierName,
+        s.company_name as supplierCompanyName,
+        s.phone as supplierPhone,
+        s.email as supplierEmail,
+        s.address as supplierAddress,
+        pi.medicine_id as medicineId,
+        pi.medicine_name as medicineName,
+        pi.packet_quantity as packetQuantity,
+        pi.pills_per_packet as pillsPerPacket,
+        pi.total_pills as totalPills,
+        pi.price_per_packet as pricePerPacket,
+        pi.price_per_pill as pricePerPill,
+        pi.discount_amount as discountAmount,
+        pi.tax_amount as taxAmount,
+        pi.line_subtotal as lineSubtotal,
+        pi.line_total as lineTotal,
+        pi.expiry_date as expiryDate
+      FROM purchases p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      INNER JOIN purchase_items pi ON p.id = pi.purchase_id
+      WHERE 1=1
+    `;
+    
+    const params: any[] = [];
+
+    if (fromDate && toDate) {
+      const fromDateTime = `${fromDate} 00:00:00`;
+      const toDateTime = `${toDate} 23:59:59`;
+      query += ' AND datetime(p.created_at) >= datetime(?) AND datetime(p.created_at) <= datetime(?)';
+      params.push(fromDateTime, toDateTime);
+    }
+
+    if (supplierId) {
+      query += ' AND p.supplier_id = ?';
+      params.push(supplierId);
+    }
+
+    query += ' ORDER BY p.supplier_name, p.created_at DESC, pi.medicine_name';
+
+    const rows = await this.dbService.query(query, params);
+    return rows;
+  }
 }
 
 export default PurchaseService;

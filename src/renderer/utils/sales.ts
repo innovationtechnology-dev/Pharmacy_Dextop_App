@@ -27,14 +27,14 @@ export const exportSalesCsvByRange = (fromDate: string, toDate: string): Promise
   });
 };
 
-export const exportSalesPdf = (fromDate: string, toDate: string): Promise<IpcResponse<{ filePath: string }>> => {
+export const exportSalesPdf = (fromDate: string, toDate: string, preview: boolean = false): Promise<IpcResponse<{ filePath?: string; htmlContent?: string }>> => {
   return new Promise((resolve) => {
     const settings = getStoredPharmacySettings();
     window.electron.ipcRenderer.once('sales-export-pdf-reply', (...args: unknown[]) => {
-      const response = (args?.[0] as IpcResponse<{ filePath: string }>) || { success: false, error: 'no-response' };
+      const response = (args?.[0] as IpcResponse<{ filePath?: string; htmlContent?: string }>) || { success: false, error: 'no-response' };
       resolve(response);
     });
-    window.electron.ipcRenderer.sendMessage('sales-export-pdf', [fromDate, toDate, settings] as any);
+    window.electron.ipcRenderer.sendMessage('sales-export-pdf', [fromDate, toDate, settings, preview] as any);
   });
 };
 

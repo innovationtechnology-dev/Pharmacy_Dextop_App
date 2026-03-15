@@ -25,6 +25,7 @@ import {
   FiChevronUp,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
+import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
@@ -137,13 +138,12 @@ const Payments: React.FC = () => {
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  console.log("Payment Summary",paymentSummary);
   
   // Filter state
   const [activeTab, setActiveTab] = useState<'payments' | 'records' | 'accounts'>('payments');
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethod | null>(null);
-  const [periodType, setPeriodType] = useState<PeriodType>('today'); // Default to today
+  const [periodType, setPeriodType] = useState<PeriodType>('all'); // Default to all to show all payment records
   const [customFromDate, setCustomFromDate] = useState<string>('');
   const [customToDate, setCustomToDate] = useState<string>('');
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -177,6 +177,8 @@ const Payments: React.FC = () => {
   const [exportFromDate, setExportFromDate] = useState<string>('');
   const [exportToDate, setExportToDate] = useState<string>('');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
+  const [showPreview, setShowPreview] = useState(false);
+  const [pdfHtmlContent, setPdfHtmlContent] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   
   // Pagination state
@@ -245,7 +247,6 @@ const Payments: React.FC = () => {
           case 'custom':
             if (customFromDate && customToDate) {
               fromDate = customFromDate;
-              toDate = customToDate;
             }
             break;
         }
@@ -644,6 +645,32 @@ const Payments: React.FC = () => {
       setProcessing(false);
       setDeleteConfirm(null);
       alert('Error deleting purchase. Please try again.');
+    }
+  };
+
+  const handleDownloadFromPreview = async () => {
+    if (!pdfHtmlContent) return;
+    try {
+      const filters: any = {};
+      if (exportSupplierId) filters.supplierId = exportSupplierId;
+      if (exportFromDate && exportToDate) {
+        filters.fromDate = exportFromDate;
+        filters.toDate = exportToDate;
+        filters.periodType = 'custom';
+      }
+      
+      window.electron.ipcRenderer.once('payment-export-pdf-reply', (response: any) => {
+        if (response.success) {
+          setPdfHtmlContent(null);
+          alert('Payment records downloaded successfully!');
+        } else if (response.error !== 'canceled') {
+          alert('Error downloading: ' + (response.error || 'Unknown error'));
+        }
+      });
+      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, false]);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to download PDF');
     }
   };
 
@@ -1130,8 +1157,25 @@ const Payments: React.FC = () => {
               <FiFileText className="w-16 h-16 mx-auto text-gray-300 mb-4" />
               <p className="text-gray-500 dark:text-gray-400 font-medium">No payment records found</p>
               <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                Payment records will appear here when you make payments
+                {periodType === 'today' 
+                  ? 'No payments made today. Try changing the date filter to see more records.'
+                  : periodType === 'week'
+                  ? 'No payments made this week. Try changing the date filter to see more records.'
+                  : periodType === 'month'
+                  ? 'No payments made this month. Try changing the date filter to see more records.'
+                  : selectedSupplierId || selectedPaymentMethod
+                  ? 'No payment records match your current filters. Try adjusting or clearing filters.'
+                  : 'Payment records will appear here when you make payments'}
               </p>
+              {(periodType !== 'all' || selectedSupplierId || selectedPaymentMethod || searchTerm) && (
+                <button
+                  onClick={clearFilters}
+                  className="mt-4 px-4 py-2 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg font-medium transition-colors inline-flex items-center gap-2"
+                >
+                  <FiX className="w-4 h-4" />
+                  Clear all filters
+                </button>
+              )}
             </div>
           ) : recordsViewMode === 'table' ? (
             <div className="overflow-x-auto">
@@ -1856,6 +1900,19 @@ const Payments: React.FC = () => {
                     CSV
                   </button>
                 </div>
+                {exportFormat === 'pdf' && (
+                  <div className="mt-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={showPreview}
+                        onChange={(e) => setShowPreview(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Preview before Export PDF</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               {/* Supplier Filter */}
@@ -1931,13 +1988,19 @@ const Payments: React.FC = () => {
                       window.electron.ipcRenderer.once('payment-export-pdf-reply', (response: any) => {
                         setExporting(false);
                         if (response.success) {
-                          setShowExportDialog(false);
-                          alert('Payment records exported successfully!');
+                          if (showPreview && response.data?.htmlContent) {
+                            // Show preview
+                            setPdfHtmlContent(response.data.htmlContent);
+                            setShowExportDialog(false);
+                          } else {
+                            setShowExportDialog(false);
+                            alert('Payment records exported successfully!');
+                          }
                         } else if (response.error !== 'canceled') {
                           alert('Error exporting: ' + (response.error || 'Unknown error'));
                         }
                       });
-                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings]);
+                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, showPreview]);
                     } else {
                       window.electron.ipcRenderer.once('payment-export-csv-reply', (response: any) => {
                         setExporting(false);
@@ -2001,6 +2064,15 @@ const Payments: React.FC = () => {
               </div>
         </div>
       )}
+
+      {/* PDF Preview Modal */}
+      <PDFPreviewModal
+        isOpen={!!pdfHtmlContent}
+        htmlContent={pdfHtmlContent}
+        onClose={() => setPdfHtmlContent(null)}
+        onDownload={handleDownloadFromPreview}
+        title="Payment Report Preview"
+      />
     </div>
   );
 };

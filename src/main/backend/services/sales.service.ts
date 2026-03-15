@@ -52,6 +52,31 @@ export class SalesService {
     taxAmount: number;
     total: number;
   }>> {
+    // If both dates are empty, return all records
+    if (!fromDate && !toDate) {
+      const sql = `
+        SELECT 
+          s.id AS saleId,
+          s.created_at AS createdAt,
+          s.customer_name AS customerName,
+          s.customer_phone AS customerPhone,
+          s.sale_type AS saleType,
+          si.medicine_id AS medicineId,
+          si.medicine_name AS medicineName,
+          si.pills,
+          si.unit_price AS unitPrice,
+          si.subtotal,
+          si.discount_amount AS discountAmount,
+          si.tax_amount AS taxAmount,
+          si.total
+        FROM sale_items si
+        INNER JOIN sales s ON s.id = si.sale_id
+        ORDER BY s.created_at DESC, s.id DESC, si.id ASC
+      `;
+      const rows = await this.dbService.query(sql, []);
+      return rows as any;
+    }
+    
     const fromDateOnly = fromDate;
     const toDateOnly = toDate;
     const sql = `

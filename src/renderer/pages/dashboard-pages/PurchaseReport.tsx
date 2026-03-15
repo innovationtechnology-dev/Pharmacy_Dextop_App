@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText, FiTruck } from 'react-icons/fi';
-import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaChevronDown, FaArrowLeft, FaUndo } from 'react-icons/fa';
+import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaArrowLeft, FaUndo } from 'react-icons/fa';
 import ReportDetailModal from '../../components/common/DetailModal';
+import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { exportPurchasesPdf, exportPurchasesCsv } from '../../utils/purchases';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
@@ -42,6 +43,16 @@ interface Purchase {
   updatedAt?: string;
 }
 
+interface Supplier {
+  id: number;
+  name: string;
+  companyName?: string;
+  phone?: string;
+  email?: string;
+  website?:string;
+  address?: string;
+}
+
 const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
 
 export default function Purchases() {
@@ -65,22 +76,31 @@ export default function Purchases() {
   }, []);
 
   const [purchases, setPurchases] = useState<Purchase[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
+  const [exportSupplierId, setExportSupplierId] = useState<number | undefined>(undefined);
+  const [exportFromDate, setExportFromDate] = useState<string>('');
+  const [exportToDate, setExportToDate] = useState<string>('');
+  const [exporting, setExporting] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
+  const [pdfHtmlContent, setPdfHtmlContent] = useState<string | null>(null);
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [showPdfOptions, setShowPdfOptions] = useState(false);
+  const [selectedSupplierId, setSelectedSupplierId] = useState<number | undefined>(undefined);
   const pageSize = 10;
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const isCashier = getAuthUser()?.role === 'cashier';
 
   // Get currency symbol
-  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
+  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'PKR');
   // Set header
   useEffect(() => {
     setHeader({
@@ -118,64 +138,71 @@ export default function Purchases() {
   // Initial fetch
   useEffect(() => {
     fetchPurchases();
+    // Fetch suppliers list
+    window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
+      if (response.success) {
+        setSuppliers(response.data || []);
+      }
+    });
+    window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
   }, []); // Run once on mount
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDownloadDropdown(false);
-      }
-    };
-
-    if (showDownloadDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showDownloadDropdown]);
-
-  const [showPdfOptions, setShowPdfOptions] = useState(false);
-  const [pdfExportOptions, setPdfExportOptions] = useState({
-    // Supplier details
-    includeName: true,
-    includeCompany: true,
-    includePhone: true,
-    includeAddress: true,
-    includeEmail: true,
-    // Table columns
-    includeDate: true,
-    includeSupplier: true,
-    includeItems: true,
-    includePills: true,
-    includeGrandTotal: true,
-    includePaid: true,
-    includeOutstanding: true
-  });
-
   const handleDownloadPdf = async () => {
-    setShowPdfOptions(false);
+    setExporting(true);
     try {
-      const res = await exportPurchasesPdf(fromDate, toDate, pdfExportOptions);
+      // Use export dates if provided, otherwise use empty strings to export all
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportPurchasesPdf(fromDateToUse, toDateToUse, exportSupplierId, showPreview);
+      setExporting(false);
       if (!res.success) {
         alert('Failed to export PDF: ' + (res.error || 'Unknown error'));
+      } else if (showPreview && res.data?.htmlContent) {
+        setPdfHtmlContent(res.data.htmlContent);
+        setShowExportDialog(false);
+      } else {
+        setShowExportDialog(false);
+        alert('Purchase report exported successfully!');
       }
     } catch (err) {
+      setExporting(false);
       console.error(err);
       alert('Failed to export PDF');
     }
   };
 
-  const handleDownloadCsv = async () => {
-    setShowDownloadDropdown(false);
+  const handleDownloadFromPreview = async () => {
+    if (!pdfHtmlContent) return;
     try {
-      const res = await exportPurchasesCsv();
-      if (!res.success) {
-        alert('Failed to export CSV: ' + (res.error || 'Unknown error'));
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportPurchasesPdf(fromDateToUse, toDateToUse, exportSupplierId, false);
+      if (res.success) {
+        setPdfHtmlContent(null);
+        alert('Purchase report downloaded successfully!');
       }
     } catch (err) {
+      console.error(err);
+      alert('Failed to download PDF');
+    }
+  };
+
+  const handleDownloadCsv = async () => {
+    setExporting(true);
+    try {
+      // Use export dates if provided, otherwise use empty strings to export all
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportPurchasesCsv(exportSupplierId, fromDateToUse, toDateToUse);
+      setExporting(false);
+      if (!res.success) {
+        alert('Failed to export CSV: ' + (res.error || 'Unknown error'));
+      } else {
+        setShowExportDialog(false);
+        alert('Purchase report exported successfully!');
+      }
+    } catch (err) {
+      setExporting(false);
       console.error(err);
       alert('Failed to export CSV');
     }
@@ -232,151 +259,45 @@ export default function Purchases() {
       {/* PDF Export Options Modal */}
       {showPdfOptions && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl border border-gray-200 dark:border-gray-700 max-h-[90vh] overflow-y-auto">
-            <div className="p-4 border-b border-gray-100 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800 z-10">
-              <h3 className="text-lg font-bold text-gray-800 dark:text-white">PDF Export Options</h3>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Customize your purchase report export</p>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md border border-gray-200 dark:border-gray-700">
+            <div className="p-4 border-b border-gray-100 dark:border-gray-700">
+              <h3 className="text-lg font-bold text-gray-800 dark:text-white">Export Purchase Report</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Select supplier filter for your report</p>
             </div>
 
-            <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Supplier Details Section */}
-              <div>
-                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 pb-2 border-b border-gray-200 dark:border-gray-600">
-                  Supplier Details
+            <div className="p-4">
+              {/* Supplier Filter Section */}
+              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-200 dark:border-blue-800">
+                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2">
+                  <FiTruck className="w-4 h-4 text-blue-600" />
+                  Supplier Filter
                 </h4>
                 <div className="space-y-2">
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeName}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeName: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Supplier Name</span>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    Select Supplier
                   </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeCompany}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeCompany: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Company Name</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includePhone}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includePhone: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Phone / Mobile</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeEmail}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeEmail: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Email</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeAddress}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeAddress: e.target.checked })}
-                      className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Address</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Table Columns Section */}
-              <div>
-                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-200 mb-3 pb-2 border-b border-gray-200 dark:border-gray-600">
-                  Table Columns
-                </h4>
-                <div className="space-y-2">
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeDate}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeDate: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Date / PO</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeSupplier}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeSupplier: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Supplier</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeItems}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeItems: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Items</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includePills}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includePills: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Pills</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeGrandTotal}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeGrandTotal: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Grand Total</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includePaid}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includePaid: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Paid</span>
-                  </label>
-
-                  <label className="flex items-center gap-3 p-2 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={pdfExportOptions.includeOutstanding}
-                      onChange={e => setPdfExportOptions({ ...pdfExportOptions, includeOutstanding: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
-                    />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-200">Outstanding</span>
-                  </label>
+                  <select
+                    value={selectedSupplierId || ''}
+                    onChange={(e) => setSelectedSupplierId(e.target.value ? Number(e.target.value) : undefined)}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  >
+                    <option value="">All Suppliers</option>
+                    {suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name} {supplier.companyName ? `(${supplier.companyName})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                    {selectedSupplierId 
+                      ? '📋 Report will show individual medicine items from selected supplier' 
+                      : '📋 Report will show all suppliers grouped together with their medicine items'}
+                  </p>
                 </div>
               </div>
             </div>
 
-            <div className="p-4 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3 sticky bottom-0 bg-white dark:bg-gray-800">
+            <div className="p-4 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-3 bg-gray-50 dark:bg-gray-900/50">
               <button
                 onClick={() => setShowPdfOptions(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
@@ -563,44 +484,15 @@ export default function Purchases() {
                     />
                   </div>
                 </div>
-                {/* Download Dropdown - Hidden for Cashiers */}
+                {/* Download Button - Hidden for Cashiers */}
                 {!isCashier && (
-                  <div className="relative w-full sm:w-auto" ref={dropdownRef}>
-                    <button
-                      onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                      className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
-                    >
-                      {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
-                      Download
-                      {renderIcon(FaChevronDown, { className: `w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}` })}
-                    </button>
-
-                    {/* Dropdown Menu */}
-                    {showDownloadDropdown && (
-                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
-                        <button
-                          onClick={() => { setShowDownloadDropdown(false); setShowPdfOptions(true); }}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
-                        >
-                          {renderIcon(FaFilePdf, { className: "w-4 h-4 text-red-500" })}
-                          <div>
-                            <div className="font-bold">Export as PDF</div>
-                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
-                          </div>
-                        </button>
-                        <button
-                          onClick={handleDownloadCsv}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
-                        >
-                          {renderIcon(FaFileExcel, { className: "w-4 h-4 text-green-500" })}
-                          <div>
-                            <div className="font-bold">Export as CSV</div>
-                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
-                          </div>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => setShowExportDialog(true)}
+                    className="w-full sm:w-auto px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded hover:bg-red-100 dark:hover:bg-red-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+                  >
+                    {renderIcon(FaArrowDown, { className: "w-3.5 h-3.5" })}
+                    Download
+                  </button>
                 )}
               </div>
             </div>
@@ -691,7 +583,7 @@ export default function Purchases() {
                             setSelectedPurchase(purchase);
                             setShowDetailModal(true);
                           }}
-                          className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-900 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
+                          className="px-2.5 py-1.5 bg-blue-400 dark:bg-blue-900 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
                           title="View Details"
                         >
                           View                       
@@ -833,10 +725,10 @@ export default function Purchases() {
           )
         }}
         summaryItems={[
-          { label: 'Gross Total', value: `${getCurrencySymbol()}${selectedPurchase?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedPurchase?.discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedPurchase?.taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` },
-          { label: 'Net Total', type: 'total', value: `${getCurrencySymbol()}${selectedPurchase?.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}` }
+          { label: 'Gross Total', value: `${getCurrencySymbol()}${selectedPurchase?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedPurchase?.discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedPurchase?.taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Net Total', type: 'total', value: `${getCurrencySymbol()}${selectedPurchase?.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
         ]}
         footerStatus={{
           label: 'System Record Verified',
@@ -871,6 +763,157 @@ export default function Purchases() {
           </div>
         </div>
       </ReportDetailModal>
+
+      {/* Export Dialog */}
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Export Purchase Records</h3>
+                <button
+                  onClick={() => setShowExportDialog(false)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  {renderIcon(FiX, { className: "w-5 h-5 text-gray-500" })}
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Export Format */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Export Format</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setExportFormat('pdf')}
+                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                      exportFormat === 'pdf'
+                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                    }`}
+                  >
+                    PDF
+                  </button>
+                  <button
+                    onClick={() => setExportFormat('csv')}
+                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                      exportFormat === 'csv'
+                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                    }`}
+                  >
+                    CSV
+                  </button>
+                </div>
+                {exportFormat === 'pdf' && (
+                  <div className="mt-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={showPreview}
+                        onChange={(e) => setShowPreview(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Preview before Export PDF</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Supplier Filter */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Supplier (Optional)
+                </label>
+                <select
+                  value={exportSupplierId || ''}
+                  onChange={(e) => setExportSupplierId(e.target.value ? parseInt(e.target.value) : undefined)}
+                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
+                >
+                  <option value="">All Suppliers</option>
+                  {suppliers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} {s.companyName ? `(${s.companyName})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Date Range */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Date Range
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">From Date</label>
+                    <input
+                      type="date"
+                      value={exportFromDate}
+                      onChange={(e) => setExportFromDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">To Date</label>
+                    <input
+                      type="date"
+                      value={exportToDate}
+                      onChange={(e) => setExportToDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Leave empty to export all records
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex gap-3">
+              <button
+                onClick={() => setShowExportDialog(false)}
+                className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (exportFormat === 'pdf') {
+                    handleDownloadPdf();
+                  } else {
+                    handleDownloadCsv();
+                  }
+                }}
+                disabled={exporting}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                {exporting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    {renderIcon(FaArrowDown, { className: "w-4 h-4" })}
+                    Export {exportFormat.toUpperCase()}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Preview Modal */}
+      <PDFPreviewModal
+        isOpen={!!pdfHtmlContent}
+        htmlContent={pdfHtmlContent}
+        onClose={() => setPdfHtmlContent(null)}
+        onDownload={handleDownloadFromPreview}
+        title="Purchase Report Preview"
+      />
     </div>
   );
 }

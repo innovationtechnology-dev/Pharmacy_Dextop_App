@@ -522,6 +522,47 @@ export class SaleReturnService {
     total: number;
     reason?: string;
   }>> {
+    // If both dates are empty, return all records
+    if (!fromDate && !toDate) {
+      const sql = `
+        SELECT
+          sr.id AS saleReturnId,
+          sr.sale_id AS saleId,
+          sr.created_at AS createdAt,
+          sr.customer_name AS customerName,
+          sr.customer_phone AS customerPhone,
+          sri.medicine_id AS medicineId,
+          sri.medicine_name AS medicineName,
+          sri.pills,
+          sri.unit_price AS unitPrice,
+          sri.subtotal,
+          sri.discount_amount AS discountAmount,
+          sri.tax_amount AS taxAmount,
+          sri.total,
+          sri.reason
+        FROM sale_return_items sri
+        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        ORDER BY sr.created_at DESC, sr.id DESC, sri.id ASC
+      `;
+      const rows = await this.dbService.query(sql, []);
+      return rows.map((row: any) => ({
+        saleReturnId: row.saleReturnId,
+        saleId: row.saleId,
+        createdAt: row.createdAt,
+        customerName: row.customerName || undefined,
+        customerPhone: row.customerPhone || undefined,
+        medicineId: row.medicineId,
+        medicineName: row.medicineName,
+        pills: row.pills,
+        unitPrice: row.unitPrice,
+        subtotal: row.subtotal,
+        discountAmount: row.discountAmount,
+        taxAmount: row.taxAmount,
+        total: row.total,
+        reason: row.reason || undefined,
+      }));
+    }
+    
     const fromDateOnly = fromDate;
     const toDateOnly = toDate;
     const sql = `

@@ -1,6 +1,7 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { PurchaseService, Purchase } from '../services/purchase.service';
 import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
+import { web } from 'webpack';
 
 export class PurchaseController {
   private purchaseService: PurchaseService;
@@ -160,50 +161,137 @@ export class PurchaseController {
     ipcMain.on('purchase-export-csv', async (event: IpcMainEvent, args: any[]) => {
       try {
         const settings = args[0] || {};
-        const purchases = await this.purchaseService.getAllPurchases();
-        const header = ['Serial No', 'Date', 'Supplier', 'Items', 'Subtotal', 'Discount', 'Tax', 'Grand Total', 'Paid', 'Outstanding', 'Notes'];
+        const supplierId = args[1] as number | undefined;
+        const fromDate = args[2] as string | undefined;
+        const toDate = args[3] as string | undefined;
+        
+        // Get purchases with date range filter
+        let purchases = await this.purchaseService.getAllPurchases(fromDate, toDate);
+        
+        // Filter by supplier if specified
+        if (supplierId) {
+          purchases = purchases.filter(p => p.supplierId === supplierId);
+        }
+        
+        const currencySymbol = getCurrencySymbol(settings.currency || 'PKR');
+        
         const esc = (v: any) => {
           const s = v === null || v === undefined ? '' : String(v);
           return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
         };
 
         // Company Header
+        const dateRangeText = fromDate && toDate 
+          ? `Date Range: ${fromDate} to ${toDate}`
+          : fromDate 
+            ? `From Date: ${fromDate}`
+            : toDate 
+              ? `To Date: ${toDate}`
+              : 'All Records';
+        
         const companyInfo = [
           [settings.pharmacyName || 'Pharmacy Name'],
           [settings.address || ''],
-          [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''}`],
+          [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''} | ${settings.website && `Website: ${settings.website}`}`],
           [settings.taxId ? `Tax ID: ${settings.taxId}` : ''],
           [''],
           ['PURCHASE RECORDS REPORT'],
+          [dateRangeText],
+          supplierId && purchases.length > 0 ? [`Supplier Filter: ${purchases[0].supplierName}`] : [],
           [`Generated on: ${new Date().toLocaleString()}`],
           ['']
+        ].filter(row => row.length > 0).map(row => row.map(esc).join(',')).join('\n');
+
+        // Column headers
+        const header = ['Item', 'Date', 'PO #', 'Medicine', 'Packets', 'Total Pills', 'Price/Pkt', 'Subtotal', 'Disc.', 'Tax', 'Total'];
+
+        // Calculate grand totals
+        let totalItems = 0;
+        let grandSubtotal = 0;
+        let grandDiscount = 0;
+        let grandTax = 0;
+        let grandTotal = 0;
+
+        // Group purchases by supplier
+        const supplierGroups = new Map<string, typeof purchases>();
+        purchases.forEach(p => {
+          const key = `${p.supplierName}|${p.supplierCompanyName || ''}`;
+          if (!supplierGroups.has(key)) {
+            supplierGroups.set(key, []);
+          }
+          supplierGroups.get(key)!.push(p);
+        });
+
+        let csvRows: string[] = [];
+        let itemNumber = 1;
+
+        // Process each supplier group
+        for (const [supplierKey, supplierPurchases] of supplierGroups) {
+          const [supplierName, companyName] = supplierKey.split('|');
+          
+          // Calculate supplier totals
+          const supplierItemCount = supplierPurchases.reduce((sum, p) => sum + p.items.length, 0);
+          const supplierTotal = supplierPurchases.reduce((sum, p) => sum + p.grandTotal, 0);
+
+          // Supplier header row
+          csvRows.push(['', '', '', `${supplierName}${companyName ? ` - ${companyName}` : ''}`, '', '', '', '', '', `${supplierItemCount} items • ${currencySymbol}${supplierTotal.toFixed(2)}`].map(esc).join(','));
+          csvRows.push(''); // Empty row
+
+          // Column headers for this supplier
+          csvRows.push(header.map(esc).join(','));
+
+          // Process each purchase for this supplier
+          supplierPurchases.forEach(purchase => {
+            purchase.items.forEach((item, idx) => {
+              const itemSubtotal = item.lineSubtotal;
+              const itemDiscount = item.discountAmount || 0;
+              const itemTax = item.taxAmount || 0;
+              const itemTotal = item.lineTotal;
+
+              totalItems++;
+              grandSubtotal += itemSubtotal;
+              grandDiscount += itemDiscount;
+              grandTax += itemTax;
+              grandTotal += itemTotal;
+
+              csvRows.push([
+                itemNumber++,
+                idx === 0 && purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : '',
+                idx === 0 ? `PO-${purchase.id}` : '',
+                `${item.medicineName} (Exp: ${item.expiryDate})`,
+                item.packetQuantity,
+                item.totalPills,
+                `${currencySymbol}${item.pricePerPacket.toFixed(2)}`,
+                `${currencySymbol}${itemSubtotal.toFixed(2)}`,
+                `${currencySymbol}${itemDiscount.toFixed(2)}`,
+                `${currencySymbol}${itemTax.toFixed(2)}`,
+                `${currencySymbol}${itemTotal.toFixed(2)}`
+              ].map(esc).join(','));
+            });
+          });
+
+          csvRows.push(''); // Empty row after supplier
+        }
+
+        const csvData = csvRows.join('\n');
+
+        // Footer with totals
+        const footer = [
+          [''],
+          ['Summary'],
+          ['Total Items', totalItems],
+          ['Total Subtotal', `${currencySymbol}${grandSubtotal.toFixed(2)}`],
+          ['Total Discount', `${currencySymbol}${grandDiscount.toFixed(2)}`],
+          ['Total Tax', `${currencySymbol}${grandTax.toFixed(2)}`],
+          ['Grand Total', `${currencySymbol}${grandTotal.toFixed(2)}`],
+          [''],
+          [`${settings.currency || 'PKR'} - Total Purchase Value of ${currencySymbol}${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Only`],
+          [''],
+          ['Remark: Computer Generated Report'],
+          ['E. & O.E.']
         ].map(row => row.map(esc).join(',')).join('\n');
 
-        const csvData = [
-          header.join(','),
-          ...purchases.map((p, index) => {
-            const rowData: any = {
-              serialNo: index + 1,
-              date: p.createdAt ? new Date(p.createdAt).toLocaleDateString() : '',
-              supplier: p.supplierName,
-              items: p.items.length,
-              subtotal: p.subtotal.toFixed(2),
-              discount: p.discountTotal.toFixed(2),
-              tax: p.taxTotal.toFixed(2),
-              grandTotal: p.grandTotal.toFixed(2),
-              paid: p.paymentAmount.toFixed(2),
-              outstanding: p.remainingBalance.toFixed(2),
-              notes: p.notes || ''
-            };
-            return [
-              rowData.serialNo, rowData.date, rowData.supplier, rowData.items,
-              rowData.subtotal, rowData.discount, rowData.tax, rowData.grandTotal,
-              rowData.paid, rowData.outstanding, rowData.notes
-            ].map(esc).join(',');
-          })
-        ].join('\n');
-
-        const finalCsv = companyInfo + '\n' + csvData;
+        const finalCsv = companyInfo + '\n' + csvData + '\n' + footer;
 
         const ts = new Date();
         const defaultName = `purchases_export_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.csv`;
@@ -225,383 +313,198 @@ export class PurchaseController {
         const settings = args[0] || {};
         const fromDate = args[1];
         const toDate = args[2];
-        const options = args[3] || {
-          includeName: true,
-          includeCompany: true,
-          includePhone: true,
-          includeAddress: true,
-          includeEmail: true
-        };
+        const supplierId = args[3]; // New parameter for supplier filter
+        const preview = args[4] === true;
 
-        const purchases = await this.purchaseService.getAllPurchases(fromDate, toDate);
-        const total = purchases.reduce((sum, p) => sum + p.grandTotal, 0);
-
-        const totalPaid = purchases.reduce((sum, p) => sum + p.paymentAmount, 0);
-        const totalOutstanding = purchases.reduce((sum, p) => sum + p.remainingBalance, 0);
-
+        // Get flat purchase rows (one row per medicine item)
+        const rows = await this.purchaseService.getAllPurchaseFlatRows(fromDate, toDate, supplierId);
+        
+        // Calculate totals
+        const total = rows.reduce((sum, r: any) => sum + (r.lineTotal || 0), 0);
+        const totalDiscount = rows.reduce((sum, r: any) => sum + (r.discountAmount || 0), 0);
+        const totalTax = rows.reduce((sum, r: any) => sum + (r.taxAmount || 0), 0);
+        const subtotal = rows.reduce((sum, r: any) => sum + (r.lineSubtotal || 0), 0);
         const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+        
+        // Import professional template utilities
+        const { getProfessionalPDFStyles, generatePDFHeader, wrapPDFContent } = require('../utils/pdf-template');
 
-        const html = `
-          <html>
-          <head>
-            <meta charset='utf-8' />
-            <style>
-              @page {
-                size: A4;
-                margin: 0;
-              }
-              
-              body { 
-                font-family: 'Arial', sans-serif; 
-                font-size: 10pt; 
-                color: #000; 
-                margin: 0; 
-                padding: 0;
-                box-sizing: border-box;
-              }
-              
-              .container { 
-                padding: 20px 30px; 
-                position: relative;
-                page-break-after: avoid;
-              }
-              
-              /* Header */
-              .header { display: flex; justify-content: space-between; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 2px solid #000; }
-              .company-info { flex: 1; }
-              .info-row { display: flex; margin-bottom: 4px; font-size: 9pt; }
-              .info-label { width: 90px; font-weight: bold; color: #000; }
-              .info-val { flex: 1; color: #333; }
-              
-              .doc-info { text-align: right; }
-              .doc-title { 
-                font-size: 16pt; 
-                font-weight: bold; 
-                color: #000; 
-                margin-bottom: 15px; 
-                border: 2px solid #000; 
-                padding: 8px 20px; 
-                display: inline-block;
-                letter-spacing: 1px;
-              }
-              .doc-grid { display: grid; grid-template-columns: auto auto; gap: 3px 10px; font-size: 9pt; text-align: left; }
-              .doc-label { font-weight: bold; color: #000; }
-              .doc-val { color: #333; }
-              
-              /* Table */
-              table { 
-                width: 100%; 
-                border-collapse: collapse; 
-                margin-top: 20px; 
-                border: 1px solid #000;
-                page-break-inside: auto;
-              }
-              
-              thead {
-                display: table-header-group;
-              }
-              
-              tbody {
-                display: table-row-group;
-              }
-              
-              tr {
-                page-break-inside: avoid;
-                page-break-after: auto;
-              }
-              
-              th { 
-                background-color: #f5f5f5; 
-                font-weight: bold; 
-                text-transform: uppercase; 
-                font-size: 8pt;
-                padding: 10px 8px;
-                text-align: left;
-                border: 1px solid #000;
-                letter-spacing: 0.5px;
-              }
-              
-              td { 
-                padding: 8px; 
-                font-size: 9pt; 
-                border: 1px solid #ccc;
-                vertical-align: top;
-              }
-              
-              tbody tr:nth-child(even) {
-                background-color: #fafafa;
-              }
-              
-              tbody tr:hover {
-                background-color: #f0f0f0;
-              }
-              
-              .text-right { text-align: right; font-weight: 500; }
-              .text-center { text-align: center; }
-              
-              /* Footer */
-              .footer { 
-                margin-top: 30px; 
-                padding-top: 20px;
-                border-top: 2px solid #000;
-                page-break-inside: avoid;
-              }
-              
-              .footer-content {
-                display: flex;
-                justify-content: space-between;
-                align-items: flex-start;
-              }
-              
-              .footer-left {
-                flex: 1;
-                font-size: 9pt;
-              }
-              
-              .footer-right {
-                flex: 1;
-                text-align: right;
-              }
-              
-              .totals-table {
-                display: inline-block;
-                min-width: 300px;
-              }
-              
-              .totals-row { 
-                display: flex; 
-                justify-content: space-between; 
-                padding: 6px 10px; 
-                border-bottom: 1px solid #ddd; 
-                font-size: 10pt; 
-              }
-              
-              .totals-row.grand { 
-                font-weight: bold; 
-                font-size: 11pt; 
-                border-top: 2px solid #000; 
-                border-bottom: 2px solid #000; 
-                margin-top: 5px;
-                background-color: #f5f5f5;
-              }
-              
-              .totals-label {
-                font-weight: 600;
-              }
-              
-              .totals-value {
-                font-weight: bold;
-                min-width: 120px;
-                text-align: right;
-              }
-              
-              .signature-section { 
-                margin-top: 60px; 
-                text-align: left;
-              }
-              
-              .signature-line { 
-                border-top: 1px solid #000; 
-                display: inline-block; 
-                width: 250px; 
-                margin-top: 50px; 
-              }
-              
-              .signature-label { 
-                margin-top: 5px; 
-                font-size: 9pt; 
-                font-weight: bold;
-              }
-              
-              .remark {
-                margin-top: 15px;
-                font-size: 9pt;
-                color: #555;
-              }
-            </style>
-          </head>
-          <body>
-            <div class="container">
-              <div class="header">
-                <div class="company-info">
-                  <div class="info-row">
-                    <div class="info-label">NAME</div>
-                    <div class="info-val">: <strong>${settings.pharmacyName || 'Pharmacy Name'}</strong></div>
+        const styles = getProfessionalPDFStyles();
+        const header = generatePDFHeader({
+          title: 'PR No.',
+          documentType: 'PURCHASE',
+          period: { from: fromDate, to: toDate },
+          currency: settings.currency || 'PKR',
+          settings: {
+            pharmacyName: settings.pharmacyName,
+            address: settings.address,
+            phone: settings.phone,
+            email: settings.email,
+            website: settings.website,
+            taxId: settings.taxId,
+            logoUrl: settings.logoUrl,
+          }
+        });
+
+        // Group rows by supplier for better organization
+        const rowsBySupplier: { [key: string]: any[] } = {};
+        rows.forEach((row: any) => {
+          const supplierKey = row.supplierName || 'Unknown Supplier';
+          if (!rowsBySupplier[supplierKey]) {
+            rowsBySupplier[supplierKey] = [];
+          }
+          rowsBySupplier[supplierKey].push(row);
+        });
+
+        let tableRows = '';
+        let itemIndex = 0;
+
+        // Generate table rows grouped by supplier
+        Object.keys(rowsBySupplier).sort().forEach(supplierName => {
+          const supplierRows = rowsBySupplier[supplierName];
+          const supplierTotal = supplierRows.reduce((sum, r) => sum + r.lineTotal, 0);
+          
+          // Supplier header row
+          tableRows += `
+            <tr style="background-color: #ffffff;">
+              <td colspan="11" style="font-weight: semi-bold; font-size: 10pt; padding: 10px 8px; background-color: #ffffff;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <span style="color: #000000;">📦 ${supplierName}</span>
+                    ${supplierRows[0].supplierCompanyName ? `<span style="font-size: 8pt;font-weight:normal; color: #000000; margin-left: 10px;">${supplierRows[0].supplierCompanyName}</span> ` : ''}
                   </div>
-                  <div class="info-row">
-                    <div class="info-label">COMPANY</div>
-                    <div class="info-val">: ${settings.pharmacyName || ''}</div>
-                  </div>
-                  <div class="info-row">
-                    <div class="info-label">ADDRESS</div>
-                    <div class="info-val">: ${settings.address || ''}</div>
-                  </div>
-                  <div class="info-row">
-                    <div class="info-label">PHONE</div>
-                    <div class="info-val">: ${settings.phone || ''}</div>
-                  </div>
-                  <div class="info-row">
-                    <div class="info-label">EMAIL</div>
-                    <div class="info-val">: ${settings.email || ''}</div>
+                  <div style="font-size: 9pt; color: #000000;">
+                    ${supplierRows.length} items • ${currencySymbol}${supplierTotal.toFixed(2)}
                   </div>
                 </div>
+              </td>
+            </tr>
+          `;
+
+          // Medicine items for this supplier
+          supplierRows.forEach((r: any) => {
+            itemIndex++;
+            tableRows += `
+              <tr>
+                <td>${itemIndex} ${r.createdAt ? new Date(r.createdAt).toLocaleDateString() : ''}</td>
+
+                <td>PO-${r.purchaseId}</td>
+                <td>
+                  <div style="">${r.medicineName}</div>
+                  ${r.expiryDate ? `<div style="font-size: 7pt; color: #666; margin-top:2pt">Exp: ${new Date(r.expiryDate).toLocaleDateString()}</div>` : ''}
+                </td>
+                <td class="text-center">${r.packetQuantity} <div style="font-size: 7pt; color: #666;">Pills/Qty: ${r.pillsPerPacket}</div> </td>
+                <td class="text-center">${r.totalPills}</td>
+                <td class="text-right">${currencySymbol}${r.pricePerPacket.toFixed(2)}</td>
+                <td class="text-right">${currencySymbol}${r.lineSubtotal.toFixed(2)}</td>
+                <td class="text-right">${currencySymbol}${(r.discountAmount || 0).toFixed(2)}</td>
+                <td class="text-right">${currencySymbol}${(r.taxAmount || 0).toFixed(2)}</td>
+                <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.lineTotal.toFixed(2)}</td>
+              </tr>
+            `;
+          });
+        });
+
+        const tableContent = `
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px;">Item Date</th>
+                <th style="width: 70px;">PO #</th>
+                <th>Medicine</th>
+                <th class="text-center" style="width: 70px;">Packets</th>
+                <th class="text-center" style="width: 80px;">Total Pills</th>
+                <th class="text-right" style="width: 90px;">Price/Pkt</th>
+                <th class="text-right" style="width: 90px;">Subtotal</th>
+                <th class="text-right" style="width: 80px;">Disc.</th>
+                <th class="text-right" style="width: 80px;">Tax</th>
+                <th class="text-right" style="width: 100px;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows}
+            </tbody>
+          </table>
+        `;
+
+        const footer = `
+          <div class="footer">
+            <div class="footer-content">
+              <div class="footer-left">
+                <div class="remark">
+                  <strong>${settings.currency || 'USD'}</strong> - Total Purchase Value of <strong>${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> Only
+                </div>
+                <div class="remark">
+                  <strong>Purchase Breakdown:</strong><br/>
+                  Subtotal: ${currencySymbol}${subtotal.toFixed(2)}<br/>
+                  Total Discount: ${currencySymbol}${totalDiscount.toFixed(2)}<br/>
+                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}<br/>
+                  Suppliers: ${Object.keys(rowsBySupplier).length}
+                </div>
+                <div class="remark">
+                  <strong>Remark:</strong> Computer Generated Report
+                </div>
+                <div style="margin-top: 10px; font-size: 8pt; font-weight: bold; border: 1px solid #000; padding: 3px 6px; display: inline-block;">
+                  E. & O.E.
+                </div>
                 
-                <div class="doc-info">
-                  <div class="doc-title">PURCHASE REPORT</div>
-                  <div class="doc-grid">
-                    <div class="doc-label">DOCUMENT NO</div>
-                    <div class="doc-val">: REP-${new Date().getTime().toString().slice(-6)}</div>
-                    
-                    <div class="doc-label">DATE</div>
-                    <div class="doc-val">: ${new Date().toLocaleDateString()}</div>
-                    
-                    <div class="doc-label">PERIOD</div>
-                    <div class="doc-val">: ${fromDate || 'Start'} to ${toDate || 'End'}</div>
-                    
-                    <div class="doc-label">CURRENCY</div>
-                    <div class="doc-val">: ${settings.currency || 'USD'}</div>
-                    
-                    <div class="doc-label">PAGE</div>
-                    <div class="doc-val">: 1 of 1</div>
-                  </div>
+                <div class="signature-section">
+                  <div class="signature-line"></div>
+                  <div class="signature-label">Company Chop & Signature</div>
+                  <div style="font-size: 8pt; margin-top: 3px; color: #666;">Name</div>
+                  <div style="font-size: 8pt; color: #666;">Date</div>
                 </div>
               </div>
 
-              <table>
-                <thead>
-                  <tr>
-                    <th style="width: 40px;">Item</th>
-                    ${options.includeDate ? '<th style="width: 100px;">Date / PO</th>' : ''}
-                    ${options.includeSupplier ? '<th>Supplier</th>' : ''}
-                    ${options.includeItems ? '<th class="text-center" style="width: 80px;">Items Qty</th>' : ''}
-                    ${options.includePills ? '<th class="text-center" style="width: 80px;">Pills</th>' : ''}
-                    ${options.includeGrandTotal ? '<th class="text-right" style="width: 100px;">Total</th>' : ''}
-                    ${options.includePaid ? '<th class="text-right" style="width: 100px;">Paid</th>' : ''}
-                    ${options.includeOutstanding ? '<th class="text-right" style="width: 100px;">Outstanding</th>' : ''}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${purchases.map((p, index) => {
-          let description = '';
-
-          // Build supplier description based on options
-          if (options.includeName) {
-            description += `<div style="font-weight: bold;">${p.supplierName}</div>`;
-          }
-
-          if (options.includeCompany && p.supplierCompanyName) {
-            description += `<div style="font-size: 8pt;">Company: ${p.supplierCompanyName}</div>`;
-          }
-
-          const contactDetails = [];
-          if (options.includeAddress && p.supplierAddress) {
-            contactDetails.push(p.supplierAddress);
-          }
-          if (options.includePhone && p.supplierPhone) {
-            contactDetails.push(p.supplierPhone);
-          }
-          if (options.includeEmail && p.supplierEmail) {
-            contactDetails.push(p.supplierEmail);
-          }
-
-          if (contactDetails.length > 0) {
-            description += `<div style="font-size: 8pt; color: #555;">${contactDetails.join(' | ')}</div>`;
-          }
-
-          // Build table row with selected columns
-          let row = `<tr><td>${index + 1}</td>`;
-
-          if (options.includeDate) {
-            row += `<td><div style="font-size: 9pt; color: #666;">#${p.id}</div><div style="font-size: 9pt;">${new Date(p.createdAt || '').toLocaleDateString()}</div></td>`;
-          }
-
-          if (options.includeSupplier) {
-            row += `<td>${description}</td>`;
-          }
-
-          if (options.includeItems) {
-            row += `<td class="text-center">${p.items.length}</td>`;
-          }
-
-          if (options.includePills) {
-            const totalPills = p.items.reduce((sum, item) => sum + (item.totalPills || 0), 0);
-            row += `<td class="text-center">${totalPills}</td>`;
-          }
-
-          if (options.includeGrandTotal) {
-            row += `<td class="text-right">${currencySymbol}${p.grandTotal.toFixed(2)}</td>`;
-          }
-
-          if (options.includePaid) {
-            row += `<td class="text-right">${currencySymbol}${p.paymentAmount.toFixed(2)}</td>`;
-          }
-
-          if (options.includeOutstanding) {
-            row += `<td class="text-right">${currencySymbol}${p.remainingBalance.toFixed(2)}</td>`;
-          }
-
-          row += `</tr>`;
-          return row;
-        }).join('')}
-                </tbody>
-              </table>
-
-              <div class="footer">
-                <div class="footer-content">
-                  <div class="footer-left">
-                    <div class="remark">
-                      <strong>${settings.currency || 'PKR'}</strong> - Total Purchase Value of <strong>${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong> Only
-                    </div>
-                    <div class="remark">
-                      <strong>Remark:</strong> Computer Generated Report
-                    </div>
-                    <div style="margin-top: 10px; font-size: 8pt; font-weight: bold; border: 1px solid #000; padding: 3px 6px; display: inline-block;">
-                      E. & O.E.
-                    </div>
-                    
-                    <div class="signature-section">
-                      <div class="signature-line"></div>
-                      <div class="signature-label">Company Chop & Signature</div>
-                      <div style="font-size: 8pt; margin-top: 3px; color: #666;">Name</div>
-                      <div style="font-size: 8pt; color: #666;">Date</div>
-                    </div>
+              <div class="footer-right">
+                <div class="totals-table">
+                  <div class="totals-row">
+                    <span class="totals-label">Total Items:</span>
+                    <span class="totals-value">${rows.length}</span>
                   </div>
-
-                  <div class="footer-right">
-                    <div class="totals-table">
-                      <div class="totals-row">
-                        <span class="totals-label">Sub Total:</span>
-                        <span class="totals-value">${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                      </div>
-                      <div class="totals-row">
-                        <span class="totals-label">Total Paid:</span>
-                        <span class="totals-value">${currencySymbol}${totalPaid.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                      </div>
-                      <div class="totals-row grand">
-                        <span class="totals-label">Total Balance:</span>
-                        <span class="totals-value">${currencySymbol}${totalOutstanding.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                      </div>
-                    </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Subtotal:</span>
+                    <span class="totals-value">${currencySymbol}${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Discount:</span>
+                    <span class="totals-value">-${currencySymbol}${totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Tax:</span>
+                    <span class="totals-value">${currencySymbol}${totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row grand">
+                    <span class="totals-label">Grand Total:</span>
+                    <span class="totals-value">${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
             </div>
-          </body>
-          </html>`;
+          </div>
+        `;
 
-        const { BrowserWindow } = require('electron');
-        const { dialog } = require('electron');
-        const { promises: fs } = require('fs');
-        const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
-        await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-        const pdfBuffer = await win.webContents.printToPDF({ marginsType: 0, pageSize: 'A4', printBackground: true });
-        const ts = new Date();
-        const defaultName = `purchases_export_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
-        const { canceled, filePath } = await dialog.showSaveDialog({ title: 'Save Purchases PDF', defaultPath: defaultName, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-        if (canceled || !filePath) return event.reply('purchase-export-pdf-reply', { success: false, error: 'canceled' });
-        await fs.writeFile(filePath, pdfBuffer);
-        event.reply('purchase-export-pdf-reply', { success: true, data: { filePath } });
-        win.destroy();
+        const html = wrapPDFContent(styles, header, tableContent, footer);
+
+        if (preview) {
+          // Return HTML for preview
+          event.reply('purchase-export-pdf-reply', { success: true, data: { htmlContent: html } });
+        } else {
+          // Generate PDF and save to file
+          const { BrowserWindow } = require('electron');
+          const { dialog } = require('electron');
+          const { promises: fs } = require('fs');
+          const win = new BrowserWindow({ show: false, webPreferences: { offscreen: true } });
+          await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+          const pdfBuffer = await win.webContents.printToPDF({ marginsType: 0, pageSize: 'A4', printBackground: true });
+          const ts = new Date();
+          const defaultName = `purchases_export_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
+          const { canceled, filePath } = await dialog.showSaveDialog({ title: 'Save Purchases PDF', defaultPath: defaultName, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+          if (canceled || !filePath) return event.reply('purchase-export-pdf-reply', { success: false, error: 'canceled' });
+          await fs.writeFile(filePath, pdfBuffer);
+          event.reply('purchase-export-pdf-reply', { success: true, data: { filePath } });
+          win.destroy();
+        }
       } catch (error) {
         console.error('Export purchases PDF error:', error);
         event.reply('purchase-export-pdf-reply', { success: false, error: String(error) });

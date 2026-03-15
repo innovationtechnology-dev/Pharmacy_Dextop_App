@@ -196,7 +196,6 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-pink-500/10 to-pink-600/10',
       description: 'Process Returns',
       route: '/sale-return',
-      disabled: isAdmin,
     },
     {
       id: 'payments',

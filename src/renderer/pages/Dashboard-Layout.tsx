@@ -1,6 +1,3 @@
-/* eslint-disable react/button-has-type */
-'use client';
-
 import React, {
   useCallback,
   useEffect,
@@ -101,7 +98,7 @@ const Dashboard_Layout: React.FC = () => {
 
     // Route Guarding
     const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
-    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/sale-return', '/alerts'];
+    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/alerts'];
     
     if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
       navigate('/main-menu');

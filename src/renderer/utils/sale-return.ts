@@ -109,14 +109,14 @@ export const exportSaleReturnsCsv = (fromDate?: string, toDate?: string): Promis
   });
 };
 
-export const exportSaleReturnsPdf = (fromDate?: string, toDate?: string): Promise<IpcResponse<{ filePath: string }>> => {
+export const exportSaleReturnsPdf = (fromDate?: string, toDate?: string, preview: boolean = false): Promise<IpcResponse<{ filePath?: string; htmlContent?: string }>> => {
   return new Promise((resolve) => {
     const settings = getStoredPharmacySettings();
     window.electron.ipcRenderer.once('sale-return-export-pdf-reply', (...args: unknown[]) => {
-      const response = (args?.[0] as IpcResponse<{ filePath: string }>) || { success: false, error: 'no-response' };
+      const response = (args?.[0] as IpcResponse<{ filePath?: string; htmlContent?: string }>) || { success: false, error: 'no-response' };
       resolve(response);
     });
-    window.electron.ipcRenderer.sendMessage('sale-return-export-pdf', [settings, fromDate, toDate] as any);
+    window.electron.ipcRenderer.sendMessage('sale-return-export-pdf', [settings, fromDate, toDate, preview] as any);
   });
 };
 

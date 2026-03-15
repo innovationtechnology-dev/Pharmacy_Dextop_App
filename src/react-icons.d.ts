@@ -100,4 +100,5 @@ declare module 'react-icons/fa' {
   export const FaPhone: any;
   export const FaUser: any;
   export const FaStickyNote: any;
+  export const FaTimes: any;
 }

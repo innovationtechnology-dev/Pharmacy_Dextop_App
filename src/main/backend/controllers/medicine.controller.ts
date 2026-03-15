@@ -80,50 +80,78 @@ export class MedicineController {
         const toDate = args[1] as string;
         const settings = args[2] || {};
         const rows = await this.salesService.getAllSalesFlatRowsByRange(fromDate, toDate);
-        const header = ['Serial No', 'Date', 'Customer', 'Phone', 'Medicine', 'Pills', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Total'];
+        
+        const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+        
+        // Calculate totals
+        const total = rows.reduce((sum, r: any) => sum + (r.total || 0), 0);
+        const totalDiscount = rows.reduce((sum, r: any) => sum + (r.discountAmount || 0), 0);
+        const totalTax = rows.reduce((sum, r: any) => sum + (r.taxAmount || 0), 0);
+        const subtotal = rows.reduce((sum, r: any) => sum + (r.subtotal || 0), 0);
+
+        // Helper function to escape CSV values
         const esc = (v: any) => {
           const s = v === null || v === undefined ? '' : String(v);
           return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
         };
 
-        // Company Header
+        // Company header
+        const dateRangeText = fromDate && toDate 
+          ? `Period: ${fromDate} to ${toDate}`
+          : fromDate 
+            ? `From: ${fromDate}`
+            : toDate 
+              ? `Until: ${toDate}`
+              : 'Period: All Records';
+        
         const companyInfo = [
           [settings.pharmacyName || 'Pharmacy Name'],
           [settings.address || ''],
-          [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''}`],
+          [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''} | ${settings.website && `Website: ${settings.website}`}`],
           [settings.taxId ? `Tax ID: ${settings.taxId}` : ''],
           [''],
           ['SALES REPORT'],
-          [`Period: ${fromDate} to ${toDate}`],
+          [dateRangeText],
           [`Generated on: ${new Date().toLocaleString()}`],
           ['']
         ].map(row => row.map(esc).join(',')).join('\n');
 
-        const csvData = [
-          header.join(','),
-          ...rows.map((r, index) => {
-            const rowData: any = {
-              serialNo: index + 1,
-              createdAt: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '',
-              customerName: r.customerName || '-',
-              customerPhone: r.customerPhone || '-',
-              medicineName: r.medicineName,
-              pills: r.pills,
-              unitPrice: r.unitPrice.toFixed(2),
-              subtotal: r.subtotal.toFixed(2),
-              discountAmount: r.discountAmount.toFixed(2),
-              taxAmount: r.taxAmount.toFixed(2),
-              total: r.total.toFixed(2)
-            };
-            return [
-              rowData.serialNo, rowData.createdAt, rowData.customerName, rowData.customerPhone,
-              rowData.medicineName, rowData.pills, rowData.unitPrice, rowData.subtotal,
-              rowData.discountAmount, rowData.taxAmount, rowData.total
-            ].map(esc).join(',');
-          })
-        ].join('\n');
+        // Column headers
+        const columnHeaders = ['Item', 'Date', 'Sale ID', 'Customer', 'Phone', 'Medicine', 'Qty', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Total'].map(esc).join(',');
 
-        const finalCsv = companyInfo + '\n' + csvData;
+        // Data rows
+        const dataRows = rows.map((r: any, index: number) => 
+          [
+            index + 1,
+            r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '',
+            `SALE-${r.saleId}`,
+            r.customerName || 'Walk-in',
+            r.customerPhone || '—',
+            r.medicineName,
+            r.pills,
+            `${currencySymbol}${r.unitPrice.toFixed(2)}`,
+            `${currencySymbol}${r.subtotal.toFixed(2)}`,
+            `${currencySymbol}${r.discountAmount.toFixed(2)}`,
+            `${currencySymbol}${r.taxAmount.toFixed(2)}`,
+            `${currencySymbol}${r.total.toFixed(2)}`
+          ].map(esc).join(',')
+        ).join('\n');
+
+        // Footer with totals
+        const footer = [
+          [''],
+          ['Summary'],
+          ['Total Records', rows.length],
+          ['Subtotal', `${currencySymbol}${subtotal.toFixed(2)}`],
+          ['Total Discount', `${currencySymbol}${totalDiscount.toFixed(2)}`],
+          ['Total Tax', `${currencySymbol}${totalTax.toFixed(2)}`],
+          ['Grand Total', `${currencySymbol}${total.toFixed(2)}`],
+          [''],
+          ['Remark: Computer Generated Report'],
+          ['E. & O.E.']
+        ].map(row => row.map(esc).join(',')).join('\n');
+
+        const finalCsv = companyInfo + '\n' + columnHeaders + '\n' + dataRows + '\n' + footer;
 
         const ts = new Date();
         const defaultName = `sales_${fromDate}_to_${toDate}_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.csv`;
@@ -143,114 +171,144 @@ export class MedicineController {
         const fromDate = args[0] as string;
         const toDate = args[1] as string;
         const settings = args[2] || {};
+        const preview = args[3] === true;
         const rows = await this.salesService.getAllSalesFlatRowsByRange(fromDate, toDate);
         const total = rows.reduce((sum, r: any) => sum + (r.total || 0), 0);
+        const totalDiscount = rows.reduce((sum, r: any) => sum + (r.discountAmount || 0), 0);
+        const totalTax = rows.reduce((sum, r: any) => sum + (r.taxAmount || 0), 0);
+        const subtotal = rows.reduce((sum, r: any) => sum + (r.subtotal || 0), 0);
         const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+        
+        // Import professional template utilities
+        const { getProfessionalPDFStyles, generatePDFHeader, wrapPDFContent } = require('../utils/pdf-template');
 
-        const html = `
-          <html>
-          <head>
-            <meta charset='utf-8' />
-            <style>
-              body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
-              .header { margin-bottom: 30px; border-bottom: 2px solid #eee; padding-bottom: 20px; }
-              .header-content { display: flex; justify-content: space-between; align-items: flex-start; }
-              .company-info h1 { margin: 0 0 5px; font-size: 24px; color: #2c3e50; }
-              .company-info p { margin: 2px 0; font-size: 12px; color: #666; }
-              .logo { max-height: 80px; max-width: 200px; object-fit: contain; }
-              .report-title { margin-bottom: 20px; }
-              .report-title h2 { margin: 0; font-size: 18px; color: #2c3e50; }
-              .report-title p { margin: 5px 0 0; font-size: 12px; color: #888; }
-              .report-meta {display: flex; justify-content: space-between; align-items: center; width: 100%;}
-              .report-meta p { margin-top: 5px; font-size: 12px;}
-              table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
-              th, td { border: 1px solid #e0e0e0; padding: 8px 10px; text-align: left; }
-              th { background-color: #f8f9fa; color: #444; font-weight: bold; text-transform: uppercase; font-size: 10px; }
-              tr:nth-child(even) { background-color: #fcfcfc; }
-              .text-right { text-align: right; }
-              .text-center { text-align: center; }
-              tfoot td { font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #ddd; }
-              .footer { margin-top: 40px; text-align: center; font-size: 10px; color: #aaa; border-top: 1px solid #eee; padding-top: 10px; }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <div class="header-content">
-                <div class="company-info">
-                  <h1>${settings.pharmacyName || 'Pharmacy Name'}</h1>
-                  <p>${settings.address || ''}</p>
-                  <p>Phone: ${settings.phone || ''} ${settings.email ? `| Email: ${settings.email}` : ''}</p>
-                  ${settings.taxId ? `<p>Tax ID: ${settings.taxId}</p>` : ''}
+        const styles = getProfessionalPDFStyles();
+        const header = generatePDFHeader({
+          title: 'SR No.',
+          documentType: 'SALES',
+          period: { from: fromDate, to: toDate },
+          currency: settings.currency || 'PKR',
+          settings: {
+            pharmacyName: settings.pharmacyName,
+            address: settings.address,
+            phone: settings.phone,
+            email: settings.email,
+            website: settings.website,
+            taxId: settings.taxId,
+            logoUrl: settings.logoUrl,
+          }
+        });
+
+        const tableContent = `
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px;">Item Date</th>
+                <th>Customer</th>
+                <th>Medicine</th>
+                <th class="text-center" style="width: 70px;">Pills/Qty</th>
+                <th class="text-right" style="width: 90px;">Unit Price</th>
+                <th class="text-right" style="width: 90px;">Subtotal</th>
+                <th class="text-right" style="width: 80px;">Disc.</th>
+                <th class="text-right" style="width: 70px;">Tax</th>
+                <th class="text-right" style="width: 100px;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r: any, index: number) => `
+                <tr>
+                  <td>${index + 1} ${r.createdAt ? new Date(r.createdAt).toLocaleDateString() : ''}</td>
+                  <td>
+                    <div style="">${r.customerName || 'WIC'}</div>
+                    ${r.customerPhone ? `<div style="font-size: 8pt; color: #666;">${r.customerPhone}</div>` : ''}
+                  </td>
+                  <td>${r.medicineName}</td>
+                  <td class="text-center">${r.pills}</td>
+                  <td class="text-right">${currencySymbol}${r.unitPrice.toFixed(2)}</td>
+                  <td class="text-right">${currencySymbol}${r.subtotal.toFixed(2)}</td>
+                  <td class="text-right">${currencySymbol}${r.discountAmount.toFixed(2)}</td>
+                  <td class="text-right">${currencySymbol}${r.taxAmount.toFixed(2)}</td>
+                  <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.total.toFixed(2)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+
+        const footer = `
+          <div class="footer">
+            <div class="footer-content">
+              <div class="footer-left">
+                <div class="remark">
+                  <strong>${settings.currency || 'USD'}</strong> - Total Sales Value of <strong>${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> Only
                 </div>
-                ${settings.logoUrl ? `<img src="${settings.logoUrl}" class="logo" />` : ''}
+                <div class="remark">
+                  <strong>Sales Breakdown:</strong><br/>
+                  Subtotal: ${currencySymbol}${subtotal.toFixed(2)}<br/>
+                  Total Discount: ${currencySymbol}${totalDiscount.toFixed(2)}<br/>
+                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}
+                </div>
+                <div class="remark">
+                  <strong>Remark:</strong> Computer Generated Report
+                </div>
+                <div style="margin-top: 10px; font-size: 8pt; font-weight: bold; border: 1px solid #000; padding: 3px 6px; display: inline-block;">
+                  E. & O.E.
+                </div>
+                
+                <div class="signature-section">
+                  <div class="signature-line"></div>
+                  <div class="signature-label">Company Chop & Signature</div>
+                  <div style="font-size: 8pt; margin-top: 3px; color: #666;">Name</div>
+                  <div style="font-size: 8pt; color: #666;">Date</div>
+                </div>
+              </div>
+
+              <div class="footer-right">
+                <div class="totals-table">
+                  <div class="totals-row">
+                    <span class="totals-label">Total Records:</span>
+                    <span class="totals-value">${rows.length}</span>
+                  </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Subtotal:</span>
+                    <span class="totals-value">${currencySymbol}${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Discount:</span>
+                    <span class="totals-value">-${currencySymbol}${totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Tax:</span>
+                    <span class="totals-value">${currencySymbol}${totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                  <div class="totals-row grand">
+                    <span class="totals-label">Grand Total:</span>
+                    <span class="totals-value">${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
               </div>
             </div>
+          </div>
+        `;
 
-           <div class="report-title">
-            <h2>Sales Report</h2>
-            <div class="report-meta">
-             ${fromDate && toDate ? `<p class="left-text">Period: ${fromDate} to ${toDate}</p>` : ''}
-             <p class="right-text">Generated on ${new Date().toLocaleString()}</p>
-            </div>
-           </div>
+        const html = wrapPDFContent(styles, header, tableContent, footer);
 
-
-            <table>
-              <thead>
-                <tr>
-                  <th style="width: 40px;">#</th>
-                  <th>Date</th>
-                  <th>Customer</th>
-                  <th>Phone</th>
-                  <th>Medicine</th>
-                  <th class="text-center">Pills</th>
-                  <th class="text-right">Unit Price</th>
-                  <th class="text-right">Subtotal</th>
-                  <th class="text-right">Discount</th>
-                  <th class="text-right">Tax</th>
-                  <th class="text-right">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows.map((r: any, index: number) => `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>${r.createdAt ? new Date(r.createdAt).toLocaleDateString() : ''}</td>
-                    <td>${r.customerName || '-'}</td>
-                    <td>${r.customerPhone || '-'}</td>
-                    <td>${r.medicineName}</td>
-                    <td class="text-center">${r.pills}</td>
-                    <td class="text-right">${currencySymbol}${r.unitPrice.toFixed(2)}</td>
-                    <td class="text-right">${currencySymbol}${r.subtotal.toFixed(2)}</td>
-                    <td class="text-right">${currencySymbol}${r.discountAmount.toFixed(2)}</td>
-                    <td class="text-right">${currencySymbol}${r.taxAmount.toFixed(2)}</td>
-                    <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.total.toFixed(2)}</td>
-                  </tr>`).join('')}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colspan="10" class="text-right">Grand Total</td>
-                  <td class="text-right">${currencySymbol}${total.toFixed(2)}</td>
-                </tr>
-              </tfoot>
-            </table>
-
-            <div class="footer">
-              <p>This is a computer-generated document. No signature is required.</p>
-            </div>
-          </body>
-          </html>`;
-
-        const win = new (require('electron').BrowserWindow)({ show: false, webPreferences: { offscreen: true } });
-        await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
-        const pdfBuffer = await win.webContents.printToPDF({ marginsType: 0, pageSize: 'A4', printBackground: true });
-        const ts = new Date();
-        const defaultName = `sales_${fromDate}_to_${toDate}_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
-        const { canceled, filePath } = await dialog.showSaveDialog({ title: 'Save Sales PDF', defaultPath: defaultName, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-        if (canceled || !filePath) return event.reply('sales-export-pdf-reply', { success: false, error: 'canceled' });
-        await fs.writeFile(filePath, pdfBuffer);
-        event.reply('sales-export-pdf-reply', { success: true, data: { filePath } });
-        win.destroy();
+        if (preview) {
+          // Return HTML for preview
+          event.reply('sales-export-pdf-reply', { success: true, data: { htmlContent: html } });
+        } else {
+          // Generate PDF and save to file
+          const win = new (require('electron').BrowserWindow)({ show: false, webPreferences: { offscreen: true } });
+          await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+          const pdfBuffer = await win.webContents.printToPDF({ marginsType: 0, pageSize: 'A4', printBackground: true });
+          const ts = new Date();
+          const defaultName = `sales_${fromDate}_to_${toDate}_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
+          const { canceled, filePath } = await dialog.showSaveDialog({ title: 'Save Sales PDF', defaultPath: defaultName, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+          if (canceled || !filePath) return event.reply('sales-export-pdf-reply', { success: false, error: 'canceled' });
+          await fs.writeFile(filePath, pdfBuffer);
+          event.reply('sales-export-pdf-reply', { success: true, data: { filePath } });
+          win.destroy();
+        }
       } catch (error) {
         console.error('Export sales PDF error:', error);
         event.reply('sales-export-pdf-reply', { success: false, error: String(error) });

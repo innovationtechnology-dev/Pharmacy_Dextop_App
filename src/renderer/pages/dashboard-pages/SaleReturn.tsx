@@ -3,8 +3,9 @@ import { getSaleReturnsFlatRowsByRange, FlatSaleReturnRow, exportSaleReturnsPdf,
 import { getAuthUser } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText } from 'react-icons/fi';
-import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaChevronDown } from 'react-icons/fa';
+import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel } from 'react-icons/fa';
 import ReportDetailModal from '../../components/common/DetailModal';
+import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
@@ -36,11 +37,16 @@ export default function SaleReturn() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
-  const [showDownloadDropdown, setShowDownloadDropdown] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
+  const [exportFromDate, setExportFromDate] = useState<string>('');
+  const [exportToDate, setExportToDate] = useState<string>('');
+  const [showPreview, setShowPreview] = useState(false);
+  const [pdfHtmlContent, setPdfHtmlContent] = useState<string | null>(null);
   const [selectedReturn, setSelectedReturn] = useState<any>(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const pageSize = 15;
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
@@ -85,44 +91,60 @@ export default function SaleReturn() {
     fetchReport();
   }, []); // Run once on mount
 
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDownloadDropdown(false);
-      }
-    };
-
-    if (showDownloadDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showDownloadDropdown]);
-
   const handleDownloadPdf = async () => {
-    setShowDownloadDropdown(false);
+    setExporting(true);
     try {
-      const res = await exportSaleReturnsPdf(fromDate, toDate);
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportSaleReturnsPdf(fromDateToUse, toDateToUse, showPreview);
+      setExporting(false);
       if (!res.success) {
         alert('Failed to export PDF: ' + (res.error || 'Unknown error'));
+      } else if (showPreview && res.data?.htmlContent) {
+        setPdfHtmlContent(res.data.htmlContent);
+        setShowExportDialog(false);
+      } else {
+        setShowExportDialog(false);
+        alert('Sale return report exported successfully!');
       }
     } catch (err) {
+      setExporting(false);
       console.error(err);
       alert('Failed to export PDF');
     }
   };
 
-  const handleDownloadCsv = async () => {
-    setShowDownloadDropdown(false);
+  const handleDownloadFromPreview = async () => {
+    if (!pdfHtmlContent) return;
     try {
-      const res = await exportSaleReturnsCsv(fromDate, toDate);
-      if (!res.success) {
-        alert('Failed to export CSV: ' + (res.error || 'Unknown error'));
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportSaleReturnsPdf(fromDateToUse, toDateToUse, false);
+      if (res.success) {
+        setPdfHtmlContent(null);
+        alert('Sale return report downloaded successfully!');
       }
     } catch (err) {
+      console.error(err);
+      alert('Failed to download PDF');
+    }
+  };
+
+  const handleDownloadCsv = async () => {
+    setExporting(true);
+    try {
+      const fromDateToUse = exportFromDate || '';
+      const toDateToUse = exportToDate || '';
+      const res = await exportSaleReturnsCsv(fromDateToUse, toDateToUse);
+      setExporting(false);
+      if (!res.success) {
+        alert('Failed to export CSV: ' + (res.error || 'Unknown error'));
+      } else {
+        setShowExportDialog(false);
+        alert('Sale return report exported successfully!');
+      }
+    } catch (err) {
+      setExporting(false);
       console.error(err);
       alert('Failed to export CSV');
     }
@@ -353,44 +375,15 @@ export default function SaleReturn() {
                     />
                   </div>
                 </div>
-                {/* Download Dropdown */}
+                {/* Download Button */}
                 {!isCashier && (
-                  <div className="relative w-full sm:w-auto" ref={dropdownRef}>
-                    <button
-                      onClick={() => setShowDownloadDropdown(!showDownloadDropdown)}
-                      className="w-full sm:w-auto px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 border border-orange-500 dark:border-orange-500 rounded hover:bg-orange-100 dark:hover:bg-orange-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
-                    >
-                      <FaArrowDown className="w-3.5 h-3.5" />
-                      Download
-                      <FaChevronDown className={`w-3 h-3 transition-transform ${showDownloadDropdown ? 'rotate-180' : ''}`} />
-                    </button>
-
-                    {/* Dropdown Menu */}
-                    {showDownloadDropdown && (
-                      <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 overflow-hidden">
-                        <button
-                          onClick={handleDownloadPdf}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-3 transition-colors border-b border-gray-100 dark:border-gray-700"
-                        >
-                          <FaFilePdf className="w-4 h-4 text-orange-500" />
-                          <div>
-                            <div className="font-bold">Export as PDF</div>
-                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Formatted report</div>
-                          </div>
-                        </button>
-                        <button
-                          onClick={handleDownloadCsv}
-                          className="w-full px-4 py-2.5 text-left text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-green-50 dark:hover:bg-green-900/20 flex items-center gap-3 transition-colors"
-                        >
-                          <FaFileExcel className="w-4 h-4 text-green-500" />
-                          <div>
-                            <div className="font-bold">Export as CSV</div>
-                            <div className="text-[10px] text-gray-500 dark:text-gray-400">Excel compatible</div>
-                          </div>
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => setShowExportDialog(true)}
+                    className="w-full sm:w-auto px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 border border-orange-500 dark:border-orange-500 rounded hover:bg-orange-100 dark:hover:bg-orange-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
+                  >
+                    <FaArrowDown className="w-3.5 h-3.5" />
+                    Download
+                  </button>
                 )}
               </div>
             </div>
@@ -605,6 +598,140 @@ export default function SaleReturn() {
           label: 'Return Processed',
           color: 'orange'
         }}
+      />
+
+      {/* Export Dialog */}
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
+            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Export Sale Return Report</h3>
+                <button
+                  onClick={() => setShowExportDialog(false)}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                >
+                  <FiX className="w-5 h-5 text-gray-500" />
+                </button>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Export Format */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Export Format</label>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setExportFormat('pdf')}
+                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                      exportFormat === 'pdf'
+                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                    }`}
+                  >
+                    PDF
+                  </button>
+                  <button
+                    onClick={() => setExportFormat('csv')}
+                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
+                      exportFormat === 'csv'
+                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+                    }`}
+                  >
+                    CSV
+                  </button>
+                </div>
+                {exportFormat === 'pdf' && (
+                  <div className="mt-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300">
+                      <input
+                        type="checkbox"
+                        checked={showPreview}
+                        onChange={(e) => setShowPreview(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                      />
+                      <span>Preview before Export PDF</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              {/* Date Range */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Date Range
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">From Date</label>
+                    <input
+                      type="date"
+                      value={exportFromDate}
+                      onChange={(e) => setExportFromDate(e.target.value)}
+                      placeholder={fromDate}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">To Date</label>
+                    <input
+                      type="date"
+                      value={exportToDate}
+                      onChange={(e) => setExportToDate(e.target.value)}
+                      placeholder={toDate}
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                  Leave empty to export all records
+                </p>
+              </div>
+            </div>
+
+            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex gap-3">
+              <button
+                onClick={() => setShowExportDialog(false)}
+                className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (exportFormat === 'pdf') {
+                    handleDownloadPdf();
+                  } else {
+                    handleDownloadCsv();
+                  }
+                }}
+                disabled={exporting}
+                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2"
+              >
+                {exporting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Exporting...
+                  </>
+                ) : (
+                  <>
+                    <FaArrowDown className="w-4 h-4" />
+                    Export {exportFormat.toUpperCase()}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PDF Preview Modal */}
+      <PDFPreviewModal
+        isOpen={!!pdfHtmlContent}
+        htmlContent={pdfHtmlContent}
+        onClose={() => setPdfHtmlContent(null)}
+        onDownload={handleDownloadFromPreview}
+        title="Sale Return Report Preview"
       />
     </div>
   );
