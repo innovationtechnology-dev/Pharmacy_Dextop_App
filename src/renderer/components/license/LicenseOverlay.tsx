@@ -189,7 +189,7 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
             <FiCheckCircle className="w-6 h-6 text-emerald-500" />
             <div>
               <p className="text-sm font-bold text-gray-900 dark:text-white">Success</p>
-              <p className="text-xs text-gray-500 dark:text-gray-400">License updated for 6 months.</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">License updated for 1 year.</p>
             </div>
           </div>
         </div>

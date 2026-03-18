@@ -188,7 +188,7 @@ export class LicenseService {
    *
    * - Normalises: strips non-alphanumeric chars, uppercases.
    * - Looks up generated_licenses WHERE code=? AND is_used=0.
-   * - If found: validUntil = today + 6 months (from activation date).
+   * - If found: validUntil = today + 1 year (from activation date).
    * - Marks key as used so it cannot be reused.
    * - No network call required.
    */
@@ -231,10 +231,10 @@ export class LicenseService {
         return { success: false, error: 'Invalid license key. Please check and try again.' };
       }
 
-      // validUntil = today + 6 months (from activation date, not generation date)
+      // validUntil = today + 1 year (from activation date, not generation date)
       const now = new Date();
       const validUntil = new Date(now);
-      validUntil.setMonth(validUntil.getMonth() + 6);
+      validUntil.setMonth(validUntil.getMonth() + 12);
 
       // Upsert the single system-wide license record (userId stored for audit only)
       const license = await this.upsertSystemLicense(userId, normalized, validUntil.toISOString());

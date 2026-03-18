@@ -63,9 +63,9 @@ export async function POST(req: NextRequest) {
     const now = new Date();
     const nowIso = now.toISOString();
 
-    // validFrom = now, validUntil = now + 6 months (mirrors desktop activation)
+    // validFrom = now, validUntil = now + 1 year (mirrors desktop activation)
     const validUntil = new Date(now);
-    validUntil.setMonth(validUntil.getMonth() + 6);
+    validUntil.setMonth(validUntil.getMonth() + 12);
 
     // Write to licenseRequests (so it appears on the Requests page)
     const requestRef = await db.collection('licenseRequests').add({
