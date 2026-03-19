@@ -69,7 +69,7 @@ const SuperAdminDashboard: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
-  const [userForm, setUserForm] = useState({ name: '', email: '', password: '' });
+  const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'admin' });
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordUserId, setPasswordUserId] = useState<number | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -204,10 +204,10 @@ const SuperAdminDashboard: React.FC = () => {
 
     setLoading(true);
     try {
-      const result = await createUser(userForm.name, userForm.email, userForm.password);
+      const result = await createUser(userForm.name, userForm.email, userForm.password, userForm.role);
       if (result.success) {
         setShowUserModal(false);
-        setUserForm({ name: '', email: '', password: '' });
+        setUserForm({ name: '', email: '', password: '', role: 'admin' });
         loadUsers();
         success('User created successfully!');
       } else {
@@ -222,7 +222,7 @@ const SuperAdminDashboard: React.FC = () => {
 
   const handleEditUser = (user: User) => {
     setEditingUser(user);
-    setUserForm({ name: user.name, email: user.email, password: '' });
+    setUserForm({ name: user.name, email: user.email, password: '', role: user.role || 'admin' });
     setShowUserModal(true);
   };
 
@@ -238,7 +238,7 @@ const SuperAdminDashboard: React.FC = () => {
       if (result.success) {
         setShowUserModal(false);
         setEditingUser(null);
-        setUserForm({ name: '', email: '', password: '' });
+        setUserForm({ name: '', email: '', password: '', role: 'admin' });
         loadUsers();
         success('User updated successfully!');
       } else {
@@ -730,7 +730,7 @@ const SuperAdminDashboard: React.FC = () => {
                   type="button"
                   onClick={() => {
                     setEditingUser(null);
-                    setUserForm({ name: '', email: '', password: '' });
+                    setUserForm({ name: '', email: '', password: '', role: 'admin' });
                     setShowUserModal(true);
                   }}
                   className="w-full sm:w-auto px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
@@ -1160,7 +1160,7 @@ const SuperAdminDashboard: React.FC = () => {
                 onClick={() => {
                   setShowUserModal(false);
                   setEditingUser(null);
-                  setUserForm({ name: '', email: '', password: '' });
+                  setUserForm({ name: '', email: '', password: '', role: 'admin' });
                 }}
                 className="p-2 hover:bg-gray-100 rounded-lg"
               >
@@ -1197,6 +1197,17 @@ const SuperAdminDashboard: React.FC = () => {
                   />
                 </div>
               )}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+                <select
+                  value={userForm.role}
+                  onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 text-gray-900 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none bg-white"
+                >
+                  <option value="admin">Admin</option>
+                  <option value="cashier">Cashier</option>
+                </select>
+              </div>
               <div className="flex gap-3">
                 <button
                   onClick={editingUser ? handleUpdateUser : handleCreateUser}
@@ -1209,7 +1220,7 @@ const SuperAdminDashboard: React.FC = () => {
                   onClick={() => {
                     setShowUserModal(false);
                     setEditingUser(null);
-                    setUserForm({ name: '', email: '', password: '' });
+                    setUserForm({ name: '', email: '', password: '', role: 'admin' });
                   }}
                   className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors"
                 >

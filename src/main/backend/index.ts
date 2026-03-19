@@ -17,8 +17,11 @@ import { CustomerController } from './controllers/customer.controller';
 import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
-
 import { GRNController } from './controllers/grn.controller';
+import { registerSettingsHandlers } from './controllers/settings.controller';
+import { registerMigrationHandlers } from './controllers/migration.controller';
+import MigrationService from './services/migration.service';
+import SettingsService from './services/settings.service';
 
 export class Backend {
   private databaseController!: DatabaseController;
@@ -46,6 +49,11 @@ export class Backend {
       // Small delay to ensure database is fully ready
       await new Promise(resolve => setTimeout(resolve, 100));
 
+      // 🔴 P0 FIX: Run database migrations FIRST (before any table initialization)
+      console.log('🔄 Running database migrations...');
+      const migrationService = new MigrationService();
+      await migrationService.runMigrations();
+
       // Initialize controllers (they register their own IPC handlers)
       this.databaseController = new DatabaseController();
       this.exampleController = new ExampleController();
@@ -59,6 +67,10 @@ export class Backend {
       this.licenseController = new LicenseController();
       this.superAdminController = new SuperAdminController();
       this.grnController = new GRNController();
+
+      // Register new handlers
+      registerSettingsHandlers();
+      registerMigrationHandlers();
 
       // Initialize all tables SEQUENTIALLY to avoid SQLite concurrency issues
       console.log('Initializing database tables...');
@@ -77,12 +89,16 @@ export class Backend {
       await this.saleReturnController.initializeTables();
       await this.grnController.initializeTables();
 
+      // Initialize settings with defaults if needed
+      const settingsService = new SettingsService();
+      await settingsService.initializeSettings();
+
       // Register any additional custom handlers
       this.databaseController.registerCustomHandlers();
 
-      console.log('Backend initialized successfully');
+      console.log('✅ Backend initialized successfully');
     } catch (error) {
-      console.error('Backend initialization error: ', error);
+      console.error('❌ Backend initialization error: ', error);
       throw error;
     }
   }

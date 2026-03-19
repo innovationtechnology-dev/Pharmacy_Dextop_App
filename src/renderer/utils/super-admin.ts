@@ -14,6 +14,7 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role?: string;
   phone?: string;
   address?: string;
   firstName?: string;
@@ -119,14 +120,15 @@ export const getAllUsers = async (): Promise<User[]> => {
 export const createUser = async (
   name: string,
   email: string,
-  password: string
+  password: string,
+  role: string = 'admin'
 ): Promise<{ success: boolean; error?: string; user?: User }> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('super-admin-create-user-reply', (response: any) => {
       resolve(response);
     });
 
-    window.electron.ipcRenderer.sendMessage('super-admin-create-user', [name, email, password] as any);
+    window.electron.ipcRenderer.sendMessage('super-admin-create-user', [name, email, password, role] as any);
   });
 };
 

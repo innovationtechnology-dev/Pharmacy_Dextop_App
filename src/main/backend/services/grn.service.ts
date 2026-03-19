@@ -51,9 +51,11 @@ export class GRNService {
             `);
 
             if (tables.length > 0) {
-                // Drop existing tables to ensure clean schema
+                // Temporarily disable foreign keys to drop legacy tables
+                await this.dbService.execute('PRAGMA foreign_keys = OFF');
                 await this.dbService.execute('DROP TABLE IF EXISTS grn_items');
                 await this.dbService.execute('DROP TABLE IF EXISTS goods_received_notes');
+                await this.dbService.execute('PRAGMA foreign_keys = ON');
             }
         } catch (error) {
             console.log('GRN table cleanup:', error);

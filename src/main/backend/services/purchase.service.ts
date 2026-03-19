@@ -152,8 +152,11 @@ export class PurchaseService {
         purchasesInfo.some((column: any) => column.name === 'tax'));
 
     if (legacyPurchases) {
+      // Temporarily disable foreign keys to drop legacy tables
+      await this.dbService.execute('PRAGMA foreign_keys = OFF');
       await this.dbService.execute('DROP TABLE IF EXISTS purchase_items');
       await this.dbService.execute('DROP TABLE IF EXISTS purchases');
+      await this.dbService.execute('PRAGMA foreign_keys = ON');
       return;
     }
 
@@ -163,7 +166,10 @@ export class PurchaseService {
       !purchaseItemsInfo.some((column: any) => column.name === 'expiry_date');
 
     if (legacyItems) {
+      // Temporarily disable foreign keys to drop legacy table
+      await this.dbService.execute('PRAGMA foreign_keys = OFF');
       await this.dbService.execute('DROP TABLE IF EXISTS purchase_items');
+      await this.dbService.execute('PRAGMA foreign_keys = ON');
     }
   }
 

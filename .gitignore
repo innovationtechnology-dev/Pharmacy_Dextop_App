@@ -11,6 +11,14 @@ migrate-roles.js
 seed_cashier.js
 seed_customers.js
 seed_suppliers.js
+
+
+# Markdown Files
+DATABASE_ANALYSIS_REPORT.md
+P0_FIXES_IMPLEMENTATION_SUMMARY.md
+MIGRATION_AND_SETTINGS_USAGE_GUIDE.md
+IMPLEMENTATION_COMPLETE.md
+
 # Coverage directory used by tools like istanbul
 coverage
 .eslintcache

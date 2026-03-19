@@ -146,6 +146,15 @@ export class DatabaseConnection {
         
         // Configure SQLite for better concurrency - must be done serially
         this.db?.serialize(() => {
+          // 🔴 P0 FIX: Enable foreign key enforcement (SQLite default is OFF)
+          this.db?.run('PRAGMA foreign_keys = ON;', (fkErr) => {
+            if (fkErr) {
+              console.error('❌ Foreign keys enforcement error:', fkErr);
+            } else {
+              console.log('✅ Foreign keys enforcement enabled');
+            }
+          });
+          
           this.db?.run('PRAGMA journal_mode = WAL;', (walErr) => {
             if (walErr) console.error('WAL mode error:', walErr);
           });

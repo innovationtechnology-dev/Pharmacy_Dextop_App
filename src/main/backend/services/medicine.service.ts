@@ -80,7 +80,11 @@ export class MedicineService {
           'active'
         FROM medicines_legacy
       `);
+      
+      // Temporarily disable foreign keys to drop legacy table
+      await this.dbService.execute('PRAGMA foreign_keys = OFF');
       await this.dbService.execute('DROP TABLE IF EXISTS medicines_legacy');
+      await this.dbService.execute('PRAGMA foreign_keys = ON');
     }
   }
 

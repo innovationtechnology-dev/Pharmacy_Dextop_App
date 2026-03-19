@@ -55,7 +55,8 @@ export class SuperAdminController {
         const name = args[0] as string;
         const email = args[1] as string;
         const password = args[2] as string;
-        const result = await this.superAdminService.createUser(name, email, password);
+        const role = args[3] as string || 'admin'; // Default to admin if not provided
+        const result = await this.superAdminService.createUser(name, email, password, role);
         event.reply('super-admin-create-user-reply', result);
       } catch (error) {
         console.error('Create user error:', error);

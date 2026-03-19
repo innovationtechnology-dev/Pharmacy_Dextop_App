@@ -108,9 +108,11 @@ export class AuthService {
     role: string = 'admin'
   ): Promise<SignupResult> {
     try {
+      // 🔴 P0 FIX: Use parameterized queries to prevent SQL injection
       // Check if user already exists
       const existingUser = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+        `SELECT * FROM users WHERE email = ?`,
+        [email]
       );
 
       if (existingUser) {
@@ -125,7 +127,8 @@ export class AuthService {
 
       // Insert new user
       const result = await this.dbService.execute(
-        `INSERT INTO users (name, email, password_hash, role) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}', '${role}')`
+        `INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+        [name, email, passwordHash, role]
       );
 
       const userId = (result as any).lastID;
@@ -162,7 +165,8 @@ export class AuthService {
     try {
       // Find user by email
       const user = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+        `SELECT * FROM users WHERE email = ?`,
+        [email]
       ) as User | null;
 
       if (!user) {
@@ -229,7 +233,8 @@ export class AuthService {
   public async getUserById(userId: number): Promise<User | null> {
     try {
       const user = await this.dbService.queryOne(
-        `SELECT id, name, email, role, created_at, phone, address, profile_photo, password_change_required FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, role, created_at, phone, address, profile_photo, password_change_required FROM users WHERE id = ?`,
+        [userId]
       ) as any;
       if (!user) return null;
       return {
@@ -248,25 +253,40 @@ export class AuthService {
    */
   public async updateProfile(userId: number, params: UpdateProfileParams): Promise<{ success: boolean; user?: any; error?: string }> {
     try {
-      const esc = (v: string | undefined) => (v == null ? '' : String(v).replace(/'/g, "''"));
-      const name = esc(params.name);
-      const email = params.email != null ? esc(params.email) : null;
-      const phone = params.phone != null ? esc(params.phone) : null;
-      const address = params.address != null ? esc(params.address) : null;
-      const profilePhoto = params.profilePicture != null ? esc(params.profilePicture) : null;
+      // 🔴 P0 FIX: Use parameterized queries to prevent SQL injection
+      const updates: string[] = [];
+      const values: any[] = [];
 
-      const updates: string[] = [`name = '${name}'`];
-      if (email !== null) updates.push(`email = '${email}'`);
-      if (phone !== null) updates.push(`phone = '${phone}'`);
-      if (address !== null) updates.push(`address = '${address}'`);
-      if (profilePhoto !== null) updates.push(`profile_photo = '${profilePhoto}'`);
+      updates.push('name = ?');
+      values.push(params.name);
+
+      if (params.email != null) {
+        updates.push('email = ?');
+        values.push(params.email);
+      }
+      if (params.phone != null) {
+        updates.push('phone = ?');
+        values.push(params.phone);
+      }
+      if (params.address != null) {
+        updates.push('address = ?');
+        values.push(params.address);
+      }
+      if (params.profilePicture != null) {
+        updates.push('profile_photo = ?');
+        values.push(params.profilePicture);
+      }
+
+      values.push(userId); // Add userId for WHERE clause
 
       await this.dbService.execute(
-        `UPDATE users SET ${updates.join(', ')} WHERE id = ${userId}`
+        `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+        values
       );
 
       const user = await this.dbService.queryOne(
-        `SELECT id, name, email, role, created_at, phone, address, profile_photo FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, role, created_at, phone, address, profile_photo FROM users WHERE id = ?`,
+        [userId]
       ) as any;
       if (!user) {
         return { success: false, error: 'User not found after update' };
@@ -295,7 +315,8 @@ export class AuthService {
   public async setPasswordChangeRequired(userId: number, required: boolean): Promise<{ success: boolean; error?: string }> {
     try {
       await this.dbService.execute(
-        `UPDATE users SET password_change_required = ${required ? 1 : 0} WHERE id = ${userId}`
+        `UPDATE users SET password_change_required = ? WHERE id = ?`,
+        [required ? 1 : 0, userId]
       );
       return { success: true };
     } catch (error) {
@@ -310,7 +331,8 @@ export class AuthService {
   public async changePassword(userId: number, currentPassword: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
     try {
       const user = await this.dbService.queryOne(
-        `SELECT password_hash FROM users WHERE id = ${userId}`
+        `SELECT password_hash FROM users WHERE id = ?`,
+        [userId]
       ) as any;
       if (!user) {
         return { success: false, error: 'User not found' };
@@ -325,7 +347,8 @@ export class AuthService {
       // Hash and set new password, clear the flag
       const newHash = this.hashPassword(newPassword);
       await this.dbService.execute(
-        `UPDATE users SET password_hash = '${newHash}', password_change_required = 0 WHERE id = ${userId}`
+        `UPDATE users SET password_hash = ?, password_change_required = 0 WHERE id = ?`,
+        [newHash, userId]
       );
 
       return { success: true };

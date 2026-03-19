@@ -15,6 +15,7 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role: string;
   created_at: string;
 }
 
@@ -63,28 +64,31 @@ export class SuperAdminService {
    */
   public async initializeSuperAdmin(): Promise<void> {
     try {
-      const superAdminEmailEscaped = this.SUPER_ADMIN_EMAIL.replace(/'/g, "''");
-
+      // 🔴 P0 FIX: Use parameterized queries to prevent SQL injection
       // Ensure Super Admin user exists and has admin role
       const existingSuperAdmin = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${superAdminEmailEscaped}'`
+        `SELECT * FROM users WHERE email = ?`,
+        [this.SUPER_ADMIN_EMAIL]
       );
 
       if (!existingSuperAdmin) {
         const passwordHash = this.hashPassword(this.SUPER_ADMIN_PASSWORD);
         await this.dbService.execute(
-          `INSERT INTO users (name, email, password_hash, role) VALUES ('Super Admin', '${superAdminEmailEscaped}', '${passwordHash}', 'admin')`
+          `INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+          ['Super Admin', this.SUPER_ADMIN_EMAIL, passwordHash, 'admin']
         );
       } else {
         // Make sure Super Admin is marked as admin role
         await this.dbService.execute(
-          `UPDATE users SET role = 'admin' WHERE email = '${superAdminEmailEscaped}'`
+          `UPDATE users SET role = ? WHERE email = ?`,
+          ['admin', this.SUPER_ADMIN_EMAIL]
         );
       }
 
       // Ensure there is at least one additional admin user (non super-admin)
       const adminCountRow = (await this.dbService.queryOne(
-        `SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND email != '${superAdminEmailEscaped}'`
+        `SELECT COUNT(*) as count FROM users WHERE role = ? AND email != ?`,
+        ['admin', this.SUPER_ADMIN_EMAIL]
       )) as { count?: number } | null;
 
       const adminCount =
@@ -93,22 +97,24 @@ export class SuperAdminService {
           : 0;
 
       if (adminCount === 0) {
-        const adminEmailEscaped = this.DEFAULT_ADMIN_EMAIL.replace(/'/g, "''");
         const existingAdminUser = await this.dbService.queryOne(
-          `SELECT * FROM users WHERE email = '${adminEmailEscaped}'`
+          `SELECT * FROM users WHERE email = ?`,
+          [this.DEFAULT_ADMIN_EMAIL]
         );
 
         if (!existingAdminUser) {
           const adminPasswordHash = this.hashPassword(this.DEFAULT_ADMIN_PASSWORD);
           await this.dbService.execute(
-            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Admin', '${adminEmailEscaped}', '${adminPasswordHash}', 'admin')`
+            `INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+            ['Default Admin', this.DEFAULT_ADMIN_EMAIL, adminPasswordHash, 'admin']
           );
         }
       }
 
       // Ensure there is at least one cashier user
       const cashierCountRow = (await this.dbService.queryOne(
-        `SELECT COUNT(*) as count FROM users WHERE role = 'cashier'`
+        `SELECT COUNT(*) as count FROM users WHERE role = ?`,
+        ['cashier']
       )) as { count?: number } | null;
 
       const cashierCount =
@@ -117,15 +123,16 @@ export class SuperAdminService {
           : 0;
 
       if (cashierCount === 0) {
-        const cashierEmailEscaped = this.DEFAULT_CASHIER_EMAIL.replace(/'/g, "''");
         const existingCashierUser = await this.dbService.queryOne(
-          `SELECT * FROM users WHERE email = '${cashierEmailEscaped}'`
+          `SELECT * FROM users WHERE email = ?`,
+          [this.DEFAULT_CASHIER_EMAIL]
         );
 
         if (!existingCashierUser) {
           const cashierPasswordHash = this.hashPassword(this.DEFAULT_CASHIER_PASSWORD);
           await this.dbService.execute(
-            `INSERT INTO users (name, email, password_hash, role) VALUES ('Default Cashier', '${cashierEmailEscaped}', '${cashierPasswordHash}', 'cashier')`
+            `INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+            ['Default Cashier', this.DEFAULT_CASHIER_EMAIL, cashierPasswordHash, 'cashier']
           );
         }
       }
@@ -162,7 +169,8 @@ export class SuperAdminService {
       }
 
       const user = (await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+        `SELECT * FROM users WHERE email = ?`,
+        [email]
       )) as User | null;
 
       if (!user) {
@@ -220,12 +228,14 @@ export class SuperAdminService {
   public async createUser(
     name: string,
     email: string,
-    password: string
+    password: string,
+    role: string = 'admin'
   ): Promise<{ success: boolean; error?: string; user?: User }> {
     try {
       // Check if user exists
       const existingUser = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
+        `SELECT * FROM users WHERE email = ?`,
+        [email]
       );
 
       if (existingUser) {
@@ -237,12 +247,14 @@ export class SuperAdminService {
 
       const passwordHash = this.hashPassword(password);
       const result = await this.dbService.execute(
-        `INSERT INTO users (name, email, password_hash) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}')`
+        `INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`,
+        [name, email, passwordHash, role]
       );
 
       const userId = (result as any).lastID;
       const user = (await this.dbService.queryOne(
-        `SELECT id, name, email, password_hash, created_at FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, password_hash, role, created_at FROM users WHERE id = ?`,
+        [userId]
       )) as User;
 
       return {
@@ -268,7 +280,8 @@ export class SuperAdminService {
     try {
       // Check if email is already taken by another user
       const existingUser = await this.dbService.queryOne(
-        `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}' AND id != ${userId}`
+        `SELECT * FROM users WHERE email = ? AND id != ?`,
+        [email, userId]
       );
 
       if (existingUser) {
@@ -279,7 +292,8 @@ export class SuperAdminService {
       }
 
       await this.dbService.execute(
-        `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}' WHERE id = ${userId}`
+        `UPDATE users SET name = ?, email = ? WHERE id = ?`,
+        [name, email, userId]
       );
 
       return {
@@ -303,7 +317,8 @@ export class SuperAdminService {
     try {
       const passwordHash = this.hashPassword(newPassword);
       await this.dbService.execute(
-        `UPDATE users SET password_hash = '${passwordHash}' WHERE id = ${userId}`
+        `UPDATE users SET password_hash = ? WHERE id = ?`,
+        [passwordHash, userId]
       );
 
       return {
@@ -324,7 +339,8 @@ export class SuperAdminService {
     try {
       // Don't allow deleting super admin
       const user = (await this.dbService.queryOne(
-        `SELECT email FROM users WHERE id = ${userId}`
+        `SELECT email FROM users WHERE id = ?`,
+        [userId]
       )) as { email: string } | null;
 
       if (user && user.email === this.SUPER_ADMIN_EMAIL) {
@@ -334,7 +350,7 @@ export class SuperAdminService {
         };
       }
 
-      await this.dbService.execute(`DELETE FROM users WHERE id = ${userId}`);
+      await this.dbService.execute(`DELETE FROM users WHERE id = ?`, [userId]);
       return {
         success: true,
       };
@@ -370,7 +386,8 @@ export class SuperAdminService {
   ): Promise<{ success: boolean; error?: string }> {
     try {
       await this.dbService.execute(
-        `UPDATE licenses SET expiry_date = '${expiryDate}', is_active = ${isActive ? 1 : 0}, updated_at = CURRENT_TIMESTAMP WHERE id = ${licenseId}`
+        `UPDATE licenses SET expiry_date = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [expiryDate, isActive ? 1 : 0, licenseId]
       );
 
       return {
@@ -389,7 +406,7 @@ export class SuperAdminService {
    */
   public async deleteLicense(licenseId: number): Promise<{ success: boolean; error?: string }> {
     try {
-      await this.dbService.execute(`DELETE FROM licenses WHERE id = ${licenseId}`);
+      await this.dbService.execute(`DELETE FROM licenses WHERE id = ?`, [licenseId]);
       return {
         success: true,
       };
@@ -423,18 +440,20 @@ export class SuperAdminService {
   public async revokeGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
     try {
       await this.dbService.execute(
-        `UPDATE generated_licenses SET is_used = 0, used_at = NULL WHERE id = ${id}`
+        `UPDATE generated_licenses SET is_used = 0, used_at = NULL WHERE id = ?`,
+        [id]
       );
 
       // Also deactivate any live license that was activated with this code
       const row = (await this.dbService.queryOne(
-        `SELECT code FROM generated_licenses WHERE id = ${id}`
+        `SELECT code FROM generated_licenses WHERE id = ?`,
+        [id]
       )) as { code: string } | null;
 
       if (row) {
         await this.dbService.execute(
-          `UPDATE licenses SET is_active = 0, updated_at = CURRENT_TIMESTAMP
-           WHERE activation_code = '${row.code.replace(/'/g, "''")}'`
+          `UPDATE licenses SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE activation_code = ?`,
+          [row.code]
         );
       }
 
@@ -450,7 +469,8 @@ export class SuperAdminService {
   public async deleteGeneratedLicense(id: number): Promise<{ success: boolean; error?: string }> {
     try {
       await this.dbService.execute(
-        `DELETE FROM generated_licenses WHERE id = ${id}`
+        `DELETE FROM generated_licenses WHERE id = ?`,
+        [id]
       );
       return { success: true };
     } catch (error) {
