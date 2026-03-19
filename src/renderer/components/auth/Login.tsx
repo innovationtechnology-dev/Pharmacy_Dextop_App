@@ -276,7 +276,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     name="email"
                     value={formData.email}
                     onChange={handleChange}
-                    placeholder="admin@pharmacy.com"
+                    placeholder="Enter your email (e.g., example@pharmacy.com)"
                     className={`w-full border-2 rounded-xl px-4 py-3 text-base outline-none transition-all duration-200 ${
                       theme === 'dark'
                         ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
