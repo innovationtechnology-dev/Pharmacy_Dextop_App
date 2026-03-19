@@ -119,11 +119,42 @@ export class LicenseService {
   /**
    * Generate a new 14-char license key, persist it in generated_licenses,
    * and return the full record so the caller can push it to the cloud.
+   * 
+   * Rate limit: Maximum 3 licenses per hour
    */
   public async generateLicenseKey(
     details: GenerateLicenseKeyInput
   ): Promise<GenerateLicenseKeyResult> {
     try {
+      // Rate limiting: Check how many licenses were generated in the last hour
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recentCount = await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM generated_licenses WHERE generated_at >= ?`,
+        [oneHourAgo]
+      );
+      
+      const count = (recentCount as any)?.count || 0;
+      if (count >= 3) {
+        // Find the oldest license in the last hour to calculate when limit resets
+        const oldestRecent = await this.dbService.queryOne(
+          `SELECT generated_at FROM generated_licenses WHERE generated_at >= ? ORDER BY generated_at ASC LIMIT 1`,
+          [oneHourAgo]
+        );
+        
+        let resetMessage = '';
+        if (oldestRecent && (oldestRecent as any).generated_at) {
+          const oldestTime = new Date((oldestRecent as any).generated_at);
+          const resetTime = new Date(oldestTime.getTime() + 60 * 60 * 1000);
+          const minutesLeft = Math.ceil((resetTime.getTime() - Date.now()) / (60 * 1000));
+          resetMessage = ` Try again in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}.`;
+        }
+        
+        return { 
+          success: false, 
+          error: `Rate limit exceeded. Maximum 3 licenses can be generated per hour.${resetMessage}` 
+        };
+      }
+
       // Guarantee uniqueness within the local table
       let code = LicenseService.generateShortCode(14);
       let attempts = 0;
@@ -156,7 +187,8 @@ export class LicenseService {
         ]
       );
 
-      console.log(`✅ License key generated: ${code}`);
+      const remaining = 3 - (count + 1);
+      console.log(`✅ License key generated: ${code} (${count + 1}/3 in last hour, ${remaining} remaining)`);
 
       return {
         success: true,
@@ -173,6 +205,42 @@ export class LicenseService {
     } catch (error) {
       console.error('❌ generateLicenseKey error:', error);
       return { success: false, error: 'Failed to generate license key.' };
+    }
+  }
+
+  /**
+   * Get remaining license generation quota for the current hour
+   */
+  public async getRemainingLicenseQuota(): Promise<{ remaining: number; resetInMinutes: number }> {
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recentCount = await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM generated_licenses WHERE generated_at >= ?`,
+        [oneHourAgo]
+      );
+      
+      const count = (recentCount as any)?.count || 0;
+      const remaining = Math.max(0, 3 - count);
+      
+      // Calculate reset time
+      let resetInMinutes = 60;
+      if (count > 0) {
+        const oldestRecent = await this.dbService.queryOne(
+          `SELECT generated_at FROM generated_licenses WHERE generated_at >= ? ORDER BY generated_at ASC LIMIT 1`,
+          [oneHourAgo]
+        );
+        
+        if (oldestRecent && (oldestRecent as any).generated_at) {
+          const oldestTime = new Date((oldestRecent as any).generated_at);
+          const resetTime = new Date(oldestTime.getTime() + 60 * 60 * 1000);
+          resetInMinutes = Math.ceil((resetTime.getTime() - Date.now()) / (60 * 1000));
+        }
+      }
+      
+      return { remaining, resetInMinutes };
+    } catch (error) {
+      console.error('Error getting license quota:', error);
+      return { remaining: 3, resetInMinutes: 60 };
     }
   }
 

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
 import { getDatabaseService } from './database.service';
 import { databaseConfig } from '../config/database.config';
 
@@ -458,39 +459,135 @@ export class SuperAdminService {
   }
 
   /**
-   * Import database file
+   * Validate database schema - checks for all critical tables
    */
-  public async importDatabase(filePath: string): Promise<{ success: boolean; error?: string }> {
+  private async validateDatabaseSchema(filePath: string): Promise<{ valid: boolean; missingTables: string[] }> {
+    const requiredTables = [
+      'users',
+      'medicines',
+      'customers',
+      'suppliers',
+      'sales',
+      'sale_items',
+      'purchases',
+      'purchase_items',
+      'purchase_payments'
+    ];
+
+    const sqlite3 = require('sqlite3').verbose();
+    const tempDb = new sqlite3.Database(filePath);
+    const missingTables: string[] = [];
+
+    for (const tableName of requiredTables) {
+      const exists = await new Promise<boolean>((resolve) => {
+        tempDb.get(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`,
+          (err: any, row: any) => {
+            resolve(!err && !!row);
+          }
+        );
+      });
+
+      if (!exists) {
+        missingTables.push(tableName);
+      }
+    }
+
+    await new Promise<void>((resolve) => tempDb.close(() => resolve()));
+
+    return {
+      valid: missingTables.length === 0,
+      missingTables
+    };
+  }
+
+  /**
+   * Get database summary statistics
+   */
+  private async getDatabaseSummary(): Promise<{
+    users: number;
+    medicines: number;
+    customers: number;
+    sales: number;
+    purchases: number;
+    payments: number;
+  }> {
+    try {
+      const counts = {
+        users: 0,
+        medicines: 0,
+        customers: 0,
+        sales: 0,
+        purchases: 0,
+        payments: 0
+      };
+
+      const userCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM users');
+      counts.users = (userCount as any)?.count || 0;
+
+      const medicineCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM medicines');
+      counts.medicines = (medicineCount as any)?.count || 0;
+
+      const customerCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM customers');
+      counts.customers = (customerCount as any)?.count || 0;
+
+      const salesCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM sales');
+      counts.sales = (salesCount as any)?.count || 0;
+
+      const purchaseCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM purchases');
+      counts.purchases = (purchaseCount as any)?.count || 0;
+
+      const paymentCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM purchase_payments');
+      counts.payments = (paymentCount as any)?.count || 0;
+
+      return counts;
+    } catch (error) {
+      return {
+        users: 0,
+        medicines: 0,
+        customers: 0,
+        sales: 0,
+        purchases: 0,
+        payments: 0
+      };
+    }
+  }
+
+  /**
+   * Import database file with enhanced validation and verification
+   */
+  public async importDatabase(filePath: string): Promise<{ 
+    success: boolean; 
+    error?: string;
+    summary?: {
+      users: number;
+      medicines: number;
+      customers: number;
+      sales: number;
+      purchases: number;
+      payments: number;
+    };
+  }> {
     try {
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'Source file does not exist' };
       }
 
-      // 1. Basic SQLite Validation
-      const sqlite3 = require('sqlite3').verbose();
-      const tempDb = new sqlite3.Database(filePath);
-
-      const schemaCheck = await new Promise<boolean>((resolve) => {
-        // Check for 'users' table as a proxy for a valid schema
-        tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
-          if (err || !row) {
-            resolve(false);
-          } else {
-            resolve(true);
-          }
-        });
-      });
-
-      // Close temp connection
-      await new Promise<void>((resolve) => tempDb.close(() => resolve()));
-
-      if (!schemaCheck) {
-        return { success: false, error: 'Incompatible database: Missing required tables' };
+      // 1. Enhanced Schema Validation
+      const validation = await this.validateDatabaseSchema(filePath);
+      
+      if (!validation.valid) {
+        return { 
+          success: false, 
+          error: `Incompatible database: Missing required tables (${validation.missingTables.join(', ')})` 
+        };
       }
 
-      // 2. Rotate Database
+      // 2. Create Timestamped Backup (using local system time)
       const currentDbPath = this.getDatabasePath();
-      const backupPath = `${currentDbPath}.bak`;
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+      const timestampedBackupPath = `${currentDbPath}.backup-${timestamp}.bak`;
       const dbConnection = (require('../database/database.connection')).getDatabaseConnection();
 
       // Close current connection
@@ -510,10 +607,9 @@ export class SuperAdminService {
       }
 
       try {
-        // Backup current (if it exists)
+        // Create timestamped backup of current database (if it exists)
         if (fs.existsSync(currentDbPath)) {
-          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-          fs.renameSync(currentDbPath, backupPath);
+          fs.copyFileSync(currentDbPath, timestampedBackupPath);
         }
 
         // Copy new database
@@ -522,7 +618,10 @@ export class SuperAdminService {
         // Reconnect
         await dbConnection.connect();
 
-        return { success: true };
+        // 3. Post-Import Verification - Get summary of imported data
+        const summary = await this.getDatabaseSummary();
+
+        return { success: true, summary };
       } catch (err: any) {
         console.error('Error during database rotation:', err);
 
@@ -532,11 +631,11 @@ export class SuperAdminService {
           errorMessage = 'Database file is currently in use by another process. Please close all other database tools and try again.';
         }
 
-        // Rollback attempts
-        if (fs.existsSync(backupPath)) {
+        // Rollback attempts - restore from timestamped backup
+        if (fs.existsSync(timestampedBackupPath)) {
           try {
             if (fs.existsSync(currentDbPath)) fs.unlinkSync(currentDbPath);
-            fs.renameSync(backupPath, currentDbPath);
+            fs.copyFileSync(timestampedBackupPath, currentDbPath);
             await dbConnection.connect();
           } catch (rollbackErr) {
             console.error('Critical: Rollback failed:', rollbackErr);
@@ -547,6 +646,95 @@ export class SuperAdminService {
     } catch (error) {
       console.error('Import database error:', error);
       return { success: false, error: 'Database import failed' };
+    }
+  }
+
+  /**
+   * Get list of available database backups
+   */
+  public getAvailableBackups(): Array<{ filename: string; path: string; timestamp: string; size: number }> {
+    try {
+      const currentDbPath = this.getDatabasePath();
+      const dbDir = path.dirname(currentDbPath);
+      const dbBasename = path.basename(currentDbPath);
+      
+      const files = fs.readdirSync(dbDir);
+      const backups = files
+        .filter(file => file.startsWith(dbBasename) && file.includes('.backup-'))
+        .map(file => {
+          const filePath = path.join(dbDir, file);
+          const stats = fs.statSync(filePath);
+          const timestampMatch = file.match(/\.backup-(.+)\.bak$/);
+          
+          let timestamp = 'Unknown';
+          if (timestampMatch) {
+            // Format is: 2026-03-18T17-10-07
+            // Convert to: 2026-03-18T17:10:07
+            const rawTimestamp = timestampMatch[1];
+            // Replace hyphens with colons only in the time part (after T)
+            timestamp = rawTimestamp.replace(/T(\d{2})-(\d{2})-(\d{2})/, 'T$1:$2:$3');
+          }
+          
+          return {
+            filename: file,
+            path: filePath,
+            timestamp,
+            size: stats.size
+          };
+        })
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp)); // Most recent first
+
+      return backups;
+    } catch (error) {
+      console.error('Error getting backups:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Restore database from a backup file
+   */
+  public async restoreFromBackup(backupPath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!fs.existsSync(backupPath)) {
+        return { success: false, error: 'Backup file does not exist' };
+      }
+
+      // Use the same import logic
+      return await this.importDatabase(backupPath);
+    } catch (error) {
+      console.error('Restore from backup error:', error);
+      return { success: false, error: 'Failed to restore from backup' };
+    }
+  }
+
+  /**
+   * Delete old backups, keeping only the most recent N backups
+   */
+  public cleanupOldBackups(keepCount: number = 10): { success: boolean; deletedCount: number } {
+    try {
+      const backups = this.getAvailableBackups();
+      
+      if (backups.length <= keepCount) {
+        return { success: true, deletedCount: 0 };
+      }
+
+      const toDelete = backups.slice(keepCount);
+      let deletedCount = 0;
+
+      for (const backup of toDelete) {
+        try {
+          fs.unlinkSync(backup.path);
+          deletedCount++;
+        } catch (err) {
+          console.error(`Failed to delete backup ${backup.filename}:`, err);
+        }
+      }
+
+      return { success: true, deletedCount };
+    } catch (error) {
+      console.error('Cleanup backups error:', error);
+      return { success: false, deletedCount: 0 };
     }
   }
 }

@@ -37,9 +37,13 @@ import {
   deleteGeneratedLicense,
   downloadDatabase,
   importDatabase,
+  getAvailableBackups,
+  restoreFromBackup,
+  cleanupOldBackups,
   User,
   License,
   GeneratedLicense,
+  DatabaseBackup,
 } from '../../utils/super-admin';
 import { ToastContainer, useToast } from '../../components/common/Toast';
 
@@ -78,6 +82,10 @@ const SuperAdminDashboard: React.FC = () => {
   // Generated licenses state
   const [generatedLicenses, setGeneratedLicenses] = useState<GeneratedLicense[]>([]);
   const [glFilter, setGlFilter] = useState<'all' | 'used' | 'unused'>('all');
+
+  // Backup management state
+  const [backups, setBackups] = useState<DatabaseBackup[]>([]);
+  const [showBackupsModal, setShowBackupsModal] = useState(false);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -152,18 +160,26 @@ const SuperAdminDashboard: React.FC = () => {
     }
   };
   const handleImportDatabase = async () => {
-    if (!confirm('Warning: Importing a new database will replace your current data. It is highly recommended to download a backup of your current database first. Are you sure you want to proceed?')) {
+    if (!confirm('Warning: Importing a new database will replace your current data. A timestamped backup will be created automatically. Are you sure you want to proceed?')) {
       return;
     }
 
     setLoading(true);
     setShowOverlay(true);
-    setLoadingText('Importing database... Please do not close the application.');
+    setLoadingText('Validating and importing database...');
     try {
       const result = await importDatabase();
       if (result.success) {
         setLoadingText('Import successful! Preparing to reload...');
-        success(`Database imported successfully! The application will reload to apply changes.`);
+        
+        // Show summary if available
+        if (result.summary) {
+          const summaryText = `Database imported successfully!\n\nImported Data:\n- Users: ${result.summary.users}\n- Medicines: ${result.summary.medicines}\n- Customers: ${result.summary.customers}\n- Sales: ${result.summary.sales}\n- Purchases: ${result.summary.purchases}\n- Payments: ${result.summary.payments}\n\nThe application will reload to apply changes.`;
+          alert(summaryText);
+        } else {
+          success(`Database imported successfully! The application will reload to apply changes.`);
+        }
+        
         setTimeout(() => {
           window.location.reload();
         }, 2000);
@@ -363,6 +379,82 @@ const SuperAdminDashboard: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Backup Management Functions
+  const loadBackups = async () => {
+    try {
+      const data = await getAvailableBackups();
+      setBackups(data);
+    } catch (err) {
+      error('Failed to load backups');
+    }
+  };
+
+  const handleRestoreBackup = async (backupPath: string, filename: string) => {
+    if (!confirm(`Restore database from backup "${filename}"?\n\nThis will replace your current database. A new backup of the current state will be created automatically.`)) {
+      return;
+    }
+
+    setLoading(true);
+    setShowOverlay(true);
+    setLoadingText('Restoring database from backup...');
+    setShowBackupsModal(false);
+    
+    try {
+      const result = await restoreFromBackup(backupPath);
+      if (result.success) {
+        setLoadingText('Restore successful! Preparing to reload...');
+        
+        if (result.summary) {
+          const summaryText = `Database restored successfully!\n\nRestored Data:\n- Users: ${result.summary.users}\n- Medicines: ${result.summary.medicines}\n- Customers: ${result.summary.customers}\n- Sales: ${result.summary.sales}\n- Purchases: ${result.summary.purchases}\n- Payments: ${result.summary.payments}\n\nThe application will reload to apply changes.`;
+          alert(summaryText);
+        } else {
+          success('Database restored successfully! The application will reload.');
+        }
+        
+        setTimeout(() => {
+          window.location.reload();
+        }, 2000);
+      } else {
+        error(result.error || 'Failed to restore backup');
+        setLoading(false);
+        setShowOverlay(false);
+      }
+    } catch (err) {
+      error('Failed to restore backup');
+      setLoading(false);
+      setShowOverlay(false);
+    }
+  };
+
+  const handleCleanupBackups = async () => {
+    if (!confirm('Delete old backups, keeping only the 10 most recent?\n\nThis action cannot be undone.')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await cleanupOldBackups(10);
+      if (result.success) {
+        success(`Cleaned up ${result.deletedCount} old backup(s)`);
+        loadBackups();
+      } else {
+        error('Failed to cleanup backups');
+      }
+    } catch (err) {
+      error('Failed to cleanup backups');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
   };
 
   const formatDate = (dateString: string): string => {
@@ -586,7 +678,7 @@ const SuperAdminDashboard: React.FC = () => {
                       <div className="flex-1">
                         <h3 className="text-base sm:text-lg font-semibold text-gray-900">Import Database</h3>
                         <p className="text-xs sm:text-sm text-gray-600">
-                          Upload a valid SQLite database file. This will REPLACE the current data.
+                          Upload a valid SQLite database file. A timestamped backup will be created automatically.
                         </p>
                       </div>
                     </div>
@@ -598,6 +690,30 @@ const SuperAdminDashboard: React.FC = () => {
                     >
                       <FiUpload className="w-4 h-4 sm:w-5 sm:h-5" />
                       {loading ? 'Processing...' : 'Import Database'}
+                    </button>
+                  </div>
+
+                  <div className="border-t border-gray-200 pt-6 mt-6">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-4">
+                      <FiRefreshCw className="w-6 h-6 sm:w-8 sm:h-8 text-gray-600 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="text-base sm:text-lg font-semibold text-gray-900">Backup Management</h3>
+                        <p className="text-xs sm:text-sm text-gray-600">
+                          View, restore, and manage timestamped database backups
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        loadBackups();
+                        setShowBackupsModal(true);
+                      }}
+                      disabled={loading}
+                      className="w-full sm:w-auto px-4 sm:px-6 py-2 sm:py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50 text-sm sm:text-base"
+                    >
+                      <FiDatabase className="w-4 h-4 sm:w-5 sm:h-5" />
+                      Manage Backups
                     </button>
                   </div>
                 </div>
@@ -1150,6 +1266,108 @@ const SuperAdminDashboard: React.FC = () => {
                 >
                   Cancel
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Backup Management Modal */}
+      {showBackupsModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between p-6 border-b border-gray-200">
+              <div>
+                <h3 className="text-2xl font-bold text-gray-900">Database Backups</h3>
+                <p className="text-sm text-gray-600 mt-1">Manage timestamped database backups</p>
+              </div>
+              <button
+                onClick={() => setShowBackupsModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <FiX className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {backups.length === 0 ? (
+                <div className="text-center py-12">
+                  <FiDatabase className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                  <p className="text-gray-500 font-medium">No backups found</p>
+                  <p className="text-sm text-gray-400 mt-2">
+                    Backups are created automatically when you import a database
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {backups.map((backup, index) => (
+                    <div
+                      key={backup.path}
+                      className="bg-gray-50 border border-gray-200 rounded-lg p-4 hover:bg-gray-100 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FiDatabase className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                            <h4 className="font-semibold text-gray-900 truncate">
+                              {backup.filename}
+                            </h4>
+                            {index === 0 && (
+                              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-medium rounded">
+                                Latest
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                            <div className="text-gray-600">
+                              <span className="font-medium">Created:</span> {new Date(backup.timestamp).toLocaleString()}
+                            </div>
+                            <div className="text-gray-600">
+                              <span className="font-medium">Size:</span> {formatFileSize(backup.size)}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleRestoreBackup(backup.path, backup.filename)}
+                          disabled={loading}
+                          className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50 flex-shrink-0"
+                        >
+                          <FiRefreshCw className="w-4 h-4" />
+                          Restore
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-gray-200 p-6 bg-gray-50 rounded-b-xl">
+              <div className="flex items-center justify-between gap-4">
+                <div className="text-sm text-gray-600">
+                  <p className="font-medium">Total backups: {backups.length}</p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Backups are created automatically on database import
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  {backups.length > 10 && (
+                    <button
+                      onClick={handleCleanupBackups}
+                      disabled={loading}
+                      className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
+                    >
+                      <FiTrash2 className="w-4 h-4" />
+                      Cleanup Old
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setShowBackupsModal(false)}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg font-medium transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           </div>

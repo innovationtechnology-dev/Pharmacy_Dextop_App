@@ -284,12 +284,80 @@ export const downloadDatabase = async (): Promise<{ success: boolean; error?: st
 /**
  * Import database
  */
-export const importDatabase = async (): Promise<{ success: boolean; error?: string }> => {
+export const importDatabase = async (): Promise<{ 
+  success: boolean; 
+  error?: string;
+  summary?: {
+    users: number;
+    medicines: number;
+    customers: number;
+    sales: number;
+    purchases: number;
+    payments: number;
+  };
+}> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('super-admin-import-database-reply', (response: any) => {
       resolve(response);
     });
 
     window.electron.ipcRenderer.sendMessage('super-admin-import-database', []);
+  });
+};
+
+export interface DatabaseBackup {
+  filename: string;
+  path: string;
+  timestamp: string;
+  size: number;
+}
+
+/**
+ * Get available database backups
+ */
+export const getAvailableBackups = async (): Promise<DatabaseBackup[]> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('super-admin-get-backups-reply', (backups: any) => {
+      resolve(backups);
+    });
+
+    window.electron.ipcRenderer.sendMessage('super-admin-get-backups', []);
+  });
+};
+
+/**
+ * Restore database from backup
+ */
+export const restoreFromBackup = async (backupPath: string): Promise<{ 
+  success: boolean; 
+  error?: string;
+  summary?: {
+    users: number;
+    medicines: number;
+    customers: number;
+    sales: number;
+    purchases: number;
+    payments: number;
+  };
+}> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('super-admin-restore-backup-reply', (response: any) => {
+      resolve(response);
+    });
+
+    window.electron.ipcRenderer.sendMessage('super-admin-restore-backup', [backupPath] as any);
+  });
+};
+
+/**
+ * Cleanup old backups, keeping only the most recent N
+ */
+export const cleanupOldBackups = async (keepCount: number = 10): Promise<{ success: boolean; deletedCount: number }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('super-admin-cleanup-backups-reply', (response: any) => {
+      resolve(response);
+    });
+
+    window.electron.ipcRenderer.sendMessage('super-admin-cleanup-backups', [keepCount] as any);
   });
 };

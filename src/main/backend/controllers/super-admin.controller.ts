@@ -287,6 +287,47 @@ export class SuperAdminController {
         });
       }
     });
+
+    // Handle get available backups
+    ipcMain.on('super-admin-get-backups', async (event: IpcMainEvent) => {
+      try {
+        const backups = this.superAdminService.getAvailableBackups();
+        event.reply('super-admin-get-backups-reply', backups);
+      } catch (error) {
+        console.error('Get backups error:', error);
+        event.reply('super-admin-get-backups-reply', []);
+      }
+    });
+
+    // Handle restore from backup
+    ipcMain.on('super-admin-restore-backup', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const backupPath = args[0] as string;
+        const result = await this.superAdminService.restoreFromBackup(backupPath);
+        event.reply('super-admin-restore-backup-reply', result);
+      } catch (error) {
+        console.error('Restore backup error:', error);
+        event.reply('super-admin-restore-backup-reply', {
+          success: false,
+          error: 'Failed to restore from backup',
+        });
+      }
+    });
+
+    // Handle cleanup old backups
+    ipcMain.on('super-admin-cleanup-backups', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const keepCount = (args[0] as number) || 10;
+        const result = this.superAdminService.cleanupOldBackups(keepCount);
+        event.reply('super-admin-cleanup-backups-reply', result);
+      } catch (error) {
+        console.error('Cleanup backups error:', error);
+        event.reply('super-admin-cleanup-backups-reply', {
+          success: false,
+          deletedCount: 0,
+        });
+      }
+    });
   }
 }
 
