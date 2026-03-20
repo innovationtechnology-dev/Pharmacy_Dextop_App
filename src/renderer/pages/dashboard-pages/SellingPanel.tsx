@@ -117,6 +117,8 @@ const SellingPanel: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [saleType, setSaleType] = useState<string>('Regular');
+  const [prescriptionNumber, setPrescriptionNumber] = useState('');
+  const [doctorName, setDoctorName] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
@@ -491,6 +493,8 @@ const SellingPanel: React.FC = () => {
     setCustomerName('');
     setCustomerPhone('');
     setSaleType('Regular');
+    setPrescriptionNumber('');
+    setDoctorName('');
     setReceivedAmount('');
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -907,6 +911,8 @@ const SellingPanel: React.FC = () => {
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
+        prescriptionNumber: prescriptionNumber.trim() || undefined,
+        doctorName: doctorName.trim() || undefined,
       };
 
       // Check if we're updating an existing sale or creating a new one
@@ -1901,16 +1907,31 @@ const SellingPanel: React.FC = () => {
                   />
                 </div>
 
-                {/* VISITS */}
+                {/* PRESCRIPTION */}
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
-                    Visits
+                    Rx #
                   </label>
                   <input
                     type="text"
-                    value="0"
-                    readOnly
-                    className="w-16 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
+                    value={prescriptionNumber}
+                    onChange={(e) => setPrescriptionNumber(e.target.value)}
+                    placeholder="Prescription no."
+                    className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
+                  />
+                </div>
+
+                {/* DOCTOR */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
+                    Dr.
+                  </label>
+                  <input
+                    type="text"
+                    value={doctorName}
+                    onChange={(e) => setDoctorName(e.target.value)}
+                    placeholder="Doctor name"
+                    className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
                   />
                 </div>
 

@@ -30,6 +30,9 @@ interface Medicine {
   totalAvailablePills: number;
   sellablePills: number;
   averageSellablePricePerPill?: number | null;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel: number;
 }
 
 type BackendMedicine = {
@@ -41,6 +44,9 @@ type BackendMedicine = {
   totalAvailablePills?: number;
   sellablePills?: number;
   averageSellablePricePerPill?: number | null;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel?: number;
 };
 
 type IpcResponse<T> = {
@@ -54,6 +60,9 @@ type MedicineFormState = {
   pillQuantity: string;
   barcode: string;
   status: MedicineStatus;
+  manufacturer: string;
+  brandName: string;
+  minimumStockLevel: string;
 };
 
 const STATUS_LIBRARY: MedicineStatus[] = ['active', 'inactive', 'discontinued'];
@@ -64,6 +73,9 @@ const emptyMedicineForm: MedicineFormState = {
   pillQuantity: '',
   barcode: '',
   status: DEFAULT_STATUS,
+  manufacturer: '',
+  brandName: '',
+  minimumStockLevel: '',
 };
 
 const formatNumericId = (id?: number) => {
@@ -83,6 +95,9 @@ const mapBackendMedicine = (record: BackendMedicine): Medicine => {
     totalAvailablePills: record.totalAvailablePills ?? 0,
     sellablePills: record.sellablePills ?? 0,
     averageSellablePricePerPill: record.averageSellablePricePerPill ?? null,
+    manufacturer: record.manufacturer ?? undefined,
+    brandName: record.brandName ?? undefined,
+    minimumStockLevel: record.minimumStockLevel ?? 0,
   };
 };
 
@@ -186,6 +201,9 @@ export default function MedicinesPage() {
       pillQuantity,
       barcode: newMedicine.barcode.trim(),
       status: newMedicine.status,
+      manufacturer: newMedicine.manufacturer.trim() || undefined,
+      brandName: newMedicine.brandName.trim() || undefined,
+      minimumStockLevel: parseInt(newMedicine.minimumStockLevel, 10) || 0,
     };
 
     setIsSubmitting(true);
@@ -306,6 +324,9 @@ export default function MedicinesPage() {
       pillQuantity: medicine.pillQuantity.toString(),
       barcode: medicine.barcode || '',
       status: medicine.status,
+      manufacturer: medicine.manufacturer || '',
+      brandName: medicine.brandName || '',
+      minimumStockLevel: medicine.minimumStockLevel > 0 ? medicine.minimumStockLevel.toString() : '',
     });
     setEditingMedicineId(medicine.id);
     setEditingMedicine(medicine);
@@ -617,6 +638,62 @@ export default function MedicinesPage() {
                     <option key={status} value={status}>{status}</option>
                   ))}
                 </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="medicine-manufacturer"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  >
+                    Manufacturer
+                  </label>
+                  <input
+                    id="medicine-manufacturer"
+                    type="text"
+                    value={newMedicine.manufacturer}
+                    onChange={(e) => handleNewMedicineChange('manufacturer', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    placeholder="e.g. Pfizer"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="medicine-brand-name"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  >
+                    Brand Name
+                  </label>
+                  <input
+                    id="medicine-brand-name"
+                    type="text"
+                    value={newMedicine.brandName}
+                    onChange={(e) => handleNewMedicineChange('brandName', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    placeholder="e.g. Lipitor"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="medicine-min-stock"
+                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                >
+                  Min. Stock Level (Pills)
+                </label>
+                <input
+                  id="medicine-min-stock"
+                  type="number"
+                  min="0"
+                  value={newMedicine.minimumStockLevel}
+                  onChange={(e) => handleNewMedicineChange('minimumStockLevel', e.target.value)}
+                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  placeholder="0 = no alert"
+                />
+                <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  Alert triggers when sellable stock falls below this number.
+                </p>
               </div>
 
               <div className="flex gap-2 pt-2">

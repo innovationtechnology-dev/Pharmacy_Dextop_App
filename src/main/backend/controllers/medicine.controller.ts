@@ -1,6 +1,6 @@
 import { ipcMain, IpcMainEvent, dialog } from 'electron';
 import { promises as fs } from 'fs';
-import { MedicineService, Medicine } from '../services/medicine.service';
+import { MedicineService, Medicine, LowStockAlert } from '../services/medicine.service';
 import { SalesService, Sale } from '../services/sales.service';
 import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 import { SupplierService } from '../services/supplier.service';
@@ -406,6 +406,17 @@ export class MedicineController {
       } catch (error) {
         console.error('Get expiring medicines error:', error);
         event.reply('medicine-get-expiring-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get low-stock medicines
+    ipcMain.on('medicine-get-low-stock', async (event: IpcMainEvent) => {
+      try {
+        const alerts: LowStockAlert[] = await this.medicineService.getLowStockMedicines();
+        event.reply('medicine-get-low-stock-reply', { success: true, data: alerts });
+      } catch (error) {
+        console.error('Get low-stock medicines error:', error);
+        event.reply('medicine-get-low-stock-reply', { success: false, error: String(error) });
       }
     });
 

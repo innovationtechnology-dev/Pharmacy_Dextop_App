@@ -40,14 +40,15 @@ interface PurchaseItem {
   packetQuantity: number;
   pillsPerPacket: number;
   totalPills: number;
-  totalAmount: number; // NEW: Total amount paid for all packets
-  pricePerPacket: number; // Calculated from totalAmount
-  pricePerPill: number; // Calculated from totalAmount
+  totalAmount: number;
+  pricePerPacket: number;
+  pricePerPill: number;
   discount: number;
   tax: number;
   discountAmount?: number;
   taxAmount?: number;
   expiryDate: string;
+  batchNumber?: string;
   lineSubtotal: number;
   lineTotal: number;
 }
@@ -310,6 +311,7 @@ const PurchasingPanel: React.FC = () => {
         discount: 0,
         tax: 0,
         expiryDate: '',
+        batchNumber: '',
         lineSubtotal: 0,
         lineTotal: 0,
       });
@@ -477,6 +479,7 @@ const PurchasingPanel: React.FC = () => {
           discountAmount: item.discountAmount || 0,
           taxAmount: item.taxAmount || 0,
           expiryDate: item.expiryDate,
+          batchNumber: item.batchNumber?.trim() || undefined,
         })),
         paymentAmount: paymentAmount || 0,
         notes: notes || undefined,
@@ -1459,6 +1462,13 @@ const PurchasingPanel: React.FC = () => {
                                 updateCartItemField(item.medicine.id, 'expiryDate', e.target.value);
                               }}
                               className="w-full h-8 px-2 text-[10px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-emerald-500 outline-none transition-all dark:text-white shadow-sm"
+                            />
+                            <input
+                              type="text"
+                              value={item.batchNumber || ''}
+                              onChange={(e) => updateCartItemField(item.medicine.id, 'batchNumber', e.target.value)}
+                              placeholder="Batch # (opt.)"
+                              className="w-full h-7 mt-1 px-2 text-[10px] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md focus:border-emerald-500 outline-none transition-all dark:text-white"
                             />
                           </div>
 

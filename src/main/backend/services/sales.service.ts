@@ -28,6 +28,8 @@ export interface Sale {
   customerName?: string;
   customerPhone?: string;
   saleType?: string;
+  prescriptionNumber?: string;
+  doctorName?: string;
   createdAt?: string;
 }
 
@@ -206,6 +208,15 @@ export class SalesService {
       )
     `);
 
+    // Safe migration: add new columns to sales table if they don't exist
+    const salesInfoCheck = await this.dbService.query(`PRAGMA table_info(sales)`);
+    if (!salesInfoCheck.some((col: any) => col.name === 'prescription_number')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN prescription_number TEXT`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'doctor_name')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN doctor_name TEXT`);
+    }
+
     const saleItemsInfoCheck = await this.dbService.query(`PRAGMA table_info(sale_items)`);
     if (!saleItemsInfoCheck.some((col: any) => col.name === 'cost_price')) {
       await this.dbService.execute(`ALTER TABLE sale_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0`);
@@ -335,8 +346,8 @@ export class SalesService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertSaleSql = `
-        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, sale_type, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, sale_type, prescription_number, doctor_name, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleResult = await this.dbService.execute(insertSaleSql, [
         subtotal,
@@ -346,6 +357,8 @@ export class SalesService {
         payload.customerName || null,
         payload.customerPhone || null,
         payload.saleType || 'Regular',
+        (payload as any).prescriptionNumber || null,
+        (payload as any).doctorName || null,
       ]);
       const saleId = (saleResult as any).lastID;
 

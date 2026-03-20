@@ -216,7 +216,7 @@ const MainMenu: React.FC = () => {
       description: 'System Notifications',
       route: '/alerts',
       shortcut: 'Ctrl+A',
-      disabled: isAdmin,
+      disabled: false,
     },
   ];
 

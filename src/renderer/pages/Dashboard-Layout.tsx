@@ -20,7 +20,9 @@ import {
   DashboardHeaderConfig,
   DashboardHeaderContextValue,
   ExpiringAlert,
+  LowStockAlert,
 } from './dashboard-pages/useDashboardHeader';
+import { getStoredPharmacySettings } from '../types/pharmacy';
 import Breadcrumbs from '../components/navigation/Breadcrumbs';
 import Loader from '../components/Loader';
 import LicenseOverlay from '../components/license/LicenseOverlay';
@@ -39,6 +41,7 @@ const Dashboard_Layout: React.FC = () => {
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [pageTitle, setPageTitle] = useState('Dashboard');
   const [expiringAlerts, setExpiringAlerts] = useState<ExpiringAlert[]>([]);
+  const [lowStockAlerts, setLowStockAlerts] = useState<LowStockAlert[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -98,7 +101,7 @@ const Dashboard_Layout: React.FC = () => {
 
     // Route Guarding
     const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
-    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/alerts'];
+    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel'];
     
     if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
       navigate('/main-menu');
@@ -132,11 +135,37 @@ const Dashboard_Layout: React.FC = () => {
     ]);
   }, []);
 
+  const fetchLowStockAlerts = useCallback(() => {
+    if (!window?.electron) return;
+    const settings = getStoredPharmacySettings();
+    if (!settings.lowStockAlertsEnabled) {
+      setLowStockAlerts([]);
+      return;
+    }
+    window.electron.ipcRenderer.once(
+      'medicine-get-low-stock-reply',
+      (response: any) => {
+        if (response?.success) {
+          setLowStockAlerts(response.data || []);
+        } else {
+          console.error('Unable to load low-stock alerts', response?.error);
+        }
+      }
+    );
+    window.electron.ipcRenderer.sendMessage('medicine-get-low-stock', []);
+  }, []);
+
   useEffect(() => {
     fetchExpiringAlerts();
     const interval = setInterval(fetchExpiringAlerts, 60000);
     return () => clearInterval(interval);
   }, [fetchExpiringAlerts]);
+
+  useEffect(() => {
+    fetchLowStockAlerts();
+    const interval = setInterval(fetchLowStockAlerts, 60000);
+    return () => clearInterval(interval);
+  }, [fetchLowStockAlerts]);
 
   const setHeaderConfig = useCallback<DashboardHeaderContextValue['setHeader']>(
     (config) => {
@@ -156,11 +185,16 @@ const Dashboard_Layout: React.FC = () => {
       expiringAlerts,
       refreshExpiringAlerts: fetchExpiringAlerts,
       alertThresholdDays: ALERT_THRESHOLD_DAYS,
+      lowStockAlerts,
+      refreshLowStockAlerts: fetchLowStockAlerts,
+      lowStockAlertsEnabled: getStoredPharmacySettings().lowStockAlertsEnabled,
     }),
-    [setHeaderConfig, expiringAlerts, fetchExpiringAlerts]
+    [setHeaderConfig, expiringAlerts, fetchExpiringAlerts, lowStockAlerts, fetchLowStockAlerts]
   );
 
   const expiringAlertCount = expiringAlerts.length;
+  const lowStockAlertCount = lowStockAlerts.length;
+  const totalAlertCount = expiringAlertCount + lowStockAlertCount;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -491,7 +525,7 @@ const Dashboard_Layout: React.FC = () => {
                       </span>
                     </div>
 
-                    {user?.role !== 'admin' && (
+                    {(
                       <div className="relative" ref={notificationMenuRef}>
                       <button
                         type="button"
@@ -534,10 +568,10 @@ const Dashboard_Layout: React.FC = () => {
                             : 'w-5 h-5'
                             } text-gray-600 dark:text-gray-300 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors`}
                         />
-                        {expiringAlertCount > 0 && (
+                        {totalAlertCount > 0 && (
                           <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] font-bold rounded-full border-2 border-white dark:border-gray-800 flex items-center justify-center shadow-lg animate-pulse">
-                            {Math.min(expiringAlertCount, 9)}
-                            {expiringAlertCount > 9 ? '+' : ''}
+                            {Math.min(totalAlertCount, 9)}
+                            {totalAlertCount > 9 ? '+' : ''}
                           </span>
                         )}
                       </button>
@@ -550,19 +584,19 @@ const Dashboard_Layout: React.FC = () => {
                               Alerts & Notifications
                             </p>
                             <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-bold">
-                              {expiringAlertCount > 0
-                                ? `You have ${expiringAlertCount} medicine${expiringAlertCount > 1 ? 's' : ''} expiring soon.`
+                              {totalAlertCount > 0
+                                ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''} require attention.`
                                 : 'All medicines are healthy for now.'}
                             </p>
                           </div>
 
                           {/* Body section with subtler background */}
                           <div className="bg-gray-50 dark:bg-[#151b27] border-y border-gray-100 dark:border-[#242d3d]">
-                            {expiringAlertCount > 0 ? (
+                            {totalAlertCount > 0 ? (
                               <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-[#242d3d]">
-                                {expiringAlerts.slice(0, 4).map((alert) => (
+                                {expiringAlerts.slice(0, 3).map((alert) => (
                                   <button
-                                    key={alert.id}
+                                    key={`exp-${alert.id}`}
                                     onClick={() => {
                                       navigate('/alerts');
                                       setNotificationsOpen(false);
@@ -573,9 +607,29 @@ const Dashboard_Layout: React.FC = () => {
                                       {alert.name}
                                     </p>
                                     <div className="text-[8px] text-gray-400 dark:text-gray-500 mt-0.5 flex justify-between font-black">
-                                      <span>{alert.barcode || '—'}</span>
+                                      <span className="text-amber-500">⏰ Expiring</span>
                                       <span className="text-orange-600 dark:text-orange-500/60">
                                         {Math.max(alert.daysUntilExpiry, 0)} days left
+                                      </span>
+                                    </div>
+                                  </button>
+                                ))}
+                                {lowStockAlerts.slice(0, 3).map((alert) => (
+                                  <button
+                                    key={`ls-${alert.id}`}
+                                    onClick={() => {
+                                      navigate('/alerts');
+                                      setNotificationsOpen(false);
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 hover:bg-white dark:hover:bg-[#2d3a4f] transition-colors group"
+                                  >
+                                    <p className="text-[11px] font-bold text-gray-700 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-blue-400">
+                                      {alert.name}
+                                    </p>
+                                    <div className="text-[8px] text-gray-400 dark:text-gray-500 mt-0.5 flex justify-between font-black">
+                                      <span className="text-red-500">📦 Low Stock</span>
+                                      <span className="text-red-600 dark:text-red-400">
+                                        {alert.sellablePills} / {alert.minimumStockLevel} pills
                                       </span>
                                     </div>
                                   </button>
@@ -583,7 +637,7 @@ const Dashboard_Layout: React.FC = () => {
                               </div>
                             ) : (
                               <div className="px-4 py-6 text-[12px] text-gray-400 dark:text-gray-500 text-center font-bold">
-                                No expiring medicines detected.
+                                No alerts detected.
                               </div>
                             )}
                           </div>

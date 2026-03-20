@@ -212,6 +212,13 @@ const buildRevenueSpark = (sales: SaleRecord[]) => {
   return months;
 };
 
+const getDefaultKpiDates = () => {
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const toIso = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: toIso(firstDay), to: toIso(now) };
+};
+
 const Dashboard = () => {
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
@@ -222,6 +229,11 @@ const Dashboard = () => {
   const [range, setRange] = useState<'this_month' | 'last_month' | 'this_year'>('this_month');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const defaultDates = getDefaultKpiDates();
+  const [kpiFromDate, setKpiFromDate] = useState<string>(defaultDates.from);
+  const [kpiToDate, setKpiToDate] = useState<string>(defaultDates.to);
+  const [recentOrdersPage, setRecentOrdersPage] = useState(1);
+  const RECENT_ORDERS_PER_PAGE = 20;
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
     const symbol = getSymbol(currency);
@@ -310,9 +322,27 @@ const Dashboard = () => {
     return () => setHeader(null);
   }, [setHeader, loadData, loading]);
 
+  const filteredSales = useMemo(() => {
+    if (!kpiFromDate && !kpiToDate) return sales;
+    return sales.filter((s) => {
+      if (!s.createdAt) return false;
+      const d = s.createdAt.slice(0, 10);
+      return (!kpiFromDate || d >= kpiFromDate) && (!kpiToDate || d <= kpiToDate);
+    });
+  }, [sales, kpiFromDate, kpiToDate]);
+
+  const filteredPurchases = useMemo(() => {
+    if (!kpiFromDate && !kpiToDate) return purchases;
+    return purchases.filter((p) => {
+      if (!p.createdAt) return false;
+      const d = p.createdAt.slice(0, 10);
+      return (!kpiFromDate || d >= kpiFromDate) && (!kpiToDate || d <= kpiToDate);
+    });
+  }, [purchases, kpiFromDate, kpiToDate]);
+
   const totals = useMemo(
-    () => buildTotals(sales, purchases, medicines, saleReturnsTotal),
-    [sales, purchases, medicines, saleReturnsTotal]
+    () => buildTotals(filteredSales, filteredPurchases, medicines, saleReturnsTotal),
+    [filteredSales, filteredPurchases, medicines, saleReturnsTotal]
   );
 
   const metrics = useMemo(
@@ -377,7 +407,11 @@ const Dashboard = () => {
 
   const chartData = useMemo(() => buildSalesSeries(sales, range), [sales, range]);
   const sparkData = useMemo(() => buildRevenueSpark(sales), [sales]);
-  const recentOrders = useMemo(() => sales.slice(0, 50), [sales]);
+  const totalRecentPages = useMemo(() => Math.max(1, Math.ceil(sales.length / RECENT_ORDERS_PER_PAGE)), [sales]);
+  const recentOrders = useMemo(() => {
+    const start = (recentOrdersPage - 1) * RECENT_ORDERS_PER_PAGE;
+    return sales.slice(start, start + RECENT_ORDERS_PER_PAGE);
+  }, [sales, recentOrdersPage]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -443,13 +477,37 @@ const Dashboard = () => {
               </div>
             ))}
             
-            <button
-              onClick={loadData}
-              className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-            >
-              <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">KPI Period:</span>
+              <input
+                type="date"
+                value={kpiFromDate}
+                max={kpiToDate || undefined}
+                onChange={(e) => { setKpiFromDate(e.target.value); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:ring-1 focus:ring-emerald-500 outline-none"
+              />
+              <span className="text-[10px] text-gray-400">to</span>
+              <input
+                type="date"
+                value={kpiToDate}
+                min={kpiFromDate || undefined}
+                onChange={(e) => { setKpiToDate(e.target.value); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:ring-1 focus:ring-emerald-500 outline-none"
+              />
+              <button
+                onClick={() => { const d = getDefaultKpiDates(); setKpiFromDate(d.from); setKpiToDate(d.to); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] bg-gray-100 dark:bg-gray-600 hover:bg-gray-200 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded-md border border-gray-200 dark:border-gray-500 font-semibold transition-colors"
+              >
+                This Month
+              </button>
+              <button
+                onClick={loadData}
+                className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+              >
+                <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
           </div>
 
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
@@ -637,11 +695,31 @@ const Dashboard = () => {
 
           <section className="mt-4 flex-shrink-0">
             <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex flex-col overflow-hidden">
-              <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+              <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide flex items-center gap-2">
                   <FiShoppingBag className="text-blue-500" />
                   Recent Sales
+                  <span className="text-[10px] font-medium text-gray-400 normal-case">({sales.length} total)</span>
                 </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setRecentOrdersPage((p) => Math.max(1, p - 1))}
+                    disabled={recentOrdersPage === 1}
+                    className="px-2 py-1 text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-semibold disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">
+                    {recentOrdersPage} / {totalRecentPages}
+                  </span>
+                  <button
+                    onClick={() => setRecentOrdersPage((p) => Math.min(totalRecentPages, p + 1))}
+                    disabled={recentOrdersPage === totalRecentPages}
+                    className="px-2 py-1 text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-semibold disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    Next ›
+                  </button>
+                </div>
               </div>
               <div className="overflow-x-auto overflow-y-auto max-h-[150px] custom-scrollbar rounded-b-lg">
                 <table className="w-full text-left text-xs relative">

@@ -8,6 +8,9 @@ export interface Medicine {
   name: string;
   pillQuantity: number;
   status: MedicineStatus;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel?: number;
 }
 
 export interface MedicineWithInventory extends Medicine {
@@ -18,6 +21,18 @@ export interface MedicineWithInventory extends Medicine {
   criticalExpiryPills: number;
   nextExpiryDate?: string | null;
   averageSellablePricePerPill?: number | null;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel: number;
+}
+
+export interface LowStockAlert {
+  id: number;
+  name: string;
+  barcode?: string;
+  sellablePills: number;
+  minimumStockLevel: number;
+  deficit: number;
 }
 
 export interface ExpiringMedicineAlert {
@@ -65,9 +80,24 @@ export class MedicineService {
         barcode TEXT UNIQUE,
         name TEXT NOT NULL,
         pill_quantity INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','discontinued'))
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive','discontinued')),
+        manufacturer TEXT,
+        brand_name TEXT,
+        minimum_stock_level INTEGER NOT NULL DEFAULT 0
       )
     `);
+
+    // Safe migration: add new columns to existing tables if they don't exist
+    const medicinesInfo = await this.dbService.query(`PRAGMA table_info(medicines)`);
+    if (!medicinesInfo.some((col: any) => col.name === 'manufacturer')) {
+      await this.dbService.execute(`ALTER TABLE medicines ADD COLUMN manufacturer TEXT`);
+    }
+    if (!medicinesInfo.some((col: any) => col.name === 'brand_name')) {
+      await this.dbService.execute(`ALTER TABLE medicines ADD COLUMN brand_name TEXT`);
+    }
+    if (!medicinesInfo.some((col: any) => col.name === 'minimum_stock_level')) {
+      await this.dbService.execute(`ALTER TABLE medicines ADD COLUMN minimum_stock_level INTEGER NOT NULL DEFAULT 0`);
+    }
 
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_medicines_barcode ON medicines(barcode)
@@ -108,6 +138,9 @@ export class MedicineService {
         m.barcode,
         m.pill_quantity,
         m.status,
+        m.manufacturer,
+        m.brand_name,
+        COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
         COALESCE(SUM(pi.available_pills), 0) AS total_available_pills,
         -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
         COALESCE(
@@ -154,6 +187,9 @@ export class MedicineService {
       barcode: row.barcode || undefined,
       pillQuantity: row.pill_quantity,
       status: row.status as MedicineStatus,
+      manufacturer: row.manufacturer || undefined,
+      brandName: row.brand_name || undefined,
+      minimumStockLevel: row.minimum_stock_level ?? 0,
       totalAvailablePills: row.total_available_pills ?? 0,
       sellablePills: row.sellable_pills ?? 0,
       normalExpiryPills: row.normal_expiry_pills ?? 0,
@@ -238,14 +274,17 @@ export class MedicineService {
     }
 
     const sql = `
-      INSERT INTO medicines (barcode, name, pill_quantity, status)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO medicines (barcode, name, pill_quantity, status, manufacturer, brand_name, minimum_stock_level)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
       medicine.barcode || null,
       medicine.name,
       medicine.pillQuantity,
       medicine.status || 'active',
+      medicine.manufacturer || null,
+      medicine.brandName || null,
+      medicine.minimumStockLevel ?? 0,
     ];
     
     try {
@@ -311,6 +350,18 @@ export class MedicineService {
     if (medicine.status !== undefined) {
       updates.push('status = ?');
       params.push(medicine.status);
+    }
+    if (medicine.manufacturer !== undefined) {
+      updates.push('manufacturer = ?');
+      params.push(medicine.manufacturer || null);
+    }
+    if (medicine.brandName !== undefined) {
+      updates.push('brand_name = ?');
+      params.push(medicine.brandName || null);
+    }
+    if (medicine.minimumStockLevel !== undefined) {
+      updates.push('minimum_stock_level = ?');
+      params.push(medicine.minimumStockLevel ?? 0);
     }
 
     if (updates.length === 0) return;
@@ -430,6 +481,39 @@ export class MedicineService {
         availablePills: row.available_pills || 0,
         daysUntilExpiry: row.days_until_expiry ?? 0,
       }));
+  }
+
+  /**
+   * Return medicines whose current sellable stock is below their minimum_stock_level.
+   * Only includes medicines that have minimum_stock_level > 0.
+   */
+  public async getLowStockMedicines(): Promise<LowStockAlert[]> {
+    const sql = `
+      SELECT
+        m.id,
+        m.name,
+        m.barcode,
+        COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
+        COALESCE(SUM(CASE
+          WHEN pi.expiry_date IS NULL OR date(pi.expiry_date) >= date('now')
+          THEN pi.available_pills ELSE 0 END), 0) AS sellable_pills
+      FROM medicines m
+      LEFT JOIN purchase_items pi ON pi.medicine_id = m.id
+      WHERE m.minimum_stock_level > 0
+        AND m.status = 'active'
+      GROUP BY m.id
+      HAVING sellable_pills < m.minimum_stock_level
+      ORDER BY (m.minimum_stock_level - sellable_pills) DESC
+    `;
+    const rows = await this.dbService.query(sql);
+    return rows.map((row: any) => ({
+      id: row.id,
+      name: row.name,
+      barcode: row.barcode || undefined,
+      sellablePills: row.sellable_pills ?? 0,
+      minimumStockLevel: row.minimum_stock_level ?? 0,
+      deficit: (row.minimum_stock_level ?? 0) - (row.sellable_pills ?? 0),
+    }));
   }
 }
 

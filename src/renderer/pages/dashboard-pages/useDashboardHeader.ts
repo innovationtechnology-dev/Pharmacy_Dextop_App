@@ -16,11 +16,23 @@ export type ExpiringAlert = {
   daysUntilExpiry: number;
 };
 
+export type LowStockAlert = {
+  id: number;
+  name: string;
+  barcode?: string;
+  sellablePills: number;
+  minimumStockLevel: number;
+  deficit: number;
+};
+
 export type DashboardHeaderContextValue = {
   setHeader: (config: DashboardHeaderConfig | null) => void;
   expiringAlerts: ExpiringAlert[];
   refreshExpiringAlerts: () => void;
   alertThresholdDays: number;
+  lowStockAlerts: LowStockAlert[];
+  refreshLowStockAlerts: () => void;
+  lowStockAlertsEnabled: boolean;
 };
 
 export const useDashboardHeader = () => {

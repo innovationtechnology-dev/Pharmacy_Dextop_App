@@ -550,6 +550,25 @@ const Settings: React.FC = () => {
                                     <p className="text-[10px] text-gray-500 dark:text-gray-400 italic">JPG/PNG, max 500 KB. Click Save Changes (top right) after uploading.</p>
                                 </div>
 
+                                {/* Low Stock Alerts Toggle */}
+                                <div className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/30 rounded-lg border border-gray-200 dark:border-gray-600">
+                                    <div>
+                                        <h5 className="text-xs font-bold text-gray-900 dark:text-white">Low Stock Alerts</h5>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                                            Show alerts in the bell icon and Alerts page when medicine stock falls below minimum level.
+                                        </p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={pharmacySettings.lowStockAlertsEnabled ?? true}
+                                            onChange={(e) => handlePharmacyChange('lowStockAlertsEnabled', e.target.checked)}
+                                        />
+                                        <div className={toggleSwitchClass} />
+                                    </label>
+                                </div>
+
                                 <div>
                                     <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
                                         Invoice Footer Remarks
