@@ -1,7 +1,8 @@
 import { getDatabaseService } from './database.service';
 import { SaleReturnService } from './sale-return.service';
 
-const SELLABLE_THRESHOLD_EXPRESSION = `date('now', '+30 days')`;
+// Expired batches are NOT eligible to sell.
+const UNEXPIRED_THRESHOLD_EXPRESSION = `date('now')`;
 
 export interface SaleItemInput {
   medicineId: number;
@@ -276,9 +277,9 @@ export class SalesService {
       SELECT id, available_pills
       FROM purchase_items
       WHERE medicine_id = ?
-        AND expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION}
+        AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
         AND available_pills > 0
-      ORDER BY expiry_date ASC, id ASC
+      ORDER BY date(expiry_date) ASC, id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
   }
@@ -287,7 +288,7 @@ export class SalesService {
     const batches = await this.getSellableInventory(medicineId);
     const totalAvailable = batches.reduce((sum, batch) => sum + batch.available_pills, 0);
     if (totalAvailable < requiredPills) {
-      throw new Error('Insufficient stock or medicine not eligible for sale (expires in < 30 days).');
+      throw new Error('Insufficient stock (or medicine is expired).');
     }
   }
 
@@ -360,6 +361,7 @@ export class SalesService {
         FROM purchase_items 
         WHERE medicine_id IN (${placeholders})
           AND available_pills > 0
+          AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
         GROUP BY medicine_id
       `, uniqueMedicineIds);
 

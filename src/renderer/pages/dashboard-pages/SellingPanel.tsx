@@ -52,6 +52,10 @@ interface Medicine {
   status: MedicineStatus;
   sellablePills?: number;
   totalAvailablePills?: number;
+  normalExpiryPills?: number;
+  nearExpiryPills?: number;
+  criticalExpiryPills?: number;
+  nextExpiryDate?: string | null;
   averageSellablePricePerPill?: number | null;
 }
 
@@ -216,9 +220,30 @@ const SellingPanel: React.FC = () => {
   const addToCart = useCallback((medicine: Medicine, quantityParam = 1) => {
     const available = medicine.sellablePills ?? 0;
     if (available <= 0) {
-      alert(`No sellable stock available for ${medicine.name}.`);
+      const totalAvailable = medicine.totalAvailablePills ?? 0;
+      if (totalAvailable > 0) {
+        alert(
+          `Stock for "${medicine.name}" is expired, so it can't be sold.`
+        );
+      } else {
+        alert(`No stock available for "${medicine.name}".`);
+      }
       return;
     }
+
+    // Expiry policy warnings:
+    // - Near (<= 30 days) and Critical (<= 7 days) are still sellable,
+    //   but staff should be aware and follow FEFO.
+    if ((medicine.criticalExpiryPills ?? 0) > 0) {
+      alert(
+        `Warning: "${medicine.name}" has critical expiry stock (<= 7 days). Sale is allowed, use FEFO.`
+      );
+    } else if ((medicine.nearExpiryPills ?? 0) > 0) {
+      alert(
+        `Warning: "${medicine.name}" has near-expiry stock (<= 30 days). Sale is allowed, use FEFO.`
+      );
+    }
+
     let quantity = quantityParam;
     if (available < quantity) {
       alert(`Only ${available} pills available for sale!`);
@@ -290,7 +315,11 @@ const SellingPanel: React.FC = () => {
         (response: any) => {
           setIsSearching(false);
           if (response.success) {
-            setMedicines(response.data || []);
+            // Hide expired items from the selling panel search.
+            const filtered = (response.data || []).filter(
+              (medicine: Medicine) => (medicine.sellablePills ?? 0) > 0
+            );
+            setMedicines(filtered);
           }
         }
       );
@@ -324,7 +353,7 @@ const SellingPanel: React.FC = () => {
                 }, 1000);
               } else {
                 alert(
-                  `Medicine "${medicine.name}" is not eligible for sale (insufficient stock or near expiry).`
+                  `Medicine "${medicine.name}" is not eligible for sale (expired or insufficient stock).`
                 );
                 setBarcodeInput('');
               }
@@ -986,7 +1015,9 @@ const SellingPanel: React.FC = () => {
         returnedQuantities,
         amountGiven: amountGivenForReceipt,
       },
-      { includePrintScript: !RECEIPT_PREVIEW_MODE }
+      // The HTML printer script + our iframe onload print can both fire.
+      // We only print from the iframe onload handler.
+      { includePrintScript: false }
     );
     if (!html) return;
     if (RECEIPT_PREVIEW_MODE) {
@@ -1002,14 +1033,14 @@ const SellingPanel: React.FC = () => {
         document.body.removeChild(printFrame);
         return;
       }
-      frameDoc.open();
-      frameDoc.write(html);
-      frameDoc.close();
       printFrame.onload = () => {
         printFrame.contentWindow?.focus();
         printFrame.contentWindow?.print();
         setTimeout(() => document.body.removeChild(printFrame), 500);
       };
+      frameDoc.open();
+      frameDoc.write(html);
+      frameDoc.close();
     }
   }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount]);
 
@@ -1508,7 +1539,15 @@ const SellingPanel: React.FC = () => {
                                     : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                                     }`}
                                 >
-                                  Stock: {medicine.sellablePills ?? 0}
+                                  {(medicine.sellablePills ?? 0) > 0
+                                    ? (medicine.criticalExpiryPills ?? 0) > 0
+                                      ? `Critical: ${medicine.sellablePills ?? 0}`
+                                      : (medicine.nearExpiryPills ?? 0) > 0
+                                        ? `Near expiry: ${medicine.sellablePills ?? 0}`
+                                        : `Stock: ${medicine.sellablePills ?? 0}`
+                                    : (medicine.totalAvailablePills ?? 0) > 0
+                                      ? 'Out of date / expired'
+                                      : 'Stock: 0'}
                                 </span>
                               </div>
                             </div>
@@ -1571,7 +1610,15 @@ const SellingPanel: React.FC = () => {
                                 : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
                                 }`}
                             >
-                              Sellable Pills: {medicine.sellablePills ?? 0}
+                              {(medicine.sellablePills ?? 0) > 0
+                                ? (medicine.criticalExpiryPills ?? 0) > 0
+                                  ? `Critical: ${medicine.sellablePills ?? 0} pills`
+                                  : (medicine.nearExpiryPills ?? 0) > 0
+                                    ? `Near expiry: ${medicine.sellablePills ?? 0} pills`
+                                    : `Sellable Pills: ${medicine.sellablePills ?? 0}`
+                                : (medicine.totalAvailablePills ?? 0) > 0
+                                  ? 'Not sellable (expired)'
+                                  : `Sellable Pills: 0`}
                             </span>
                           </div>
                         </div>
@@ -2016,7 +2063,15 @@ const SellingPanel: React.FC = () => {
                                   : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                                   }`}
                               >
-                                Stock: {medicine.sellablePills ?? 0}
+                                {(medicine.sellablePills ?? 0) > 0
+                                  ? (medicine.criticalExpiryPills ?? 0) > 0
+                                    ? `Critical: ${medicine.sellablePills ?? 0}`
+                                    : (medicine.nearExpiryPills ?? 0) > 0
+                                      ? `Near expiry: ${medicine.sellablePills ?? 0}`
+                                      : `Stock: ${medicine.sellablePills ?? 0}`
+                                  : (medicine.totalAvailablePills ?? 0) > 0
+                                    ? 'Out of date / expired'
+                                    : 'Stock: 0'}
                               </span>
                             </div>
                           </div>

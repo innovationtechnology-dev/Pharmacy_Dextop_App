@@ -13,6 +13,10 @@ export interface Medicine {
 export interface MedicineWithInventory extends Medicine {
   totalAvailablePills: number;
   sellablePills: number;
+  normalExpiryPills: number;
+  nearExpiryPills: number;
+  criticalExpiryPills: number;
+  nextExpiryDate?: string | null;
   averageSellablePricePerPill?: number | null;
 }
 
@@ -25,7 +29,16 @@ export interface ExpiringMedicineAlert {
   daysUntilExpiry: number;
 }
 
-const SELLABLE_THRESHOLD_EXPRESSION = `date('now', '+30 days')`;
+// Tier model (days before expiry)
+// - Normal: > 30 days
+// - Near: 30 -> 7 days
+// - Critical: 7 -> 0 days
+// - Expired: < 0 days (not eligible to sell)
+const UNEXPIRED_THRESHOLD_EXPRESSION = `date('now')`;
+const CRITICAL_THRESHOLD_DAYS = 7;
+const NEAR_THRESHOLD_DAYS = 30;
+const CRITICAL_THRESHOLD_EXPRESSION = `date('now', '+${CRITICAL_THRESHOLD_DAYS} days')`;
+const NEAR_THRESHOLD_EXPRESSION = `date('now', '+${NEAR_THRESHOLD_DAYS} days')`;
 
 export class MedicineService {
   private dbService = getDatabaseService();
@@ -96,11 +109,37 @@ export class MedicineService {
         m.pill_quantity,
         m.status,
         COALESCE(SUM(pi.available_pills), 0) AS total_available_pills,
-        COALESCE(SUM(CASE WHEN pi.expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END), 0) AS sellable_pills,
+        -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
+        COALESCE(
+          SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END),
+          0
+        ) AS sellable_pills,
+        -- Normal (more than NEAR_THRESHOLD_DAYS)
+        COALESCE(
+          SUM(CASE WHEN date(pi.expiry_date) >= ${NEAR_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END),
+          0
+        ) AS normal_expiry_pills,
+        -- Near (>= critical threshold AND < near threshold)
+        COALESCE(
+          SUM(CASE WHEN date(pi.expiry_date) >= ${CRITICAL_THRESHOLD_EXPRESSION}
+                   AND date(pi.expiry_date) < ${NEAR_THRESHOLD_EXPRESSION}
+                   THEN pi.available_pills ELSE 0 END),
+          0
+        ) AS near_expiry_pills,
+        -- Critical (>= today AND < critical threshold)
+        COALESCE(
+          SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+                   AND date(pi.expiry_date) < ${CRITICAL_THRESHOLD_EXPRESSION}
+                   THEN pi.available_pills ELSE 0 END),
+          0
+        ) AS critical_expiry_pills,
+        -- Next expiry date among unexpired batches (FEFO uses ordering anyway)
+        MIN(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+                 THEN date(pi.expiry_date) ELSE NULL END) AS next_expiry_date,
         CASE 
-          WHEN SUM(CASE WHEN pi.expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END) > 0
-            THEN SUM(CASE WHEN pi.expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION} THEN (pi.price_per_pill * pi.available_pills) ELSE 0 END) 
-                 / SUM(CASE WHEN pi.expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END)
+          WHEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END) > 0
+            THEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN (pi.price_per_pill * pi.available_pills) ELSE 0 END) 
+                 / SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END)
           ELSE NULL
         END AS avg_sellable_price_per_pill
       FROM medicines m
@@ -117,6 +156,10 @@ export class MedicineService {
       status: row.status as MedicineStatus,
       totalAvailablePills: row.total_available_pills ?? 0,
       sellablePills: row.sellable_pills ?? 0,
+      normalExpiryPills: row.normal_expiry_pills ?? 0,
+      nearExpiryPills: row.near_expiry_pills ?? 0,
+      criticalExpiryPills: row.critical_expiry_pills ?? 0,
+      nextExpiryDate: row.next_expiry_date || null,
       averageSellablePricePerPill: row.avg_sellable_price_per_pill || null,
     };
   }
