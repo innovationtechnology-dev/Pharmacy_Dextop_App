@@ -435,18 +435,18 @@ const SellingPanel: React.FC = () => {
     loadMedicines();
   }, [loadMedicines]);
 
-  // Load sales history
+  // Load sales history with pagination (last 25 only for better performance)
   const loadSalesHistory = useCallback(async () => {
     try {
       const response = await getSalesFlatRows();
       if (response.success && response.data) {
-        // Get recent sales (last 50)
+        // Get recent sales (last 25) - already sorted by date
         const recent = response.data
           .sort(
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
-          .slice(0, 50);
+          .slice(0, 25);
         setSalesHistory(recent);
       }
     } catch (error) {
@@ -764,11 +764,23 @@ const SellingPanel: React.FC = () => {
     };
   }, [handleBarcodeScan, barcodeScanMode]);
 
+  // Debounce search to prevent firing on every keystroke
+  const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
+  
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { value } = e.target;
     setSearchTerm(value);
     setHighlightedIndex(-1); // Reset highlight when search changes
-    handleSearch(value);
+    
+    // Clear previous timeout
+    if (debouncedSearch.current) {
+      clearTimeout(debouncedSearch.current);
+    }
+    
+    // Set new timeout - only search after 300ms of no typing
+    debouncedSearch.current = setTimeout(() => {
+      handleSearch(value);
+    }, 300);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1060,29 +1072,38 @@ const SellingPanel: React.FC = () => {
     }
   };
 
-  const subtotalValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    return sum + (item.unitPrice * netPills);
-  }, 0);
+  // Memoize cart totals to prevent recalculation on every render
+  const subtotalValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const discountValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    const itemSubtotal = item.unitPrice * netPills;
-    return sum + ((itemSubtotal * item.discount) / 100);
-  }, 0);
+  const discountValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const taxValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    const itemSubtotal = item.unitPrice * netPills;
-    const itemDiscount = (itemSubtotal * item.discount) / 100;
-    const discountedAmount = itemSubtotal - itemDiscount;
-    return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
-  }, 0);
+  const taxValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      const itemDiscount = (itemSubtotal * item.discount) / 100;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const grandTotal = subtotalValue - discountValue + taxValue;
+  const grandTotal = useMemo(() => {
+    return subtotalValue - discountValue + taxValue;
+  }, [subtotalValue, discountValue, taxValue]);
 
   const formatCurrency = (value: number) => {
     const currency = pharmacyInfo.currency || 'USD';

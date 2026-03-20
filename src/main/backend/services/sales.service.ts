@@ -418,37 +418,70 @@ export class SalesService {
 
   /**
    * Get all sales records with line items.
+   * Optimized: Uses single JOIN query instead of N+1 queries
    */
   public async getAllSales(): Promise<Sale[]> {
-    const sales = await this.dbService.query('SELECT * FROM sales ORDER BY created_at DESC');
-    const salesWithItems: Sale[] = [];
+    // Single query with JOIN - much faster than N+1 queries
+    const rows = await this.dbService.query(`
+      SELECT 
+        s.id,
+        s.subtotal,
+        s.discount_total,
+        s.tax_total,
+        s.total,
+        s.customer_name,
+        s.customer_phone,
+        s.sale_type,
+        s.created_at,
+        si.id as item_id,
+        si.medicine_id,
+        si.medicine_name,
+        si.pills,
+        si.unit_price,
+        si.subtotal as item_subtotal,
+        si.discount_amount,
+        si.tax_amount,
+        si.total as item_total
+      FROM sales s
+      LEFT JOIN sale_items si ON s.id = si.sale_id
+      ORDER BY s.created_at DESC, si.id ASC
+    `);
 
-    for (const sale of sales) {
-      const items = await this.dbService.query('SELECT * FROM sale_items WHERE sale_id = ?', [sale.id]);
-      salesWithItems.push({
-        id: sale.id,
-        subtotal: sale.subtotal,
-        discountTotal: sale.discount_total,
-        taxTotal: sale.tax_total,
-        total: sale.total,
-        customerName: sale.customer_name || undefined,
-        customerPhone: sale.customer_phone || undefined,
-        saleType: sale.sale_type || 'Regular',
-        createdAt: sale.created_at,
-        items: items.map((item: any) => ({
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          pills: item.pills,
-          unitPrice: item.unit_price,
-          subtotal: item.subtotal,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          total: item.total,
-        })),
-      });
+    // Group items by sale
+    const salesMap = new Map<number, Sale>();
+    
+    for (const row of rows) {
+      if (!salesMap.has(row.id)) {
+        salesMap.set(row.id, {
+          id: row.id,
+          subtotal: row.subtotal,
+          discountTotal: row.discount_total,
+          taxTotal: row.tax_total,
+          total: row.total,
+          customerName: row.customer_name || undefined,
+          customerPhone: row.customer_phone || undefined,
+          saleType: row.sale_type || 'Regular',
+          createdAt: row.created_at,
+          items: [],
+        });
+      }
+      
+      // Add item if it exists (LEFT JOIN may have null items)
+      if (row.item_id) {
+        salesMap.get(row.id)!.items.push({
+          medicineId: row.medicine_id,
+          medicineName: row.medicine_name,
+          pills: row.pills,
+          unitPrice: row.unit_price,
+          subtotal: row.item_subtotal,
+          discountAmount: row.discount_amount,
+          taxAmount: row.tax_amount,
+          total: row.item_total,
+        });
+      }
     }
 
-    return salesWithItems;
+    return Array.from(salesMap.values());
   }
 
   /**

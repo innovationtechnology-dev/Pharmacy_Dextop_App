@@ -11,6 +11,8 @@ migrate-roles.js
 seed_cashier.js
 seed_customers.js
 seed_suppliers.js
+generate-icons.js
+generate-icons-simple.js
 # Coverage directory used by tools like istanbul
 coverage
 .eslintcache

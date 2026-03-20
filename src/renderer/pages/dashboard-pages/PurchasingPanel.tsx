@@ -345,10 +345,22 @@ const PurchasingPanel: React.FC = () => {
     [medicines, addToCart]
   );
 
+  // Debounce search to prevent firing on every keystroke
+  const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
+  
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
-    handleSearch(value);
+    
+    // Clear previous timeout
+    if (debouncedSearch.current) {
+      clearTimeout(debouncedSearch.current);
+    }
+    
+    // Set new timeout - only search after 300ms of no typing
+    debouncedSearch.current = setTimeout(() => {
+      handleSearch(value);
+    }, 300);
   };
 
   const updateCartItemField = useCallback(

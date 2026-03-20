@@ -70,8 +70,17 @@ export class MedicineService {
       tableInfo.every((column: any) => expectedColumns.includes(column.name)) &&
       tableInfo.length === expectedColumns.length;
 
-    if (hasTable && !schemaMatches) {
+    // Check if medicines_legacy already exists
+    const legacyExists = await this.dbService.queryOne(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='medicines_legacy'`
+    );
+
+    if (hasTable && !schemaMatches && !legacyExists) {
+      // Only rename if legacy table doesn't exist
       await this.dbService.execute('ALTER TABLE medicines RENAME TO medicines_legacy');
+    } else if (legacyExists) {
+      // If legacy table exists, skip the rename and just ensure the new table exists
+      console.log('⚠️  medicines_legacy table already exists, skipping migration');
     }
 
     await this.dbService.execute(`
@@ -102,8 +111,19 @@ export class MedicineService {
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_medicines_barcode ON medicines(barcode)
     `);
+    
+    // Add index for name searches (improves search performance)
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_medicines_name ON medicines(name)
+    `);
+    
+    // Add index for status filtering
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)
+    `);
 
-    if (hasTable && !schemaMatches) {
+    // Only migrate data if we just renamed the table (legacy didn't exist before)
+    if (hasTable && !schemaMatches && !legacyExists) {
       const legacyInfo = tableInfo;
       const hasLegacyPillQuantity = legacyInfo.some((column: any) => column.name === 'pill_quantity');
       const hasLegacyQuantity = legacyInfo.some((column: any) => column.name === 'quantity');
@@ -123,7 +143,11 @@ export class MedicineService {
           'active'
         FROM medicines_legacy
       `);
+      
+      // Temporarily disable foreign keys to drop legacy table
+      await this.dbService.execute('PRAGMA foreign_keys = OFF');
       await this.dbService.execute('DROP TABLE IF EXISTS medicines_legacy');
+      await this.dbService.execute('PRAGMA foreign_keys = ON');
     }
   }
 
