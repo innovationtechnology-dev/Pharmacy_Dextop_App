@@ -2525,20 +2525,20 @@ const SellingPanel: React.FC = () => {
                 </h3>
               </div>
               <div
-                className={`flex-1 flex flex-col min-h-0 overflow-y-auto ${
-                  expandedSaleSummary ? 'p-4 gap-4' : 'p-3 gap-2'
+                className={`flex-1 flex flex-col min-h-0 ${
+                  expandedSaleSummary ? 'p-3 gap-2.5' : 'p-3 gap-2'
                 }`}
               >
                 {/* Net Payable - Most Prominent */}
                 <div
                   className={`bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 border border-emerald-600 dark:border-emerald-500 shadow-lg flex-shrink-0 rounded-xl ${
-                    expandedSaleSummary ? 'p-4 sm:p-5' : 'p-2'
+                    expandedSaleSummary ? 'p-3' : 'p-2'
                   }`}
                 >
-                  <div className={`flex items-center justify-between ${expandedSaleSummary ? 'mb-2' : 'mb-0'}`}>
+                  <div className={`flex items-center justify-between ${expandedSaleSummary ? 'mb-1' : 'mb-0'}`}>
                     <div
                       className={`font-bold text-white/95 uppercase tracking-wide ${
-                        expandedSaleSummary ? 'text-sm sm:text-base' : 'text-xs font-semibold text-white/90'
+                        expandedSaleSummary ? 'text-xs' : 'text-xs font-semibold text-white/90'
                       }`}
                     >
                       Net Payable
@@ -2557,7 +2557,7 @@ const SellingPanel: React.FC = () => {
                   </div>
                   <div
                     className={`font-bold text-white tracking-tight ${
-                      expandedSaleSummary ? 'text-3xl sm:text-4xl lg:text-[2.75rem] leading-tight' : 'text-2xl'
+                      expandedSaleSummary ? 'text-2xl sm:text-3xl leading-tight' : 'text-2xl'
                     }`}
                   >
                     {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
@@ -2588,18 +2588,18 @@ const SellingPanel: React.FC = () => {
                   <div
                     className={
                       expandedSaleSummary
-                        ? 'flex-1 flex flex-col gap-4 min-h-0'
+                        ? 'flex flex-col gap-2.5'
                         : ''
                     }
                   >
                     <div
-                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-3 flex-1 min-h-[8rem]' : 'gap-2'}`}
+                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-2.5' : 'gap-2'}`}
                     >
                       {/* Block 1: Discounts & Taxes */}
                       <div
                         className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
                           expandedSaleSummary
-                            ? 'p-4 rounded-xl flex flex-col justify-center gap-5 shadow-sm dark:shadow-none'
+                            ? 'p-2.5 rounded-lg flex flex-col justify-center gap-2.5 shadow-sm dark:shadow-none'
                             : 'p-2.5 rounded-lg space-y-2'
                         }`}
                       >
@@ -2608,14 +2608,14 @@ const SellingPanel: React.FC = () => {
                         >
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
-                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                             }`}
                           >
                             Discount
                           </div>
                           <div
                             className={`font-bold text-red-600 dark:text-red-400 tabular-nums ${
-                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
                             }`}
                           >
                             -{formatCurrency(discountValue)}
@@ -2624,20 +2624,20 @@ const SellingPanel: React.FC = () => {
                         <div
                           className={`flex justify-between items-center border-gray-100 dark:border-gray-600/50 ${
                             expandedSaleSummary
-                              ? 'pt-4 border-t-2 gap-2'
+                              ? 'pt-2.5 border-t-2 gap-2'
                               : 'pt-1.5 border-t'
                           }`}
                         >
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
-                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                             }`}
                           >
                             Tax
                           </div>
                           <div
                             className={`font-bold text-blue-600 dark:text-blue-400 tabular-nums ${
-                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
                             }`}
                           >
                             +{formatCurrency(taxValue)}
@@ -2649,21 +2649,21 @@ const SellingPanel: React.FC = () => {
                       <div
                         className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 text-right ${
                           expandedSaleSummary
-                            ? 'p-4 rounded-xl flex flex-col justify-center gap-5 shadow-sm dark:shadow-none'
+                            ? 'p-2.5 rounded-lg flex flex-col justify-center gap-2.5 shadow-sm dark:shadow-none'
                             : 'p-2.5 rounded-lg space-y-2'
                         }`}
                       >
                         <div className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}>
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
-                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                             }`}
                           >
                             Subtotal
                           </div>
                           <div
                             className={`font-bold text-gray-900 dark:text-white tabular-nums ${
-                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
                             }`}
                           >
                             {formatCurrency(subtotalValue)}
@@ -2671,19 +2671,19 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div
                           className={`flex justify-between items-center border-emerald-100 dark:border-emerald-900/30 ${
-                            expandedSaleSummary ? 'pt-4 border-t-2 gap-2' : 'pt-1.5 border-t'
+                            expandedSaleSummary ? 'pt-2.5 border-t-2 gap-2' : 'pt-1.5 border-t'
                           }`}
                         >
                           <div
                             className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
-                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                             }`}
                           >
                             Total
                           </div>
                           <div
                             className={`font-black text-emerald-600 dark:text-emerald-400 tabular-nums ${
-                              expandedSaleSummary ? 'text-xl sm:text-2xl' : 'text-sm'
+                              expandedSaleSummary ? 'text-base' : 'text-sm'
                             }`}
                           >
                             {formatCurrency(grandTotal)}
@@ -2696,19 +2696,19 @@ const SellingPanel: React.FC = () => {
                     <div
                       className={`grid grid-cols-2 ${
                         expandedSaleSummary
-                          ? 'gap-3 flex-1 min-h-[9rem] items-stretch'
+                          ? 'gap-2.5'
                           : 'gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700'
                       }`}
                     >
                       <div
                         className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex flex-col ${
-                          expandedSaleSummary ? 'p-4 rounded-xl justify-center' : 'p-2.5 rounded-lg'
+                          expandedSaleSummary ? 'p-2.5 rounded-lg justify-center' : 'p-2.5 rounded-lg'
                         }`}
                       >
                         <div
                           className={`font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide ${
                             expandedSaleSummary
-                              ? 'text-xs sm:text-sm mb-2'
+                              ? 'text-xs mb-1.5'
                               : 'text-[10px] font-semibold mb-1'
                           }`}
                         >
@@ -2722,14 +2722,14 @@ const SellingPanel: React.FC = () => {
                           placeholder="0.00"
                           className={`w-full bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 outline-none transition-all tabular-nums ${
                             expandedSaleSummary
-                              ? 'px-3 py-3 text-xl sm:text-2xl min-h-[3.25rem]'
+                              ? 'px-2.5 py-1.5 text-base'
                               : 'px-2 py-1 text-sm border focus:ring-2'
                           }`}
                         />
                       </div>
                       <div
                         className={`border transition-colors flex flex-col ${
-                          expandedSaleSummary ? 'p-4 rounded-xl justify-center' : 'p-2.5 rounded-lg'
+                          expandedSaleSummary ? 'p-2.5 rounded-lg justify-center' : 'p-2.5 rounded-lg'
                         } ${
                           receivedAmount &&
                           Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
@@ -2739,7 +2739,7 @@ const SellingPanel: React.FC = () => {
                       >
                         <div
                           className={`font-bold uppercase tracking-wide ${
-                            expandedSaleSummary ? 'text-xs sm:text-sm mb-2' : 'text-[10px] font-semibold mb-1'
+                            expandedSaleSummary ? 'text-xs mb-1.5' : 'text-[10px] font-semibold mb-1'
                           } ${
                             receivedAmount &&
                             Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
@@ -2751,7 +2751,7 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div
                           className={`font-black tabular-nums ${
-                            expandedSaleSummary ? 'text-2xl sm:text-3xl' : 'text-sm'
+                            expandedSaleSummary ? 'text-lg' : 'text-sm'
                           } ${
                             receivedAmount &&
                             Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
@@ -2773,7 +2773,7 @@ const SellingPanel: React.FC = () => {
                 {/* Action Buttons Section */}
                 <div
                   className={`mt-auto border-t border-gray-200 dark:border-gray-700 space-y-2 flex-shrink-0 ${
-                    expandedSaleSummary ? 'pt-4' : 'pt-2'
+                    expandedSaleSummary ? 'pt-2.5' : 'pt-2'
                   }`}
                 >
                   {currentBillIndex >= 0 ? (
@@ -2876,10 +2876,10 @@ const SellingPanel: React.FC = () => {
                         onClick={clearCart}
                         disabled={cart.length === 0}
                         className={`w-[30%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
-                          expandedSaleSummary ? 'py-3.5 text-base' : 'py-2.5 text-sm rounded-lg'
+                          expandedSaleSummary ? 'py-2.5 text-sm rounded-lg' : 'py-2.5 text-sm rounded-lg'
                         }`}
                       >
-                        <FiRefreshCw className={expandedSaleSummary ? 'w-5 h-5' : 'w-4 h-4'} />
+                        <FiRefreshCw className={expandedSaleSummary ? 'w-4 h-4' : 'w-4 h-4'} />
                         <span>CLEAR</span>
                       </button>
                       <button
@@ -2887,21 +2887,21 @@ const SellingPanel: React.FC = () => {
                         onClick={handleCheckout}
                         disabled={processing || cart.length === 0}
                         className={`w-[70%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
-                          expandedSaleSummary ? 'py-3.5 text-base' : 'py-2.5 text-sm rounded-lg'
+                          expandedSaleSummary ? 'py-2.5 text-sm rounded-lg' : 'py-2.5 text-sm rounded-lg'
                         }`}
                       >
                         {processing ? (
                           <>
                             <div
                               className={`border-2 border-white border-t-transparent rounded-full animate-spin ${
-                                expandedSaleSummary ? 'w-6 h-6' : 'w-5 h-5'
+                                expandedSaleSummary ? 'w-4 h-4' : 'w-5 h-5'
                               }`}
                             />
                             <span>PROCESSING...</span>
                           </>
                         ) : (
                           <>
-                            <FiCheck className={expandedSaleSummary ? 'w-6 h-6' : 'w-5 h-5'} />
+                            <FiCheck className={expandedSaleSummary ? 'w-4 h-4' : 'w-5 h-5'} />
                             <span>COMPLETE SALE</span>
                           </>
                         )}
