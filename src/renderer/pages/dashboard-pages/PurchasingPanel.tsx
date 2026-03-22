@@ -103,6 +103,10 @@ const PurchasingPanel: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
+  /** Draft discount while typing */
+  const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
+  /** Draft tax while typing */
+  const [taxInputDraft, setTaxInputDraft] = useState<Record<number, string>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
@@ -1576,14 +1580,42 @@ const PurchasingPanel: React.FC = () => {
                           {/* Discount */}
                           <div>
                             <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              value={item.discount || ''}
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Discount"
+                              value={
+                                discountInputDraft[item.medicine.id] ??
+                                (item.discount === 0 ? '' : String(Math.round(item.discount)))
+                              }
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => {
                                 if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
-                                updateCartItemField(item.medicine.id, 'discount', e.target.value === '' ? 0 : parseFloat(e.target.value));
+                                const v = e.target.value;
+                                // Only allow digits and check if value is <= 100
+                                if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                  setDiscountInputDraft((prev) => ({
+                                    ...prev,
+                                    [item.medicine.id]: v,
+                                  }));
+                                }
+                              }}
+                              onBlur={() => {
+                                const id = item.medicine.id;
+                                const draft = discountInputDraft[id];
+                                setDiscountInputDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[id];
+                                  return next;
+                                });
+                                if (draft === undefined) return;
+                                const trimmed = draft.trim();
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                  val = 0;
+                                }
+                                if (val > 100) val = 100;
+                                updateCartItemField(id, 'discount', val);
                               }}
                               className="w-full h-7 text-center text-[11px] font-bold bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-emerald-500 outline-none transition-all dark:text-white"
                               placeholder="0"
@@ -1593,14 +1625,42 @@ const PurchasingPanel: React.FC = () => {
                           {/* Tax */}
                           <div>
                             <input
-                              type="number"
-                              min="0"
-                              max="100"
-                              value={item.tax || ''}
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Tax"
+                              value={
+                                taxInputDraft[item.medicine.id] ??
+                                (item.tax === 0 ? '' : String(Math.round(item.tax)))
+                              }
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => {
                                 if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
-                                updateCartItemField(item.medicine.id, 'tax', e.target.value === '' ? 0 : parseFloat(e.target.value));
+                                const v = e.target.value;
+                                // Only allow digits and check if value is <= 100
+                                if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                  setTaxInputDraft((prev) => ({
+                                    ...prev,
+                                    [item.medicine.id]: v,
+                                  }));
+                                }
+                              }}
+                              onBlur={() => {
+                                const id = item.medicine.id;
+                                const draft = taxInputDraft[id];
+                                setTaxInputDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[id];
+                                  return next;
+                                });
+                                if (draft === undefined) return;
+                                const trimmed = draft.trim();
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                  val = 0;
+                                }
+                                if (val > 100) val = 100;
+                                updateCartItemField(id, 'tax', val);
                               }}
                               className="w-full h-7 text-center text-[11px] font-bold bg-transparent border-b border-gray-200 dark:border-gray-700 focus:border-red-500 outline-none transition-all dark:text-white"
                               placeholder="0"

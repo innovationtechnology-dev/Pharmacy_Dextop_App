@@ -115,6 +115,10 @@ const SellingPanel: React.FC = () => {
   const [cart, setCart] = useState<CartItem[]>([]);
   /** Draft qty while typing — committed on blur to avoid fighting the native number spinner / controlled state */
   const [qtyInputDraft, setQtyInputDraft] = useState<Record<number, string>>({});
+  /** Draft discount while typing */
+  const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
+  /** Draft tax while typing */
+  const [taxInputDraft, setTaxInputDraft] = useState<Record<number, string>>({});
 
   const clearQtyDraft = useCallback((medicineId: number) => {
     setQtyInputDraft((prev) => {
@@ -440,7 +444,12 @@ const SellingPanel: React.FC = () => {
             field === 'discount' ||
             field === 'tax'
           ) {
-            nextValue = value === '' ? 0 : Math.max(0, parseFloat(value) || 0);
+            if (field === 'discount' || field === 'tax') {
+              // Round discount and tax to whole numbers
+              nextValue = value === '' ? 0 : Math.max(0, Math.round(parseFloat(value) || 0));
+            } else {
+              nextValue = value === '' ? 0 : Math.max(0, parseFloat(value) || 0);
+            }
           }
 
           const updatedItem: CartItem = recalculateSaleItem({
@@ -2438,42 +2447,84 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div className="col-span-1 text-center">
                           <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={item.discount === 0 ? '' : (item.discount || 0)}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLInputElement>
-                            ) =>
-                              updateCartItemField(
-                                item.medicine.id,
-                                'discount',
-                                e.target.value === '' ? '' : e.target.value
-                              )
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            aria-label="Discount"
+                            value={
+                              discountInputDraft[item.medicine.id] ??
+                              (item.discount === 0 ? '' : String(Math.round(item.discount)))
                             }
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              // Only allow digits and check if value is <= 100
+                              if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                setDiscountInputDraft((prev) => ({
+                                  ...prev,
+                                  [item.medicine.id]: v,
+                                }));
+                              }
+                            }}
+                            onBlur={() => {
+                              const id = item.medicine.id;
+                              const draft = discountInputDraft[id];
+                              setDiscountInputDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[id];
+                                return next;
+                              });
+                              if (draft === undefined) return;
+                              const trimmed = draft.trim();
+                              let val = parseInt(trimmed, 10);
+                              if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                val = 0;
+                              }
+                              if (val > 100) val = 100;
+                              updateCartItemField(id, 'discount', val);
+                            }}
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
                         <div className="col-span-1 text-center">
                           <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={item.tax === 0 ? '' : (item.tax || 0)}
-                            onFocus={(e) => e.target.select()}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLInputElement>
-                            ) =>
-                              updateCartItemField(
-                                item.medicine.id,
-                                'tax',
-                                e.target.value === '' ? '' : e.target.value
-                              )
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            aria-label="Tax"
+                            value={
+                              taxInputDraft[item.medicine.id] ??
+                              (item.tax === 0 ? '' : String(Math.round(item.tax)))
                             }
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              // Only allow digits and check if value is <= 100
+                              if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                setTaxInputDraft((prev) => ({
+                                  ...prev,
+                                  [item.medicine.id]: v,
+                                }));
+                              }
+                            }}
+                            onBlur={() => {
+                              const id = item.medicine.id;
+                              const draft = taxInputDraft[id];
+                              setTaxInputDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[id];
+                                return next;
+                              });
+                              if (draft === undefined) return;
+                              const trimmed = draft.trim();
+                              let val = parseInt(trimmed, 10);
+                              if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                val = 0;
+                              }
+                              if (val > 100) val = 100;
+                              updateCartItemField(id, 'tax', val);
+                            }}
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
@@ -2484,8 +2535,9 @@ const SellingPanel: React.FC = () => {
                             const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
-                            const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
-                            return (itemSubtotal - itemDiscount + itemTax).toFixed(1);
+                            const discountedAmount = itemSubtotal - itemDiscount;
+                            const itemTax = (discountedAmount * item.tax) / 100;
+                            return (discountedAmount + itemTax).toFixed(1);
                           })()}
                         </div>
                         <div className="col-span-1 text-center">

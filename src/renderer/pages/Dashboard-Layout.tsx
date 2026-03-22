@@ -110,6 +110,22 @@ const Dashboard_Layout: React.FC = () => {
     }
   }, [navigate, location.pathname]);
 
+  // Listen for profile updates
+  useEffect(() => {
+    const handleProfileUpdate = (event: CustomEvent) => {
+      const updatedUser = event.detail || getAuthUser();
+      if (updatedUser) {
+        setUser(updatedUser);
+      }
+    };
+
+    window.addEventListener('user-profile-updated', handleProfileUpdate as EventListener);
+    
+    return () => {
+      window.removeEventListener('user-profile-updated', handleProfileUpdate as EventListener);
+    };
+  }, []);
+
   const handleLogout = () => {
     authLogout();
     navigate('/login');

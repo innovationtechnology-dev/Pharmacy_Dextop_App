@@ -279,17 +279,17 @@ const License: React.FC = () => {
             message: generatedCode, // To be displayed nicely in the modal
             details: (
               <div className="flex flex-col gap-1.5 w-full mt-2 normal-case tracking-normal">
-                <div className="text-[#7d9bd1] font-bold text-[10px] uppercase tracking-widest mb-1.5">
+                <div className="text-blue-600 dark:text-blue-400 font-bold text-[10px] uppercase tracking-widest mb-1.5">
                   Support Details
                 </div>
-                <div className="flex items-center justify-between border-b border-[#2a3650] pb-1.5">
-                  <span className="text-white text-[10px]">Email : innovationtechnology.dev@gmail.com</span>
+                <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-600 pb-1.5">
+                  <span className="text-gray-900 dark:text-white text-[10px]">Email : innovationtechnology.dev@gmail.com</span>
                 </div>
-                <div className="flex items-center justify-between border-b border-[#2a3650] pb-1.5">
-                  <span className=" text-[10px]">Phone : <span className="text-white">(+92) 3205720-774</span></span>
+                <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-600 pb-1.5">
+                  <span className="text-gray-600 dark:text-gray-300 text-[10px]">Phone : <span className="text-gray-900 dark:text-white">(+92) 3205720-774</span></span>
                 </div>
                 <div className="pt-0.5">
-                  <span className="text-[#7d9bd1] text-[9px] italic block text-center">Contact us for any further assistance.</span>
+                  <span className="text-blue-600 dark:text-blue-400 text-[9px] italic block text-center">Contact us for any further assistance.</span>
                 </div>
               </div>
             )
@@ -761,66 +761,90 @@ const License: React.FC = () => {
       {submitPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
           <div className={`relative w-full max-w-sm p-6 overflow-hidden rounded-2xl shadow-2xl border ${
-            submitPopup.type === 'success' ? 'bg-[#1a2235] border-[#2a3650]' : 'bg-[#351a1a] border-[#502a2a]'
+            submitPopup.type === 'success' 
+              ? 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700' 
+              : 'bg-white dark:bg-gray-800 border-red-200 dark:border-red-700'
           } animate-in zoom-in-95 duration-200`}>
             {/* Close button */}
             <button 
               onClick={() => setSubmitPopup(null)}
-              className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
             >
               <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
 
-            <div className="flex flex-col items-center text-center mt-2">
-              <div className={`flex items-center justify-center w-14 h-14 rounded-full mb-4 shrink-0 ${
-                submitPopup.type === 'success' ? 'bg-[#253768]' : 'bg-[#682525]'
-              }`}>
-                {submitPopup.type === 'success' ? (
-                   <FiCheckCircle className="w-7 h-7 text-[#8db3ff]" />
-                ) : (
-                   <FiAlertTriangle className="w-7 h-7 text-[#ff8d8d]" />
-                )}
+            <div className="flex flex-col items-center text-center px-6 py-4">
+              {/* Confetti Animation */}
+              <div className="relative w-full h-20 mb-3">
+                {/* Animated confetti pieces */}
+                <div className="absolute top-2 left-[15%] w-3 h-6 bg-blue-500 dark:bg-blue-400 rounded-sm transform rotate-12 animate-bounce" style={{ animationDelay: '0s', animationDuration: '2s' }} />
+                <div className="absolute top-8 left-[25%] w-2 h-2 bg-orange-500 dark:bg-orange-400 rounded-full animate-bounce" style={{ animationDelay: '0.3s', animationDuration: '2.2s' }} />
+                <div className="absolute top-4 left-[35%] w-2 h-4 bg-green-500 dark:bg-green-400 rounded-sm transform -rotate-45 animate-bounce" style={{ animationDelay: '0.6s', animationDuration: '1.8s' }} />
+                <div className="absolute top-10 left-[20%] w-2 h-2 bg-yellow-500 dark:bg-yellow-400 rounded-full animate-bounce" style={{ animationDelay: '0.9s', animationDuration: '2.4s' }} />
+                
+                <div className="absolute top-3 right-[15%] w-3 h-6 bg-cyan-500 dark:bg-cyan-400 rounded-sm transform -rotate-12 animate-bounce" style={{ animationDelay: '0.2s', animationDuration: '2.1s' }} />
+                <div className="absolute top-9 right-[25%] w-2 h-2 bg-green-500 dark:bg-green-400 rounded-full animate-bounce" style={{ animationDelay: '0.5s', animationDuration: '1.9s' }} />
+                <div className="absolute top-5 right-[35%] w-2 h-4 bg-orange-500 dark:bg-orange-400 rounded-sm transform rotate-45 animate-bounce" style={{ animationDelay: '0.8s', animationDuration: '2.3s' }} />
+                <div className="absolute top-11 right-[20%] w-2 h-2 bg-blue-500 dark:bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0.4s', animationDuration: '2s' }} />
+
+                {/* Large Success Icon */}
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                  <div className="relative">
+                    <div className="absolute inset-0 bg-emerald-400/30 dark:bg-emerald-500/20 rounded-full blur-xl" />
+                    <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-500 dark:from-emerald-500 dark:to-emerald-600 flex items-center justify-center shadow-xl">
+                      <svg className="w-12 h-12 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <h3 className={`text-base font-bold uppercase tracking-widest mb-2 ${
-                submitPopup.type === 'success' ? 'text-[#b4cbf5]' : 'text-[#f5b4b4]'
-              }`}>
+              {/* Title */}
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-3 mt-6">
                 {submitPopup.title}
               </h3>
               
               {submitPopup.type === 'success' ? (
-                <div className="bg-[#0f172a] rounded-lg px-4 py-3 border border-[#2a3650] w-full mb-4 select-all shadow-inner">
-                   <p className="text-xs uppercase text-[#7d9bd1] font-bold mb-1 opacity-70 tracking-widest leading-none">Your Key</p>
-                   <p className="text-lg font-mono font-bold text-blue-400 tracking-widest text-center truncate">***** **** **** *****</p>
-                   <p className="text-[10px] uppercase text-[#7d9bd1] font-semibold mb-1 opacity-70 tracking-widest leading-[1.6] text-center">
-                     Your License Key has been generated successfully. Please contact
-                     <span className="text-white block mt-1">Developer : Wazir Naeem</span>
-                   </p>
-                   {submitPopup.details && (
-                     <div className={`w-full p-3 rounded-lg mt-3 text-left shadow-sm border ${
-                       submitPopup.type === 'success' ? 'bg-[#121927]/60 border-[#2a3650]' : 'bg-black/20 border-[#401f1f]'
-                     }`}>
-                       {submitPopup.details}
-                     </div>
-                   )}
-                </div>
+                <>
+                  {/* Main Description */}
+                  <div className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed mb-6 w-full px-2">
+                    <p className="mb-1.5">
+                      Your license key
+                    </p>
+                    <p className="font-mono font-semibold text-blue-600 dark:text-blue-400 mb-1">
+                      ***** **** **** *****
+                    </p>
+                    <p>
+                      has been generated successfully. Please contact <span className="font-semibold text-blue-600 dark:text-blue-400">Wazir Naeem</span> for activation and support.
+                    </p>
+                  </div>
+
+                  {/* Support Details if provided */}
+                  {submitPopup.details && (
+                    <div className="text-sm text-black dark:white mb-2">
+                      {submitPopup.details}
+                    </div>
+                  )}
+                </>
               ) : (
-                <p className="text-xs mb-4 leading-relaxed text-[#d17d7d]">
+                <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed mb-4 max-w-lg">
                   {submitPopup.message}
                 </p>
               )}
-              
-              
 
+              {/* Single Action Button */}
               <button 
                 onClick={() => setSubmitPopup(null)}
-                className={`w-full mt-6 py-3 rounded-xl text-xs font-bold uppercase tracking-widest text-white transition-all shadow-md ${
-                  submitPopup.type === 'success' ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-900/40' : 'bg-red-600 hover:bg-red-700 shadow-red-900/40'
+                className={`w-full max-w-md py-4 rounded-xl text-base font-semibold text-white transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] ${
+                  submitPopup.type === 'success' 
+                    ? 'bg-emerald-500 hover:bg-emerald-600 dark:bg-emerald-600 dark:hover:bg-emerald-700' 
+                    : 'bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-700'
                 }`}
               >
-                CLOSE
+                Okay
               </button>
             </div>
           </div>

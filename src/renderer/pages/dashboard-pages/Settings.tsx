@@ -164,6 +164,8 @@ const Settings: React.FC = () => {
                 });
                 if (result.success) {
                     setUser(result.user ?? user);
+                    // Dispatch custom event to notify other components
+                    window.dispatchEvent(new CustomEvent('user-profile-updated', { detail: result.user }));
                     alert('Profile updated successfully!');
                 } else {
                     alert(result.error || 'Failed to update profile.');

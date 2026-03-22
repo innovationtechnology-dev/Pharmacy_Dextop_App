@@ -106,8 +106,9 @@ export const buildThermalReceiptHtml = (
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;
-      const itemTax = (itemSubtotal * item.tax) / 100;
-      const finalPrice = itemSubtotal - itemDiscount + itemTax;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      const itemTax = (discountedAmount * item.tax) / 100;
+      const finalPrice = discountedAmount + itemTax;
       const hasReturn = currentBillIndex >= 0 && returned > 0;
 
       return `
@@ -140,9 +141,10 @@ export const buildThermalReceiptHtml = (
       width: 302px; /* 80mm ≈ 302px at 96dpi */
       max-width: 80mm;
       background: #fff;
-      color: #0a0a0a;
+      color: #000;
       font-family: 'Courier New', Courier, monospace;
       font-size: 9pt;
+      font-weight: 600;
       line-height: 1.35;
     }
 
@@ -150,16 +152,17 @@ export const buildThermalReceiptHtml = (
       width: 302px;
       max-width: 80mm;
       background: #fff;
-      color: #0a0a0a;
+      color: #000;
       font-family: 'Courier New', Courier, monospace;
       font-size: 9pt;
+      font-weight: 600;
       line-height: 1.35;
       padding: 22px 15px 30px;
     }
 
-    .rule-solid { border: none; border-top: 1.5px solid #0a0a0a; margin: 10px 0; }
-    .rule-dash  { border: none; border-top: 1px dashed #777;     margin: 8px 0; }
-    .rule-eq    { border: none; border-top: 2px double #0a0a0a;  margin: 10px 0; }
+    .rule-solid { border: none; border-top: 1.5px solid #000; margin: 10px 0; }
+    .rule-dash  { border: none; border-top: 1px dashed #000;     margin: 8px 0; }
+    .rule-eq    { border: none; border-top: 2px double #000;  margin: 10px 0; }
 
     .hdr { text-align: center; }
     .logo-wrap {
@@ -169,7 +172,7 @@ export const buildThermalReceiptHtml = (
       width: 42px;
       height: 42px;
       border-radius: 50%;
-      background: #0a0a0a;
+      background: #000;
       color: #fff;
       font-size: 18px;
       font-weight: 700;
@@ -186,23 +189,26 @@ export const buildThermalReceiptHtml = (
       text-overflow: ellipsis;
       max-width: 100%;
       display: block;
+      color: #000;
     }
     .pharmacy-name.pharmacy-name-short { font-size: 14pt; }
     .pharmacy-name.pharmacy-name-long { font-size: 9pt; }
     .tagline {
       font-size: 7.5pt;
-      color: #555;
+      color: #000;
       margin-top: 2px;
       font-style: italic;
+      font-weight: 600;
     }
     .contact-line {
       font-size: 7.5pt;
-      color: #444;
+      color: #000;
       margin-top: 4px;
       line-height: 1.6;
       text-align: left;
       display: block;
       width: 100%;
+      font-weight: 600;
     }
 
     .meta-grid {
@@ -211,8 +217,8 @@ export const buildThermalReceiptHtml = (
       gap: 3px 6px;
       font-size: 8pt;
     }
-    .meta-grid .label { color: #666; }
-    .meta-grid .value { font-weight: 600; text-align: right; }
+    .meta-grid .label { color: #000; font-weight: 600; }
+    .meta-grid .value { font-weight: 600; text-align: right; color: #000; }
     .inv-num { font-size: 9pt; font-weight: 700; }
 
     .cust-line {
@@ -220,13 +226,13 @@ export const buildThermalReceiptHtml = (
       display: flex;
       justify-content: space-between;
     }
-    .cust-line .cust-label { color: #666; }
-    .cust-line .cust-val   { font-weight: 600; max-width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cust-line .cust-label { color: #000; font-weight: 600; }
+    .cust-line .cust-val   { font-weight: 600; max-width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #000; }
 
     table { width: 100%; border-collapse: collapse; }
     thead tr {
-      border-top: 1.5px solid #0a0a0a;
-      border-bottom: 1.5px solid #0a0a0a;
+      border-top: 1.5px solid #000;
+      border-bottom: 1.5px solid #000;
     }
     th {
       font-size: 7.5pt;
@@ -234,12 +240,14 @@ export const buildThermalReceiptHtml = (
       padding: 5px 2px;
       text-transform: uppercase;
       letter-spacing: 0.3px;
+      color: #000;
     }
     td {
       font-size: 8pt;
       padding: 6px 2px;
       vertical-align: top;
-      border-bottom: 0.5px dashed #ccc;
+      border-bottom: 0.5px dashed #000;
+      color: #000;
     }
     tbody tr:last-child td { border-bottom: none; }
 
@@ -248,11 +256,11 @@ export const buildThermalReceiptHtml = (
     .col-qty  { width: 10%; text-align: center; }
     .col-rate { width: 16%; text-align: right; }
     .col-disc { width: 12%; text-align: center; }
-    .col-amt  { width: 20%; text-align: right; font-weight: 600; }
+    .col-amt  { width: 20%; text-align: right; font-weight: 700; }
 
-    .med-name    { display: block; font-weight: 700; font-size: 8pt; }
-    .med-barcode { display: block; font-size: 6.5pt; color: #888; letter-spacing: 0.5px; margin-top: 1px; }
-    .med-return  { display: block; font-size: 7pt; color: #b91c1c; margin-top: 1px; }
+    .med-name    { display: block; font-weight: 700; font-size: 8pt; color: #000; }
+    .med-barcode { display: block; font-size: 6.5pt; color: #000; letter-spacing: 0.5px; margin-top: 1px; font-weight: 600; }
+    .med-return  { display: block; font-size: 7pt; color: #000; margin-top: 1px; font-weight: 600; }
     .row-returned td { opacity: 0.75; }
 
     .totals { margin-top: 2px; }
@@ -263,11 +271,11 @@ export const buildThermalReceiptHtml = (
       font-size: 8.5pt;
       padding: 2px 0;
     }
-    .tot-row .tot-label { color: #444; }
-    .tot-row .tot-val   { font-weight: 600; min-width: 68px; text-align: right; }
-    .tot-row.savings .tot-label { color: #166534; }
-    .tot-row.savings .tot-val   { color: #166534; }
-    .tot-row.tax-row .tot-val   { color: #92400e; }
+    .tot-row .tot-label { color: #000; font-weight: 600; }
+    .tot-row .tot-val   { font-weight: 600; min-width: 68px; text-align: right; color: #000; }
+    .tot-row.savings .tot-label { color: #000; font-weight: 600; }
+    .tot-row.savings .tot-val   { color: #000; font-weight: 600; }
+    .tot-row.tax-row .tot-val   { color: #000; font-weight: 600; }
 
     .payment-row {
       display: flex;
@@ -275,24 +283,25 @@ export const buildThermalReceiptHtml = (
       font-size: 8.5pt;
       margin-top: 4px;
     }
-    .payment-row .payment-label { color: #444; }
-    .payment-row .payment-val   { font-weight: 600; min-width: 68px; text-align: right; }
+    .payment-row .payment-label { color: #000; font-weight: 600; }
+    .payment-row .payment-val   { font-weight: 600; min-width: 68px; text-align: right; color: #000; }
 
     .grand-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
       padding: 5px 0 2px;
-      border-top: 1.5px solid #0a0a0a;
+      border-top: 1.5px solid #000;
     }
-    .grand-label { font-size: 11pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
-    .grand-val   { font-size: 13pt; font-weight: 700; }
+    .grand-label { font-size: 11pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: #000; }
+    .grand-val   { font-size: 13pt; font-weight: 700; color: #000; }
 
     .items-summary {
       font-size: 7.5pt;
-      color: #888;
+      color: #000;
       text-align: right;
       margin-top: 2px;
+      font-weight: 600;
     }
 
     .thank-you {
@@ -302,30 +311,33 @@ export const buildThermalReceiptHtml = (
       letter-spacing: 3px;
       text-align: center;
       margin: 10px 0 12px;
+      color: #000;
     }
     .footer {
       margin-top: 2px;
       padding-top: 10px;
-      border-top: 1px dashed #ccc;
+      border-top: 1px dashed #000;
     }
     .footer .note {
       font-size: 7pt;
       line-height: 1.45;
-      color: #555;
+      color: #000;
       font-style: italic;
+      font-weight: 600;
       padding: 8px 10px;
       background: #f5f5f5;
-      border: 1px solid #e8e8e8;
+      border: 1px solid #000;
       border-radius: 3px;
       text-align: center;
     }
     .footer .powered {
       font-size: 6pt;
-      color: #888;
+      color: #000;
       margin-top: 10px;
       letter-spacing: 0.8px;
       text-align: center;
       text-transform: uppercase;
+      font-weight: 600;
     }
 
     @media print {
