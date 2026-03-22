@@ -622,6 +622,120 @@ export class PurchaseService {
   /**
    * Update payment for an existing purchase (add additional payment).
    */
+  /**
+   * Set purchases.payment_amount and remaining_balance from SUM(purchase_payments.amount).
+   */
+  public async syncPurchaseTotalsFromPayments(purchaseId: number): Promise<void> {
+    const row = await this.dbService.queryOne(
+      'SELECT grand_total FROM purchases WHERE id = ?',
+      [purchaseId]
+    );
+    if (!row) {
+      throw new Error(`Purchase with id ${purchaseId} not found`);
+    }
+    const sumRow = await this.dbService.queryOne(
+      'SELECT COALESCE(SUM(amount), 0) as total_paid FROM purchase_payments WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    const totalPaid = sumRow?.total_paid ?? 0;
+    const grandTotal = row.grand_total ?? 0;
+    const remainingBalance = grandTotal - totalPaid;
+    await this.dbService.execute(
+      'UPDATE purchases SET payment_amount = ?, remaining_balance = ? WHERE id = ?',
+      [totalPaid, remainingBalance, purchaseId]
+    );
+  }
+
+  /**
+   * Record money returned to the supplier after the PO total dropped below recorded payments.
+   * Inserts a negative row into purchase_payments and syncs purchase totals.
+   */
+  public async recordSupplierRefund(
+    purchaseId: number,
+    opts: {
+      amount: number;
+      paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'online';
+      referenceNumber?: string;
+      checkNumber?: string;
+      bankName?: string;
+      accountNumber?: string;
+      notes?: string;
+      paymentDate?: string;
+    }
+  ): Promise<void> {
+    const refundAmount = Number(opts.amount);
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+      throw new Error('Refund amount must be greater than zero');
+    }
+
+    const purchase = await this.dbService.queryOne(
+      'SELECT id, grand_total FROM purchases WHERE id = ?',
+      [purchaseId]
+    );
+    if (!purchase) {
+      throw new Error(`Purchase with id ${purchaseId} not found`);
+    }
+
+    const sumRow = await this.dbService.queryOne(
+      'SELECT COALESCE(SUM(amount), 0) as total_paid FROM purchase_payments WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    const totalPaid = sumRow?.total_paid ?? 0;
+    const grandTotal = purchase.grand_total ?? 0;
+    const overpayment = totalPaid - grandTotal;
+
+    if (overpayment <= 0.0001) {
+      throw new Error(
+        'There is no overpayment on this purchase to refund. Recorded payments do not exceed the order total.'
+      );
+    }
+    if (refundAmount > overpayment + 0.0001) {
+      throw new Error(
+        `Refund amount (${refundAmount.toFixed(2)}) cannot exceed overpayment (${overpayment.toFixed(2)})`
+      );
+    }
+
+    const paymentMethod =
+      opts.paymentMethod === 'bank_transfer'
+        ? 'bank_deposit'
+        : opts.paymentMethod === 'check'
+          ? 'cheque'
+          : opts.paymentMethod;
+
+    let reference = opts.referenceNumber?.trim() || 'Supplier refund';
+    if (opts.checkNumber) {
+      reference = `Refund | Check: ${opts.checkNumber}`;
+      if (opts.bankName) reference += ` | Bank: ${opts.bankName}`;
+    } else if (opts.bankName && opts.accountNumber) {
+      reference = `Refund | Bank: ${opts.bankName} | Acc: ${opts.accountNumber}`;
+    }
+
+    const noteParts = [opts.notes?.trim()].filter(Boolean);
+    noteParts.unshift('Supplier refund (cash/bank out)');
+    const notes = noteParts.join(' — ') || null;
+
+    await this.dbService.execute('BEGIN TRANSACTION');
+    try {
+      await this.dbService.execute(
+        `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          purchaseId,
+          -refundAmount,
+          paymentMethod,
+          reference || null,
+          notes,
+          opts.paymentDate || new Date().toISOString(),
+        ]
+      );
+      await this.syncPurchaseTotalsFromPayments(purchaseId);
+      await this.dbService.execute('COMMIT');
+    } catch (err) {
+      await this.dbService.execute('ROLLBACK');
+      throw err;
+    }
+  }
+
   public async updatePurchasePayment(purchaseId: number, additionalPayment: number): Promise<void> {
     if (additionalPayment <= 0) {
       throw new Error('Payment amount must be greater than zero');
@@ -740,6 +854,7 @@ export class PurchaseService {
       finalPaymentAmount = totalPaid;
     }
 
+    // Positive = still owe supplier; negative = overpaid (supplier credit / refund due) after PO total dropped.
     const remainingBalance = grandTotal - finalPaymentAmount;
 
     await this.dbService.execute('BEGIN TRANSACTION');

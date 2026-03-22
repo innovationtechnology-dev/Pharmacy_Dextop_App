@@ -30,6 +30,7 @@ export type Channels =
   | 'purchase-delete' | 'purchase-delete-reply'
   | 'purchase-update' | 'purchase-update-reply'
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
+  | 'purchase-record-supplier-refund' | 'purchase-record-supplier-refund-reply'
   | 'payment-get-all' | 'payment-get-all-reply'
   | 'payment-get-summary' | 'payment-get-summary-reply'
   | 'payment-get-supplier-accounts' | 'payment-get-supplier-accounts-reply'
@@ -58,6 +59,10 @@ contextBridge.exposeInMainWorld('electron', {
     },
     once(channel: Channels, func: (...args: unknown[]) => void) {
       ipcRenderer.once(channel, (_event, ...args) => func(...args));
+    },
+    /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
+    invoke(channel: Channels, ...args: unknown[]) {
+      return ipcRenderer.invoke(channel, ...args);
     },
   },
 });

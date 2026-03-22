@@ -132,6 +132,28 @@ export class PurchaseController {
       }
     });
 
+    // Record supplier refund (negative purchase_payment row)
+    ipcMain.on('purchase-record-supplier-refund', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const purchaseId = args[0] as number;
+        const payload = args[1] as {
+          amount: number;
+          paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'online';
+          referenceNumber?: string;
+          checkNumber?: string;
+          bankName?: string;
+          accountNumber?: string;
+          notes?: string;
+          paymentDate?: string;
+        };
+        await this.purchaseService.recordSupplierRefund(purchaseId, payload);
+        event.reply('purchase-record-supplier-refund-reply', { success: true });
+      } catch (error) {
+        console.error('Record supplier refund error:', error);
+        event.reply('purchase-record-supplier-refund-reply', { success: false, error: String(error) });
+      }
+    });
+
     // Update purchase
     ipcMain.on('purchase-update', async (event: IpcMainEvent, args: any[]) => {
       try {

@@ -36,6 +36,11 @@ import { Link } from 'react-router-dom';
 import { getAuthUser } from '../../utils/auth';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { buildThermalReceiptHtml } from '../../utils/thermalReceipt';
+import { useToast, ToastContainer } from '../../components/common/Toast';
+import {
+  looksLikeBarcodeInput,
+  normalizeScannedBarcode,
+} from '../../../common/barcodeLookup';
 
 // Toggle this flag to switch between in-app preview and real printing.
 // true  => show thermal receipt inside the app (for design tweaking)
@@ -103,9 +108,22 @@ const recalculateSaleItem = (item: CartItem): CartItem => {
 
 const SellingPanel: React.FC = () => {
   const { refreshExpiringAlerts } = useDashboardHeader();
+  const { toasts, removeToast, warning, error } = useToast();
+  const expiryWarningShownRef = useRef<Set<number>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  /** Draft qty while typing — committed on blur to avoid fighting the native number spinner / controlled state */
+  const [qtyInputDraft, setQtyInputDraft] = useState<Record<number, string>>({});
+
+  const clearQtyDraft = useCallback((medicineId: number) => {
+    setQtyInputDraft((prev) => {
+      if (!(medicineId in prev)) return prev;
+      const next = { ...prev };
+      delete next[medicineId];
+      return next;
+    });
+  }, []);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -224,31 +242,35 @@ const SellingPanel: React.FC = () => {
     if (available <= 0) {
       const totalAvailable = medicine.totalAvailablePills ?? 0;
       if (totalAvailable > 0) {
-        alert(
+        error(
           `Stock for "${medicine.name}" is expired, so it can't be sold.`
         );
       } else {
-        alert(`No stock available for "${medicine.name}".`);
+        error(`No stock available for "${medicine.name}".`);
       }
       return;
     }
 
-    // Expiry policy warnings:
-    // - Near (<= 30 days) and Critical (<= 7 days) are still sellable,
-    //   but staff should be aware and follow FEFO.
+    // Expiry policy warnings (non-blocking toast, once per medicine per session)
     if ((medicine.criticalExpiryPills ?? 0) > 0) {
-      alert(
-        `Warning: "${medicine.name}" has critical expiry stock (<= 7 days). Sale is allowed, use FEFO.`
-      );
+      if (!expiryWarningShownRef.current.has(medicine.id)) {
+        expiryWarningShownRef.current.add(medicine.id);
+        warning(
+          `"${medicine.name}" has critical expiry stock (≤7 days). Sale allowed — use FEFO.`
+        );
+      }
     } else if ((medicine.nearExpiryPills ?? 0) > 0) {
-      alert(
-        `Warning: "${medicine.name}" has near-expiry stock (<= 30 days). Sale is allowed, use FEFO.`
-      );
+      if (!expiryWarningShownRef.current.has(medicine.id)) {
+        expiryWarningShownRef.current.add(medicine.id);
+        warning(
+          `"${medicine.name}" has near-expiry stock (≤30 days). Sale allowed — use FEFO.`
+        );
+      }
     }
 
     let quantity = quantityParam;
     if (available < quantity) {
-      alert(`Only ${available} pills available for sale!`);
+      warning(`Only ${available} pills available for sale!`);
       quantity = available;
     }
 
@@ -260,7 +282,7 @@ const SellingPanel: React.FC = () => {
       if (existingItem) {
         const newQuantity = existingItem.pills + quantity;
         if (newQuantity > available) {
-          alert(`Only ${available} pills available for sale!`);
+          warning(`Only ${available} pills available for sale!`);
           return prevCart;
         }
         const updatedItem: CartItem = recalculateSaleItem({
@@ -300,7 +322,7 @@ const SellingPanel: React.FC = () => {
     // Clear search after adding
     setSearchTerm('');
     setShowSearchResults(false);
-  }, []);
+  }, [error, warning]);
 
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
@@ -334,47 +356,62 @@ const SellingPanel: React.FC = () => {
 
   const handleBarcodeScan = useCallback(
     async (barcode: string) => {
-      if (!barcode || barcode.trim().length === 0) return;
+      const normalized = normalizeScannedBarcode(barcode);
+      if (!normalized) return;
 
       try {
-        window.electron.ipcRenderer.once(
-          'medicine-get-by-barcode-reply',
-          (response: any) => {
-            if (response.success && response.data) {
-              const medicine = response.data as Medicine;
-              if ((medicine.sellablePills ?? 0) > 0) {
-                // Automatically add to cart when barcode is scanned
-                addToCart(medicine, 1);
-                setIsScanning(true);
-                // Clear barcode input and show success feedback
-                setBarcodeInput('');
-                // Close barcode scan modal after successful scan
-                setTimeout(() => {
-                  setIsScanning(false);
-                  setBarcodeScanMode(false);
-                }, 1000);
-              } else {
-                alert(
-                  `Medicine "${medicine.name}" is not eligible for sale (expired or insufficient stock).`
-                );
-                setBarcodeInput('');
-              }
-            } else {
-              // Show message if barcode not found
-              alert(`Medicine with barcode "${barcode}" not found!`);
-              setBarcodeInput('');
-            }
+        const response = (await window.electron.ipcRenderer.invoke(
+          'medicine-get-by-barcode',
+          normalized
+        )) as {
+          success: boolean;
+          data?: Medicine | null;
+          error?: string;
+        };
+
+        if (!response?.success) {
+          error(response?.error || 'Error looking up barcode. Please try again.');
+          setBarcodeInput('');
+          return;
+        }
+
+        if (response.data) {
+          const medicine = response.data as Medicine;
+          if ((medicine.sellablePills ?? 0) > 0) {
+            addToCart(medicine, 1);
+            setIsScanning(true);
+            setBarcodeInput('');
+            setSearchTerm('');
+            setShowSearchResults(false);
+            setHighlightedIndex(-1);
+            setTimeout(() => {
+              setIsScanning(false);
+              setBarcodeScanMode(false);
+              searchInputRef.current?.focus();
+            }, 1000);
+          } else {
+            warning(
+              `Medicine "${medicine.name}" is not eligible for sale (expired or insufficient stock).`
+            );
+            setBarcodeInput('');
+            setSearchTerm('');
+            setShowSearchResults(false);
+            setHighlightedIndex(-1);
           }
-        );
-        window.electron.ipcRenderer.sendMessage('medicine-get-by-barcode', [
-          barcode.trim(),
-        ]);
-      } catch (error) {
-        console.error('Error scanning barcode:', error);
+        } else {
+          error(`Medicine with barcode "${normalized}" not found!`);
+          setBarcodeInput('');
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+      } catch (err) {
+        console.error('Error scanning barcode:', err);
+        error('Error looking up barcode. Please try again.');
         setBarcodeInput('');
       }
     },
-    [addToCart]
+    [addToCart, error, warning]
   );
 
   const updateCartItemField = useCallback(
@@ -393,7 +430,7 @@ const SellingPanel: React.FC = () => {
               nextValue = Math.max(0, parseInt(value, 10) || 0);
               const available = item.medicine.sellablePills ?? Infinity;
               if (nextValue > available) {
-                alert(`Only ${available} pills available for sale!`);
+                warning(`Only ${available} pills available for sale!`);
                 return item;
               }
             }
@@ -414,7 +451,7 @@ const SellingPanel: React.FC = () => {
         })
       );
     },
-    []
+    [warning]
   );
 
   // Scroll highlighted item into view and focus it
@@ -487,6 +524,7 @@ const SellingPanel: React.FC = () => {
   // Function to clear form for new bill
   const clearFormForNewBill = useCallback(() => {
     setSelectedSaleId(null);
+    setQtyInputDraft({});
     setCart([]);
     setReturnedQuantities(new Map());
     setCurrentSaleReturnTotal(0);
@@ -700,14 +738,59 @@ const SellingPanel: React.FC = () => {
     };
   }, [barcodeInput, handleBarcodeScan, barcodeScanMode]);
 
-  // Global barcode scanner listener (works without opening scan modal)
+  // F2 — focus product search (label says F2; scanners often work without clicking the field)
+  useEffect(() => {
+    const onF2 = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onF2, true);
+    return () => window.removeEventListener('keydown', onF2, true);
+  }, []);
+
+  // Global barcode scanner: capture phase so keys are not lost when focus is outside Product (F2).
+  // `data-wedge-typing` marks areas where normal keyboard typing must reach inputs (customer, cart, etc.).
   useEffect(() => {
     const MIN_BARCODE_LENGTH = 4;
+    const SCAN_END_MS = 200;
+
+    const isWedgeTypingField = (el: EventTarget | null) =>
+      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < MIN_BARCODE_LENGTH) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      setSearchTerm(normalized);
+      setShowSearchResults(true);
+      setHighlightedIndex(-1);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+      void handleBarcodeScan(normalized);
+    };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
       if (barcodeScanMode) return;
 
       const target = event.target as HTMLElement | null;
+      if (target?.id === 'product-search' || target?.id === 'barcode-input') {
+        return;
+      }
+
+      if (isWedgeTypingField(target)) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
       const tag = target?.tagName?.toLowerCase();
       const isEditable =
         tag === 'input' ||
@@ -715,48 +798,38 @@ const SellingPanel: React.FC = () => {
         tag === 'select' ||
         target?.isContentEditable;
 
-      if (isEditable) {
-        return;
-      }
-
-      // Ignore modifier combinations
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-
       if (event.key === 'Enter') {
         if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-          const barcodeValue = globalBarcodeBufferRef.current;
-          globalBarcodeBufferRef.current = '';
-          handleBarcodeScan(barcodeValue);
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
         } else {
           globalBarcodeBufferRef.current = '';
         }
-        event.preventDefault();
         return;
       }
 
       if (event.key.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
         globalBarcodeBufferRef.current += event.key;
         if (globalBarcodeTimerRef.current) {
           clearTimeout(globalBarcodeTimerRef.current);
         }
         globalBarcodeTimerRef.current = setTimeout(() => {
           if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-            const barcodeValue = globalBarcodeBufferRef.current;
-            globalBarcodeBufferRef.current = '';
-            handleBarcodeScan(barcodeValue);
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
           } else {
             globalBarcodeBufferRef.current = '';
           }
-        }, 120);
+        }, SCAN_END_MS);
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('keydown', handleGlobalKeydown, true);
 
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
       if (globalBarcodeTimerRef.current) {
         clearTimeout(globalBarcodeTimerRef.current);
       }
@@ -807,6 +880,37 @@ const SellingPanel: React.FC = () => {
       return;
     }
 
+    // Enter: prefer explicit dropdown selection; else barcode (scanner types into this field)
+    if (e.key === 'Enter') {
+      if (showSearchResults && medicines.length > 0 && highlightedIndex >= 0) {
+        e.preventDefault();
+        const medicine = medicines[highlightedIndex];
+        if (medicine && (medicine.sellablePills ?? 0) > 0) {
+          addToCart(medicine, 1);
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+        return;
+      }
+      if (looksLikeBarcodeInput(searchTerm)) {
+        e.preventDefault();
+        handleBarcodeScan(searchTerm);
+        return;
+      }
+      if (showSearchResults && medicines.length === 1) {
+        const medicine = medicines[0];
+        if (medicine && (medicine.sellablePills ?? 0) > 0) {
+          e.preventDefault();
+          addToCart(medicine, 1);
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+        return;
+      }
+    }
+
     if (!showSearchResults || medicines.length === 0) return;
 
     if (e.key === 'ArrowDown') {
@@ -817,15 +921,6 @@ const SellingPanel: React.FC = () => {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : -1));
-    } else if (e.key === 'Enter' && highlightedIndex >= 0) {
-      e.preventDefault();
-      const medicine = medicines[highlightedIndex];
-      if (medicine && (medicine.sellablePills ?? 0) > 0) {
-        addToCart(medicine, 1);
-        setSearchTerm('');
-        setShowSearchResults(false);
-        setHighlightedIndex(-1);
-      }
     } else if (e.key === 'Escape') {
       setShowSearchResults(false);
       setHighlightedIndex(-1);
@@ -845,21 +940,24 @@ const SellingPanel: React.FC = () => {
   );
 
   const removeFromCart = (medicineId: number) => {
+    clearQtyDraft(medicineId);
     setCart((prevCart) =>
       prevCart.filter((item) => item.medicine.id !== medicineId)
     );
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
+    clearQtyDraft(medicineId);
     setCart((prevCart) => {
       return prevCart
         .map((item) => {
           if (item.medicine.id === medicineId) {
+            // sellablePills on the line is total sellable stock snapshot (not "remaining after cart")
             const available = item.medicine.sellablePills ?? Infinity;
             const newQuantity = item.pills + change;
             if (newQuantity <= 0) return null;
             if (newQuantity > available) {
-              alert(`Only ${available} pills available in stock!`);
+              warning(`Only ${available} pills available in stock!`);
               return item;
             }
             const updatedItem = recalculateSaleItem({
@@ -875,8 +973,7 @@ const SellingPanel: React.FC = () => {
   };
 
   const setCartItemQuantity = (medicineId: number, quantity: number) => {
-    // Note: We don't remove from cart here anymore to allow user to clear the input (0)
-    // and type a new number. Removal is handled by the trash button.
+    clearQtyDraft(medicineId);
     const finalQuantity = isNaN(quantity) ? 0 : quantity;
 
     setCart((prevCart) => {
@@ -884,8 +981,8 @@ const SellingPanel: React.FC = () => {
         if (item.medicine.id === medicineId) {
           const available = item.medicine.sellablePills ?? Infinity;
           if (finalQuantity > available) {
-            alert(`Only ${available} pills available in stock!`);
-            return item;
+            warning(`Only ${available} pills available in stock!`);
+            return recalculateSaleItem({ ...item, pills: available });
           }
           const updatedItem = recalculateSaleItem({
             ...item,
@@ -1196,6 +1293,7 @@ const SellingPanel: React.FC = () => {
           return recalculateSaleItem(cartItem);
         });
 
+        setQtyInputDraft({});
         setCart(cartItems);
         setReturnedQuantities(returnedByMedicine);
         setCurrentSaleReturnTotal(totalReturned);
@@ -1460,8 +1558,16 @@ const SellingPanel: React.FC = () => {
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
 
+  /** Active new sale: larger, spaced summary (not viewing history / returns). */
+  const expandedSaleSummary = currentBillIndex === -1 && cart.length > 0;
+
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2 relative">
+      <div className="fixed top-20 right-4 z-[100] pointer-events-none">
+        <div className="pointer-events-auto">
+          <ToastContainer toasts={toasts} onClose={removeToast} />
+        </div>
+      </div>
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
@@ -1768,7 +1874,10 @@ const SellingPanel: React.FC = () => {
           {/* Left Side: Products and Cart */}
           <div className="lg:col-span-8 flex flex-col overflow-hidden min-h-0 gap-3">
             {/* Top Section: Invoice, Date, Time, Customer Info */}
-            <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0">
+            <div
+              data-wedge-typing="true"
+              className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0"
+            >
 
               {/* TOP GRID ROW */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -2166,6 +2275,7 @@ const SellingPanel: React.FC = () => {
             {/* Cart Items - Scrollable */}
             <div
               data-cart-section
+              data-wedge-typing="true"
               className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200/60 dark:border-gray-700/60 shadow-md overflow-hidden flex flex-col min-h-0 max-h-full backdrop-blur-sm"
             >
               <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200/60 dark:border-gray-600/60 flex-shrink-0 z-10">
@@ -2236,35 +2346,51 @@ const SellingPanel: React.FC = () => {
                               <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
                             <input
-                              type="number"
-                              min={1}
-                              max={
-                                typeof item.medicine.sellablePills === 'number'
-                                  ? item.medicine.sellablePills + item.pills
-                                  : undefined
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Quantity"
+                              value={
+                                qtyInputDraft[item.medicine.id] ??
+                                (item.pills === 0 ? '' : String(item.pills))
                               }
-                              value={item.pills === 0 ? '' : item.pills}
                               readOnly={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
                               onFocus={(e) => e.target.select()}
                               onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                 if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
-                                const rawValue = e.target.value;
-                                if (rawValue === '') {
-                                  setCartItemQuantity(item.medicine.id, 0);
-                                  return;
+                                const v = e.target.value;
+                                if (v === '' || /^\d+$/.test(v)) {
+                                  setQtyInputDraft((prev) => ({
+                                    ...prev,
+                                    [item.medicine.id]: v,
+                                  }));
                                 }
-                                let val = parseInt(rawValue, 10);
-                                if (Number.isNaN(val)) val = 1;
-                                if (val < 0) val = 0;
-                                const maxAvailable = typeof item.medicine.sellablePills === 'number'
-                                  ? item.medicine.sellablePills + item.pills
-                                  : Infinity;
-                                if (val > maxAvailable) {
-                                  val = maxAvailable;
-                                }
-                                setCartItemQuantity(item.medicine.id, val);
                               }}
-                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                              onBlur={() => {
+                                if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
+                                const id = item.medicine.id;
+                                const draft = qtyInputDraft[id];
+                                setQtyInputDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[id];
+                                  return next;
+                                });
+                                if (draft === undefined) return;
+                                const trimmed = draft.trim();
+                                const line = cart.find((x) => x.medicine.id === id);
+                                if (!line) return;
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 1) {
+                                  val = Math.max(1, line.pills);
+                                }
+                                const maxAvail = line.medicine.sellablePills;
+                                if (typeof maxAvail === 'number' && val > maxAvail) {
+                                  warning(`Only ${maxAvail} pills available for sale!`);
+                                  val = maxAvail;
+                                }
+                                setCartItemQuantity(id, val);
+                              }}
+                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all tabular-nums ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                             <button
                               type="button"
@@ -2275,7 +2401,7 @@ const SellingPanel: React.FC = () => {
                               disabled={
                                 (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ||
                                 (typeof item.medicine.sellablePills === 'number'
-                                  ? item.pills >= (item.medicine.sellablePills + item.pills)
+                                  ? item.pills >= item.medicine.sellablePills
                                   : false)
                               }
                             >
@@ -2379,28 +2505,61 @@ const SellingPanel: React.FC = () => {
           </div>
 
           {/* Right Side: Summary (Top Half) and History (Bottom Half) */}
-          <div className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full">
+          <div
+            data-wedge-typing="true"
+            className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full"
+          >
             {/* Sale Summary - Top Half */}
             <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
-              <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
-                <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+              <div
+                className={`px-4 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0 ${
+                  expandedSaleSummary ? 'py-3' : 'py-2.5'
+                }`}
+              >
+                <h3
+                  className={`font-bold text-gray-900 dark:text-white uppercase tracking-wide ${
+                    expandedSaleSummary ? 'text-base' : 'text-sm'
+                  }`}
+                >
                   Sale Summary
                 </h3>
               </div>
-              <div className="flex-1 flex flex-col p-3 gap-2 min-h-0 overflow-y-auto">
+              <div
+                className={`flex-1 flex flex-col min-h-0 overflow-y-auto ${
+                  expandedSaleSummary ? 'p-4 gap-4' : 'p-3 gap-2'
+                }`}
+              >
                 {/* Net Payable - Most Prominent */}
-                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-2 border border-emerald-600 dark:border-emerald-500 shadow-lg">
-                  <div className="flex items-center justify-between mb-0">
-                    <div className="text-xs font-semibold text-white/90 uppercase tracking-wide">
+                <div
+                  className={`bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 border border-emerald-600 dark:border-emerald-500 shadow-lg flex-shrink-0 rounded-xl ${
+                    expandedSaleSummary ? 'p-4 sm:p-5' : 'p-2'
+                  }`}
+                >
+                  <div className={`flex items-center justify-between ${expandedSaleSummary ? 'mb-2' : 'mb-0'}`}>
+                    <div
+                      className={`font-bold text-white/95 uppercase tracking-wide ${
+                        expandedSaleSummary ? 'text-sm sm:text-base' : 'text-xs font-semibold text-white/90'
+                      }`}
+                    >
                       Net Payable
                     </div>
-                    <div className="px-2 py-0.5 bg-white/20 dark:bg-white/10 rounded-full">
-                      <span className="text-[10px] font-bold text-white">
+                    <div
+                      className={`bg-white/20 dark:bg-white/10 rounded-full ${
+                        expandedSaleSummary ? 'px-3 py-1' : 'px-2 py-0.5'
+                      }`}
+                    >
+                      <span
+                        className={`font-bold text-white ${expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px]'}`}
+                      >
                         {cart.length} {cart.length === 1 ? 'Item' : 'Items'}
                       </span>
                     </div>
                   </div>
-                  <div className="text-2xl font-bold text-white tracking-tight">
+                  <div
+                    className={`font-bold text-white tracking-tight ${
+                      expandedSaleSummary ? 'text-3xl sm:text-4xl lg:text-[2.75rem] leading-tight' : 'text-2xl'
+                    }`}
+                  >
                     {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
                   </div>
                   {currentSaleReturnTotal > 0 && (
@@ -2424,92 +2583,199 @@ const SellingPanel: React.FC = () => {
                   )}
                 </div>
 
-                {/* Summary Breakdown - Show only when creating new sale */}
+                {/* Summary breakdown + given/return — expanded layout fills space on active new sale */}
                 {currentBillIndex === -1 && cart.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* Block 1: Discounts & Taxes */}
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Discount
+                  <div
+                    className={
+                      expandedSaleSummary
+                        ? 'flex-1 flex flex-col gap-4 min-h-0'
+                        : ''
+                    }
+                  >
+                    <div
+                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-3 flex-1 min-h-[8rem]' : 'gap-2'}`}
+                    >
+                      {/* Block 1: Discounts & Taxes */}
+                      <div
+                        className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
+                          expandedSaleSummary
+                            ? 'p-4 rounded-xl flex flex-col justify-center gap-5 shadow-sm dark:shadow-none'
+                            : 'p-2.5 rounded-lg space-y-2'
+                        }`}
+                      >
+                        <div
+                          className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}
+                        >
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Discount
+                          </div>
+                          <div
+                            className={`font-bold text-red-600 dark:text-red-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                            }`}
+                          >
+                            -{formatCurrency(discountValue)}
+                          </div>
                         </div>
-                        <div className="text-sm font-bold text-red-600 dark:text-red-400">
-                          -{formatCurrency(discountValue)}
+                        <div
+                          className={`flex justify-between items-center border-gray-100 dark:border-gray-600/50 ${
+                            expandedSaleSummary
+                              ? 'pt-4 border-t-2 gap-2'
+                              : 'pt-1.5 border-t'
+                          }`}
+                        >
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Tax
+                          </div>
+                          <div
+                            className={`font-bold text-blue-600 dark:text-blue-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                            }`}
+                          >
+                            +{formatCurrency(taxValue)}
+                          </div>
                         </div>
                       </div>
-                      <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 dark:border-gray-600/50">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Tax
+
+                      {/* Block 2: Values & Final Total */}
+                      <div
+                        className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 text-right ${
+                          expandedSaleSummary
+                            ? 'p-4 rounded-xl flex flex-col justify-center gap-5 shadow-sm dark:shadow-none'
+                            : 'p-2.5 rounded-lg space-y-2'
+                        }`}
+                      >
+                        <div className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}>
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Subtotal
+                          </div>
+                          <div
+                            className={`font-bold text-gray-900 dark:text-white tabular-nums ${
+                              expandedSaleSummary ? 'text-lg sm:text-xl' : 'text-sm'
+                            }`}
+                          >
+                            {formatCurrency(subtotalValue)}
+                          </div>
                         </div>
-                        <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                          +{formatCurrency(taxValue)}
+                        <div
+                          className={`flex justify-between items-center border-emerald-100 dark:border-emerald-900/30 ${
+                            expandedSaleSummary ? 'pt-4 border-t-2 gap-2' : 'pt-1.5 border-t'
+                          }`}
+                        >
+                          <div
+                            className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Total
+                          </div>
+                          <div
+                            className={`font-black text-emerald-600 dark:text-emerald-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-xl sm:text-2xl' : 'text-sm'
+                            }`}
+                          >
+                            {formatCurrency(grandTotal)}
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Block 2: Values & Final Total */}
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2 text-right">
-                      <div className="flex justify-between items-center">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Subtotal
+                    {/* Given & Return Amounts - Calculator */}
+                    <div
+                      className={`grid grid-cols-2 ${
+                        expandedSaleSummary
+                          ? 'gap-3 flex-1 min-h-[9rem] items-stretch'
+                          : 'gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700'
+                      }`}
+                    >
+                      <div
+                        className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex flex-col ${
+                          expandedSaleSummary ? 'p-4 rounded-xl justify-center' : 'p-2.5 rounded-lg'
+                        }`}
+                      >
+                        <div
+                          className={`font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide ${
+                            expandedSaleSummary
+                              ? 'text-xs sm:text-sm mb-2'
+                              : 'text-[10px] font-semibold mb-1'
+                          }`}
+                        >
+                          Given Amount
                         </div>
-                        <div className="text-sm font-bold text-gray-900 dark:text-white">
-                          {formatCurrency(subtotalValue)}
+                        <input
+                          type="number"
+                          value={receivedAmount}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setReceivedAmount(e.target.value)}
+                          placeholder="0.00"
+                          className={`w-full bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 outline-none transition-all tabular-nums ${
+                            expandedSaleSummary
+                              ? 'px-3 py-3 text-xl sm:text-2xl min-h-[3.25rem]'
+                              : 'px-2 py-1 text-sm border focus:ring-2'
+                          }`}
+                        />
+                      </div>
+                      <div
+                        className={`border transition-colors flex flex-col ${
+                          expandedSaleSummary ? 'p-4 rounded-xl justify-center' : 'p-2.5 rounded-lg'
+                        } ${
+                          receivedAmount &&
+                          Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                            ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
+                            : 'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-800/50'
+                        }`}
+                      >
+                        <div
+                          className={`font-bold uppercase tracking-wide ${
+                            expandedSaleSummary ? 'text-xs sm:text-sm mb-2' : 'text-[10px] font-semibold mb-1'
+                          } ${
+                            receivedAmount &&
+                            Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                              ? 'text-blue-700 dark:text-blue-400'
+                              : 'text-red-700 dark:text-red-400'
+                          }`}
+                        >
+                          Return Amount
                         </div>
-                      </div>
-                      <div className="flex justify-between items-center pt-1.5 border-t border-emerald-100 dark:border-emerald-900/30">
-                        <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
-                          Total
+                        <div
+                          className={`font-black tabular-nums ${
+                            expandedSaleSummary ? 'text-2xl sm:text-3xl' : 'text-sm'
+                          } ${
+                            receivedAmount &&
+                            Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                              ? 'text-blue-600 dark:text-blue-400'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {formatCurrency(
+                            receivedAmount
+                              ? Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)
+                              : 0
+                          )}
                         </div>
-                        <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(grandTotal)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Given & Return Amounts - Calculator */}
-                {currentBillIndex === -1 && cart.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                    <div className="bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-2.5 border border-emerald-100 dark:border-emerald-800/50">
-                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1">
-                        Given Amount
-                      </div>
-                      <input
-                        type="number"
-                        value={receivedAmount}
-                        onFocus={(e) => e.target.select()}
-                        onChange={(e) => setReceivedAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-700 rounded px-2 py-1 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
-                      />
-                    </div>
-                    <div className={`rounded-lg p-2.5 border transition-colors ${
-                      receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                        ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
-                        : 'bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50'
-                    }`}>
-                      <div className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${
-                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                          ? 'text-blue-700 dark:text-blue-400'
-                          : 'text-red-700 dark:text-red-400'
-                      }`}>
-                        Return Amount
-                      </div>
-                      <div className={`text-sm font-black ${
-                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-red-600 dark:text-red-400'
-                      }`}>
-                        {formatCurrency(receivedAmount ? (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) : 0)}
                       </div>
                     </div>
                   </div>
                 )}
 
                 {/* Action Buttons Section */}
-                <div className="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700 space-y-2">
+                <div
+                  className={`mt-auto border-t border-gray-200 dark:border-gray-700 space-y-2 flex-shrink-0 ${
+                    expandedSaleSummary ? 'pt-4' : 'pt-2'
+                  }`}
+                >
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
@@ -2604,32 +2870,38 @@ const SellingPanel: React.FC = () => {
                     </>
                   ) : (
                     // When creating new sale - Show Checkout Actions
-                    <div className="flex gap-2">
-                      
-
+                    <div className={`flex ${expandedSaleSummary ? 'gap-3' : 'gap-2'}`}>
                       <button
                         type="button"
                         onClick={clearCart}
                         disabled={cart.length === 0}
-                        className="w-[30%] py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        className={`w-[30%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
+                          expandedSaleSummary ? 'py-3.5 text-base' : 'py-2.5 text-sm rounded-lg'
+                        }`}
                       >
-                        < FiRefreshCw className="w-4 h-4" />
+                        <FiRefreshCw className={expandedSaleSummary ? 'w-5 h-5' : 'w-4 h-4'} />
                         <span>CLEAR</span>
                       </button>
                       <button
                         type="button"
                         onClick={handleCheckout}
                         disabled={processing || cart.length === 0}
-                        className="w-[70%] py-2.5 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-sm font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        className={`w-[70%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
+                          expandedSaleSummary ? 'py-3.5 text-base' : 'py-2.5 text-sm rounded-lg'
+                        }`}
                       >
                         {processing ? (
                           <>
-                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <div
+                              className={`border-2 border-white border-t-transparent rounded-full animate-spin ${
+                                expandedSaleSummary ? 'w-6 h-6' : 'w-5 h-5'
+                              }`}
+                            />
                             <span>PROCESSING...</span>
                           </>
                         ) : (
                           <>
-                            <FiCheck className="w-5 h-5" />
+                            <FiCheck className={expandedSaleSummary ? 'w-6 h-6' : 'w-5 h-5'} />
                             <span>COMPLETE SALE</span>
                           </>
                         )}
@@ -2840,7 +3112,7 @@ const SellingPanel: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div data-wedge-typing="true" className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Top inputs section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">

@@ -277,7 +277,7 @@ The core point-of-sale screen. The largest file in the project at ~3,094 lines.
 
 **Medicine search & cart:**
 - Search medicines by name or barcode
-- Barcode scanner integration (global buffer ref with debounce timer)
+- Barcode scanner integration: **capture-phase** global keydown sends scans to **Product (F2)** even when focus is on the page background or a non-typing control. Areas where you type normally (invoice/customer/cart/summary, etc.) are marked `data-wedge-typing` so the keyboard still reaches those fields. **F2** focuses the product field. When a global scan completes, the scanned text is written to the product field, then `medicine-get-by-barcode` runs (`invoke`). **Enter** in the product field still triggers lookup for barcode-shaped input. Modal “SCAN” mode still works.
 - Add medicines to a live cart
 - Per-item fields: quantity (pills), unit price, discount (%), tax (%)
 - Automatic recalculation of subtotal, discount amount, tax amount, and final price per line item
@@ -340,7 +340,7 @@ The stock intake and purchase order entry screen (~1,820 lines).
 
 **Medicine search & purchase cart:**
 - Search medicines by name or barcode
-- Barcode scanner integration
+- Barcode scanner integration (IPC `medicine-get-by-barcode` via **`invoke` / `handle`**, not `send`/`once`, so back-to-back scans always get the correct reply). Backend `getMedicineByBarcode` tries leading-zero variants, case-insensitive exact match, then safe `LIKE` containment so hardware scans (e.g. `1…` vs stored `01…`, or long GS1-style strings) resolve the same way as search.
 - Per-item fields: packets purchased, pills per packet, total amount paid, discount (%), tax (%), expiry date
 - Prices per packet and per pill are **derived** from the total amount entered (total-amount-first pricing model)
 - Minimum expiry enforcement: medicines with fewer than **90 days** to expiry are rejected
@@ -348,6 +348,7 @@ The stock intake and purchase order entry screen (~1,820 lines).
 **Payment recording:**
 - Supported methods: `cash`, `bank_transfer`, `check`, `online`
 - Method-specific fields: reference number, check number, bank name, account number
+- **Editing a PO after payment:** If you remove lines so the **grand total drops** but **payments already recorded** on that PO are unchanged, the sidebar shows **Overpaid** (recorded payments minus new total). Use **Record refund to supplier**: enter the amount returned (cash/bank/etc.). The app inserts a **negative** row in `purchase_payments` and updates totals so the PO balances. You can record partial refunds until overpayment is cleared.
 
 **Purchase history:**
 - Browse past purchase orders
@@ -382,7 +383,7 @@ The stock intake and purchase order entry screen (~1,820 lines).
 The medicine inventory catalog.
 
 **Features:**
-- **Create** — Form requiring name, pill quantity (pills per packet), and barcode. Barcode field auto-focuses for scanner workflow.
+- **Create** — Form requiring name, pill quantity (pills per packet), and barcode. Barcode field auto-focuses for scanner workflow. **F2** focuses the barcode field. A **global capture-phase** wedge listener fills the barcode when focus is not in `[data-wedge-typing]` areas (other form fields; the **Search Medicines** row; each row’s **status** `<select>`), so you can scan while browsing the table without clicking the barcode box first. After a short debounce, the barcode is checked via IPC `medicine-get-by-barcode` (same resolution as POS for long GS1-style scans). If it matches another medicine, an amber warning appears and save is blocked until the barcode is changed. When editing a medicine that already has stock, the barcode is read-only and global scan-to-barcode is disabled.
 - **Read** — Full medicine list loaded via IPC `medicine-get-all`
 - **Update** — Same form used for editing. Status (`active` / `inactive` / `discontinued`) can be toggled inline per row without opening the form.
 - **Delete** — `ConfirmDialog` modal (not a native browser dialog)
@@ -413,6 +414,11 @@ The medicine inventory catalog.
 | `totalAvailablePills` | All stock including near-expiry |
 | `sellablePills` | Non-expired stock only |
 | `averageSellablePricePerPill` | Weighted average cost per pill |
+
+**Barcode scanning (why it sometimes mismatches search):**
+- **Stored value vs scan payload** — Many pharmacy labels encode GTIN + batch + expiry + text in one scan. The app saves whatever string you store in `barcode`; the scanner may send a **longer** or **different** segment than you saved. Lookup uses normalization (trim, GS1 separators, leading zeros) and fuzzy `LIKE` so scan and search behave similarly; **save the same segment you expect scans to use** for best results.
+- **Focus / Enter / F2** — Selling & Purchasing use a **global capture** listener plus **`data-wedge-typing`** so scans work without clicking Product (F2); **F2** focuses that field. **Enter** still completes scans; the scanned string is mirrored into the product input before lookup.
+- **Ambiguous matches** — If several medicines share a substring, fuzzy match picks the **longest stored barcode** first to reduce wrong picks.
 
 ---
 

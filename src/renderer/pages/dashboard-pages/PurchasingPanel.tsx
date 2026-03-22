@@ -9,6 +9,10 @@ import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmac
 import { useToast, ToastContainer } from '../../components/common/Toast';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { getAuthUser } from '../../utils/auth';
+import {
+  looksLikeBarcodeInput,
+  normalizeScannedBarcode,
+} from '../../../common/barcodeLookup';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -124,6 +128,12 @@ const PurchasingPanel: React.FC = () => {
 
   const [paymentDate, setPaymentDate] = useState<string>(today);
   const [paymentNotes, setPaymentNotes] = useState('');
+  /** When editing a PO, record cash/bank returned to supplier (negative payment row). */
+  const [refundAmountInput, setRefundAmountInput] = useState(0);
+  const [refundMethod, setRefundMethod] = useState<'cash' | 'bank_transfer' | 'check' | 'online'>('cash');
+  const [refundDate, setRefundDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [refundNotes, setRefundNotes] = useState('');
+  const [recordingRefund, setRecordingRefund] = useState(false);
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
@@ -325,24 +335,45 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const handleBarcodeScan = useCallback(
-    (code: string) => {
-      const normalized = code.trim();
+    async (code: string) => {
+      const normalized = code
+        .replace(/\u0000/g, '')
+        .replace(/[\r\n\t]+/g, '')
+        .trim();
       if (!normalized) return;
 
-      const medicine = medicines.find(
-        (item) => item.barcode?.toLowerCase() === normalized.toLowerCase()
-      );
+      try {
+        const response = (await window.electron.ipcRenderer.invoke(
+          'medicine-get-by-barcode',
+          normalized
+        )) as {
+          success: boolean;
+          data?: Medicine | null;
+          error?: string;
+        };
 
-      if (!medicine) {
-        error(`Medicine with barcode "${normalized}" not found!`);
-        return;
+        if (!response?.success) {
+          error(response?.error || 'Error looking up barcode. Please try again.');
+          setBarcodeInput('');
+          return;
+        }
+
+        if (response.data) {
+          const medicine = response.data as Medicine;
+          addToCart(medicine);
+          setBarcodeScanMode(false);
+          setBarcodeInput('');
+        } else {
+          error(`Medicine with barcode "${normalized}" not found!`);
+          setBarcodeInput('');
+        }
+      } catch (err) {
+        console.error('Error scanning barcode:', err);
+        error('Error looking up barcode. Please try again.');
+        setBarcodeInput('');
       }
-
-      addToCart(medicine);
-      setBarcodeScanMode(false);
-      setBarcodeInput('');
     },
-    [medicines, addToCart]
+    [addToCart, error]
   );
 
   // Debounce search to prevent firing on every keystroke
@@ -473,8 +504,12 @@ const PurchasingPanel: React.FC = () => {
         setProcessing(false);
         return;
       }
-      if (paymentAmount > total) {
-        error(`Payment amount (${paymentAmount.toFixed(2)}) cannot be greater than grand total (${total.toFixed(2)})`);
+      // New PO: cannot pay more than the order total. Edited PO: total can drop while recorded
+      // payments stay the same — use “Record refund” to post money returned to the supplier.
+      if (!editingPurchaseId && paymentAmount > total) {
+        error(
+          `Payment amount (${paymentAmount.toFixed(2)}) cannot be greater than grand total (${total.toFixed(2)})`
+        );
         setProcessing(false);
         return;
       }
@@ -824,6 +859,68 @@ const PurchasingPanel: React.FC = () => {
   const taxTotal = calculateTaxTotal();
   const grandTotal = calculateGrandTotal();
 
+  const overpaymentAmount = useMemo(() => {
+    if (!editingPurchaseId) return 0;
+    return Math.max(0, (paymentAmount || 0) - grandTotal);
+  }, [editingPurchaseId, paymentAmount, grandTotal]);
+
+  useEffect(() => {
+    if (overpaymentAmount <= 0.005) {
+      setRefundAmountInput(0);
+      return;
+    }
+    setRefundAmountInput((prev) => {
+      const cap = Math.round(overpaymentAmount * 100) / 100;
+      if (prev <= 0.005 || prev > cap) return cap;
+      return Math.min(prev, cap);
+    });
+  }, [overpaymentAmount]);
+
+  const handleRecordSupplierRefund = useCallback(() => {
+    if (!editingPurchaseId || overpaymentAmount <= 0.005) return;
+    const amt = Math.round(refundAmountInput * 100) / 100;
+    if (amt <= 0 || amt > overpaymentAmount + 0.01) {
+      error('Enter a refund amount greater than zero and not more than the overpaid amount.');
+      return;
+    }
+    const pid = editingPurchaseId;
+    setRecordingRefund(true);
+    window.electron.ipcRenderer.once('purchase-record-supplier-refund-reply', (response: any) => {
+      setRecordingRefund(false);
+      if (response.success) {
+        success('Refund recorded.');
+        loadPastPurchases();
+        window.electron.ipcRenderer.once('purchase-get-by-id-reply', (r2: any) => {
+          if (r2.success && r2.data) {
+            setPaymentAmount(r2.data.paymentAmount || 0);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('purchase-get-by-id', [pid]);
+      } else {
+        error(String(response.error || 'Failed to record refund'));
+      }
+    });
+    window.electron.ipcRenderer.sendMessage('purchase-record-supplier-refund', [
+      pid,
+      {
+        amount: amt,
+        paymentMethod: refundMethod,
+        notes: refundNotes.trim() || undefined,
+        paymentDate: refundDate ? new Date(`${refundDate}T12:00:00`).toISOString() : undefined,
+      },
+    ]);
+  }, [
+    editingPurchaseId,
+    overpaymentAmount,
+    refundAmountInput,
+    refundMethod,
+    refundNotes,
+    refundDate,
+    loadPastPurchases,
+    error,
+    success,
+  ]);
+
   useEffect(() => {
     if (barcodeScanMode) {
       const timeout = setTimeout(() => {
@@ -855,20 +952,50 @@ const PurchasingPanel: React.FC = () => {
   }, [barcodeInput, barcodeScanMode, handleBarcodeScan]);
 
   useEffect(() => {
+    const onF2 = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onF2, true);
+    return () => window.removeEventListener('keydown', onF2, true);
+  }, []);
+
+  useEffect(() => {
     const MIN_BARCODE_LENGTH = 4;
+    const SCAN_END_MS = 200;
+
+    const isWedgeTypingField = (el: EventTarget | null) =>
+      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < MIN_BARCODE_LENGTH) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      setSearchTerm(normalized);
+      setShowSearchResults(true);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+      void handleBarcodeScan(normalized);
+    };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
       if (barcodeScanMode) return;
 
       const target = event.target as HTMLElement | null;
-      const tag = target?.tagName?.toLowerCase();
-      const isEditable =
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        target?.isContentEditable;
+      if (
+        target?.id === 'product-search' ||
+        target?.id === 'purchasing-barcode-scan-input'
+      ) {
+        return;
+      }
 
-      if (isEditable) {
+      if (isWedgeTypingField(target)) {
         return;
       }
 
@@ -878,37 +1005,36 @@ const PurchasingPanel: React.FC = () => {
 
       if (event.key === 'Enter') {
         if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-          const barcodeValue = globalBarcodeBufferRef.current;
-          globalBarcodeBufferRef.current = '';
-          handleBarcodeScan(barcodeValue);
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
         } else {
           globalBarcodeBufferRef.current = '';
         }
-        event.preventDefault();
         return;
       }
 
       if (event.key.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
         globalBarcodeBufferRef.current += event.key;
         if (globalBarcodeTimerRef.current) {
           clearTimeout(globalBarcodeTimerRef.current);
         }
         globalBarcodeTimerRef.current = setTimeout(() => {
           if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-            const barcodeValue = globalBarcodeBufferRef.current;
-            globalBarcodeBufferRef.current = '';
-            handleBarcodeScan(barcodeValue);
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
           } else {
             globalBarcodeBufferRef.current = '';
           }
-        }, 120);
+        }, SCAN_END_MS);
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('keydown', handleGlobalKeydown, true);
 
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
       if (globalBarcodeTimerRef.current) {
         clearTimeout(globalBarcodeTimerRef.current);
       }
@@ -959,7 +1085,7 @@ const PurchasingPanel: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className="p-6 flex-1 overflow-y-auto">
+            <div data-wedge-typing="true" className="p-6 flex-1 overflow-y-auto">
               <div className="relative mb-4">
                 <FiSearch className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500 w-5 h-5" />
                 <input
@@ -1059,6 +1185,7 @@ const PurchasingPanel: React.FC = () => {
                 Scan or type a medicine barcode. If it exists in your catalogue it will be added to the purchase cart automatically so you can restock it.
               </p>
               <input
+                id="purchasing-barcode-scan-input"
                 ref={barcodeInputRef}
                 type="text"
                 value={barcodeInput}
@@ -1097,7 +1224,10 @@ const PurchasingPanel: React.FC = () => {
           {/* Left Side: Products and Cart */}
           <div className="lg:col-span-8 flex flex-col overflow-hidden min-h-0 gap-3">
             {/* Top Section: PO, Date, Time, Supplier Info */}
-            <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0">
+            <div
+              data-wedge-typing="true"
+              className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0"
+            >
               
               {/* TOP GRID ROW */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1258,6 +1388,15 @@ const PurchasingPanel: React.FC = () => {
                     type="text"
                     value={searchTerm}
                     onChange={handleSearchChange}
+                    onKeyDown={(e) => {
+                      if (
+                        e.key === 'Enter' &&
+                        looksLikeBarcodeInput(e.currentTarget.value)
+                      ) {
+                        e.preventDefault();
+                        void handleBarcodeScan(e.currentTarget.value);
+                      }
+                    }}
                     onFocus={() => {
                       if (searchTerm) {
                         setShowSearchResults(true);
@@ -1339,7 +1478,10 @@ const PurchasingPanel: React.FC = () => {
             </div>
 
             {/* Cart Items Section */}
-            <div className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200/60 dark:border-gray-700/60 shadow-md overflow-hidden flex flex-col min-h-0 max-h-full backdrop-blur-sm">
+            <div
+              data-wedge-typing="true"
+              className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200/60 dark:border-gray-700/60 shadow-md overflow-hidden flex flex-col min-h-0 max-h-full backdrop-blur-sm"
+            >
               <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200/60 dark:border-gray-600/60 flex-shrink-0 z-10">
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
                   Current Purchase Items
@@ -1507,7 +1649,10 @@ const PurchasingPanel: React.FC = () => {
             </div>
           </div>
           {/* Right Side: Summary & History */}
-          <div className="lg:col-span-4 flex flex-col gap-3 overflow-hidden min-h-0 h-full">
+          <div
+            data-wedge-typing="true"
+            className="lg:col-span-4 flex flex-col gap-3 overflow-hidden min-h-0 h-full"
+          >
             {/* Payment Summary Section */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 flex-shrink-0 space-y-4">
               <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-widest border-b border-gray-100 dark:border-gray-700 pb-2">
@@ -1535,6 +1680,98 @@ const PurchasingPanel: React.FC = () => {
                     {formatCurrency(grandTotal)}
                   </span>
                 </div>
+                {editingPurchaseId && overpaymentAmount > 0.005 && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/40 px-3 py-3 space-y-3">
+                    <div className="text-[11px] font-bold text-slate-800 dark:text-slate-100 uppercase tracking-wide">
+                      Record refund to supplier
+                    </div>
+                    <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-snug">
+                      Recorded payments exceed this order total by{' '}
+                      <span className="font-bold text-slate-800 dark:text-slate-200">
+                        {formatCurrency(overpaymentAmount)}
+                      </span>
+                      . Enter how much you returned and save — this posts a refund line on the PO.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">
+                          Refund amount
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-xs">
+                            {symbol}
+                          </span>
+                          <input
+                            type="number"
+                            min={0.01}
+                            max={overpaymentAmount}
+                            step="0.01"
+                            value={refundAmountInput || ''}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value) || 0;
+                              const cap = overpaymentAmount;
+                              setRefundAmountInput(Math.min(Math.max(0, v), cap));
+                            }}
+                            className="w-full bg-white dark:bg-gray-800 border border-slate-200 dark:border-slate-600 rounded-md py-1.5 pl-6 pr-2 text-xs font-bold text-slate-800 dark:text-slate-100"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">
+                          Method
+                        </label>
+                        <select
+                          value={refundMethod}
+                          onChange={(e) =>
+                            setRefundMethod(e.target.value as 'cash' | 'bank_transfer' | 'check' | 'online')
+                          }
+                          className="w-full bg-white dark:bg-gray-800 border border-slate-200 dark:border-slate-600 rounded-md py-1.5 px-2 text-xs font-bold text-slate-800 dark:text-slate-100"
+                        >
+                          <option value="cash">Cash</option>
+                          <option value="bank_transfer">Bank</option>
+                          <option value="check">Check</option>
+                          <option value="online">Online</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">
+                        Refund date
+                      </label>
+                      <input
+                        type="date"
+                        value={refundDate}
+                        onChange={(e) => setRefundDate(e.target.value)}
+                        className="w-full bg-white dark:bg-gray-800 border border-slate-200 dark:border-slate-600 rounded-md py-1.5 px-2 text-xs font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[9px] font-bold text-slate-500 uppercase mb-1 block">
+                        Notes (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={refundNotes}
+                        onChange={(e) => setRefundNotes(e.target.value)}
+                        placeholder="e.g. Cash handed to supplier"
+                        className="w-full bg-white dark:bg-gray-800 border border-slate-200 dark:border-slate-600 rounded-md py-1.5 px-2 text-xs"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRecordSupplierRefund}
+                      disabled={
+                        recordingRefund ||
+                        refundAmountInput <= 0 ||
+                        (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
+                      }
+                      className="w-full py-2 rounded-lg text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {recordingRefund ? 'Recording…' : 'RECORD REFUND'}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Payment Section Toggle */}
@@ -1576,15 +1813,15 @@ const PurchasingPanel: React.FC = () => {
                         <input
                           type="number"
                           min="0"
-                          max={grandTotal}
+                          max={editingPurchaseId ? undefined : grandTotal}
                           step="0.01"
                           value={paymentAmount || ''}
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => {
                             const val = parseFloat(e.target.value) || 0;
-                            if (val <= grandTotal) {
-                              setPaymentAmount(val);
-                            }
+                            if (val < 0) return;
+                            if (!editingPurchaseId && val > grandTotal) return;
+                            setPaymentAmount(val);
                           }}
                           className="w-full bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg py-2 pl-8 pr-3 text-lg font-black text-emerald-700 dark:text-emerald-400 outline-none focus:ring-4 focus:ring-emerald-500/20 transition-all"
                           placeholder="0.00"
@@ -1613,10 +1850,24 @@ const PurchasingPanel: React.FC = () => {
                       </div>
                       <div className="flex flex-col">
                         <label className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase mb-1 block">
-                          Balance
+                          {editingPurchaseId && (paymentAmount || 0) > grandTotal + 0.005
+                            ? 'Overpaid'
+                            : 'Balance due'}
                         </label>
-                        <div className="h-[34px] flex items-center px-2 bg-gray-100 dark:bg-gray-700/50 rounded-md text-[11px] font-black text-red-600 dark:text-red-400 border border-gray-200 dark:border-gray-600">
-                          {formatCurrency(Math.max(0, grandTotal - (paymentAmount || 0)))}
+                        <div
+                          className={`h-[34px] flex items-center px-2 rounded-md text-[11px] font-black border border-gray-200 dark:border-gray-600 ${
+                            grandTotal - (paymentAmount || 0) < -0.005
+                              ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200'
+                              : 'bg-gray-100 dark:bg-gray-700/50 text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {(() => {
+                            const bal = grandTotal - (paymentAmount || 0);
+                            if (bal < -0.005) {
+                              return formatCurrency(Math.abs(bal));
+                            }
+                            return formatCurrency(Math.max(0, bal));
+                          })()}
                         </div>
                       </div>
                     </div>

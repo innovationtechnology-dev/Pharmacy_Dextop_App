@@ -17,6 +17,7 @@ import {
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
+import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
@@ -120,6 +121,16 @@ export default function MedicinesPage() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
+  /** Another medicine already matches this barcode (uses same IPC lookup as POS / scanners). */
+  const [barcodeDuplicate, setBarcodeDuplicate] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const barcodeLookupRequestId = useRef(0);
+  const globalBarcodeBufferRef = useRef('');
+  const globalBarcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // Get currency symbol
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
@@ -192,6 +203,13 @@ export default function MedicinesPage() {
     if (!window?.electron) {
       setFormError(
         'Electron bridge unavailable. Please restart the application.'
+      );
+      return;
+    }
+
+    if (barcodeDuplicate) {
+      setFormError(
+        `This barcode already belongs to "${barcodeDuplicate.name}" (${formatNumericId(barcodeDuplicate.id)}). Edit that medicine or use a different barcode.`
       );
       return;
     }
@@ -338,6 +356,8 @@ export default function MedicinesPage() {
     setEditingMedicine(null);
     setFormError(null);
     setFormSuccess(null);
+    setBarcodeDuplicate(null);
+    barcodeLookupRequestId.current += 1;
     barcodeInputRef.current?.focus();
   }, []);
 
@@ -346,6 +366,164 @@ export default function MedicinesPage() {
     if (!editingMedicine) return false;
     return editingMedicine.totalAvailablePills > 0 || editingMedicine.sellablePills > 0;
   }, [editingMedicine]);
+
+  // F2 — focus barcode field (same idea as Selling/Purchasing Product F2)
+  useEffect(() => {
+    const onF2 = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return;
+      if (isEditingMedicineUsed) return;
+      event.preventDefault();
+      barcodeInputRef.current?.focus();
+      barcodeInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onF2, true);
+    return () => window.removeEventListener('keydown', onF2, true);
+  }, [isEditingMedicineUsed]);
+
+  // Global wedge scanner → New Medicine barcode (capture phase). Typing stays normal inside [data-wedge-typing].
+  useEffect(() => {
+    if (isEditingMedicineUsed) {
+      globalBarcodeBufferRef.current = '';
+      if (globalBarcodeTimerRef.current) {
+        clearTimeout(globalBarcodeTimerRef.current);
+        globalBarcodeTimerRef.current = null;
+      }
+      return;
+    }
+
+    const MIN_LEN = 4;
+    const SCAN_END_MS = 200;
+
+    const isWedgeTypingField = (el: EventTarget | null) =>
+      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < MIN_LEN) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      setNewMedicine((prev) => ({ ...prev, barcode: normalized }));
+      requestAnimationFrame(() => {
+        barcodeInputRef.current?.focus();
+      });
+    };
+
+    const handleGlobalKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.id === 'medicine-barcode' || target?.id === 'medicine-search') {
+        return;
+      }
+
+      if (isWedgeTypingField(target)) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
+        } else {
+          globalBarcodeBufferRef.current = '';
+        }
+        return;
+      }
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        globalBarcodeBufferRef.current += event.key;
+        if (globalBarcodeTimerRef.current) {
+          clearTimeout(globalBarcodeTimerRef.current);
+        }
+        globalBarcodeTimerRef.current = setTimeout(() => {
+          if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
+          } else {
+            globalBarcodeBufferRef.current = '';
+          }
+        }, SCAN_END_MS);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
+      if (globalBarcodeTimerRef.current) {
+        clearTimeout(globalBarcodeTimerRef.current);
+        globalBarcodeTimerRef.current = null;
+      }
+      globalBarcodeBufferRef.current = '';
+    };
+  }, [isEditingMedicineUsed]);
+
+  // Live duplicate check: scanners send long GS1-style strings; backend resolves like selling/purchasing.
+  useEffect(() => {
+    if (isEditingMedicineUsed) {
+      setBarcodeDuplicate(null);
+      return;
+    }
+
+    const normalized = normalizeScannedBarcode(newMedicine.barcode);
+    if (!normalized || normalized.length < 4) {
+      setBarcodeDuplicate(null);
+      barcodeLookupRequestId.current += 1;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (!window?.electron) return;
+
+        const requestId = ++barcodeLookupRequestId.current;
+
+        try {
+          const response = (await window.electron.ipcRenderer.invoke(
+            'medicine-get-by-barcode',
+            normalized
+          )) as IpcResponse<BackendMedicine>;
+
+          if (requestId !== barcodeLookupRequestId.current) return;
+
+          if (!response.success) {
+            setBarcodeDuplicate(null);
+            return;
+          }
+
+          const data = response.data;
+          const existingId = data?.id;
+
+          if (!existingId) {
+            setBarcodeDuplicate(null);
+            return;
+          }
+
+          const isOtherMedicine =
+            editingMedicineId == null || existingId !== editingMedicineId;
+
+          if (isOtherMedicine) {
+            setBarcodeDuplicate({
+              id: existingId,
+              name: data?.name ?? 'Unknown medicine',
+            });
+          } else {
+            setBarcodeDuplicate(null);
+          }
+        } catch {
+          if (requestId !== barcodeLookupRequestId.current) return;
+          setBarcodeDuplicate(null);
+        }
+      })();
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [newMedicine.barcode, editingMedicineId, isEditingMedicineUsed]);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
     try {
@@ -546,7 +724,7 @@ export default function MedicinesPage() {
                   htmlFor="medicine-barcode"
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
-                  Barcode <span className="text-red-500">*</span>
+                  Barcode (F2) <span className="text-red-500">*</span>
                   {isEditingMedicineUsed && (
                     <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
                   )}
@@ -561,13 +739,30 @@ export default function MedicinesPage() {
                   className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                     isEditingMedicineUsed
                       ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                      : barcodeDuplicate
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-400 dark:border-amber-600'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                   }`}
-                  placeholder="Scan or enter"
+                  placeholder="Scan or type (F2 focuses here)"
                   required
                 />
+                {barcodeDuplicate && (
+                  <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-900/25 text-amber-900 dark:text-amber-100 text-xs rounded-md border border-amber-200 dark:border-amber-800 flex items-start gap-2">
+                    <FiAlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold">Medicine already exists</div>
+                      <p className="mt-1 text-amber-800/90 dark:text-amber-200/90">
+                        This barcode matches{' '}
+                        <span className="font-medium">{barcodeDuplicate.name}</span>{' '}
+                        ({formatNumericId(barcodeDuplicate.id)}). You cannot add a duplicate —
+                        edit the existing medicine or scan a different code.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
+              <div data-wedge-typing="true" className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label
@@ -695,6 +890,7 @@ export default function MedicinesPage() {
                   Alert triggers when sellable stock falls below this number.
                 </p>
               </div>
+              </div>
 
               <div className="flex gap-2 pt-2">
                 <button
@@ -707,7 +903,7 @@ export default function MedicinesPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || !!barcodeDuplicate}
                   className="flex-[2] flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FiSave className="w-4 h-4" />
@@ -727,7 +923,10 @@ export default function MedicinesPage() {
           <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Search Header */}
             <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
-              <div className="flex items-center gap-2">
+              <div
+                data-wedge-typing="true"
+                className="flex items-center gap-2"
+              >
                 <label
                   htmlFor="medicine-search"
                   className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap"
@@ -867,6 +1066,7 @@ export default function MedicinesPage() {
                       </div>
                       <div className="col-span-2 text-center">
                         <select
+                          data-wedge-typing="true"
                           value={medicine.status}
                           onChange={(e) => {
                             e.stopPropagation();

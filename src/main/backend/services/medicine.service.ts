@@ -1,4 +1,10 @@
 import { getDatabaseService } from './database.service';
+import { repairMedicineForeignKeyReferences } from '../database/medicine-fk-repair';
+import {
+  buildBarcodeLookupCandidates,
+  escapeSqlLikePattern,
+  normalizeScannedBarcode,
+} from '../../../common/barcodeLookup';
 
 export type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -64,23 +70,28 @@ export class MedicineService {
   public async initializeTable(): Promise<void> {
     const tableInfo = await this.dbService.query(`PRAGMA table_info(medicines)`);
     const hasTable = Array.isArray(tableInfo) && tableInfo.length > 0;
-    const expectedColumns = ['id', 'barcode', 'name', 'pill_quantity', 'status'];
-    const schemaMatches =
-      hasTable &&
-      tableInfo.every((column: any) => expectedColumns.includes(column.name)) &&
-      tableInfo.length === expectedColumns.length;
+    const columnNames = new Set(
+      hasTable ? tableInfo.map((column: any) => column.name) : []
+    );
+    const hasPillQuantity = columnNames.has('pill_quantity');
 
-    // Check if medicines_legacy already exists
-    const legacyExists = await this.dbService.queryOne(
+    // Renaming `medicines` → `medicines_legacy` makes SQLite repoint child FKs to
+    // `medicines_legacy`. Dropping that table without rebuilding children causes
+    // "no such table: medicines_legacy" on purchase/sale rows.
+    // Only do the destructive rename for truly old schemas that lack pill_quantity.
+    const legacyTableExists = await this.dbService.queryOne(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='medicines_legacy'`
     );
 
-    if (hasTable && !schemaMatches && !legacyExists) {
-      // Only rename if legacy table doesn't exist
+    const needsLegacyTableMigration =
+      hasTable && !legacyTableExists && !hasPillQuantity;
+
+    if (needsLegacyTableMigration) {
       await this.dbService.execute('ALTER TABLE medicines RENAME TO medicines_legacy');
-    } else if (legacyExists) {
-      // If legacy table exists, skip the rename and just ensure the new table exists
-      console.log('⚠️  medicines_legacy table already exists, skipping migration');
+    } else if (legacyTableExists) {
+      console.log(
+        '⚠️  medicines_legacy table present; skipping medicines rename (avoid duplicate migration).'
+      );
     }
 
     await this.dbService.execute(`
@@ -122,11 +133,15 @@ export class MedicineService {
       CREATE INDEX IF NOT EXISTS idx_medicines_status ON medicines(status)
     `);
 
-    // Only migrate data if we just renamed the table (legacy didn't exist before)
-    if (hasTable && !schemaMatches && !legacyExists) {
+    // Copy data from medicines_legacy into the new medicines table (only after rename)
+    if (needsLegacyTableMigration) {
       const legacyInfo = tableInfo;
-      const hasLegacyPillQuantity = legacyInfo.some((column: any) => column.name === 'pill_quantity');
-      const hasLegacyQuantity = legacyInfo.some((column: any) => column.name === 'quantity');
+      const hasLegacyPillQuantity = legacyInfo.some(
+        (column: any) => column.name === 'pill_quantity'
+      );
+      const hasLegacyQuantity = legacyInfo.some(
+        (column: any) => column.name === 'quantity'
+      );
       const pillSourceExpression = hasLegacyPillQuantity
         ? 'COALESCE(pill_quantity, 0)'
         : hasLegacyQuantity
@@ -143,12 +158,14 @@ export class MedicineService {
           'active'
         FROM medicines_legacy
       `);
-      
-      // Temporarily disable foreign keys to drop legacy table
+
       await this.dbService.execute('PRAGMA foreign_keys = OFF');
       await this.dbService.execute('DROP TABLE IF EXISTS medicines_legacy');
       await this.dbService.execute('PRAGMA foreign_keys = ON');
     }
+
+    // Fix child tables that still reference dropped medicines_legacy (one-time repair)
+    await repairMedicineForeignKeyReferences(this.dbService);
   }
 
   /**
@@ -239,16 +256,67 @@ export class MedicineService {
 
   /**
    * Get medicine by barcode (includes inventory aggregates).
+   * Tries exact variants (leading zeros, trim), case-insensitive exact, then LIKE fallbacks
+   * so hardware scanners match the same records as search.
    */
   public async getMedicineByBarcode(barcode: string): Promise<MedicineWithInventory | null> {
-    const sql = `
+    const candidates = buildBarcodeLookupCandidates(barcode);
+    const baseSqlExact = `
       ${this.baseInventorySelect}
-      WHERE m.barcode = ?
+      WHERE %WHERE%
       GROUP BY m.id
       LIMIT 1
     `;
-    const result = await this.dbService.queryOne(sql, [barcode]);
-    return result ? this.mapRowToMedicine(result) : null;
+    /** Prefer longest stored barcode when several rows fuzzy-match (more specific GTIN / payload). */
+    const baseSqlFuzzy = `
+      ${this.baseInventorySelect}
+      WHERE %WHERE%
+      GROUP BY m.id
+      ORDER BY LENGTH(TRIM(m.barcode)) DESC, m.id ASC
+      LIMIT 1
+    `;
+
+    for (const c of candidates) {
+      const sql = baseSqlExact.replace('%WHERE%', 'm.barcode = ?');
+      const result = await this.dbService.queryOne(sql, [c]);
+      if (result) return this.mapRowToMedicine(result);
+    }
+
+    const primary = normalizeScannedBarcode(barcode);
+    if (primary) {
+      const sqlCi = baseSqlExact.replace(
+        '%WHERE%',
+        "m.barcode IS NOT NULL AND LOWER(TRIM(m.barcode)) = LOWER(TRIM(?))"
+      );
+      const rowCi = await this.dbService.queryOne(sqlCi, [primary]);
+      if (rowCi) return this.mapRowToMedicine(rowCi);
+
+      for (const c of candidates) {
+        const rowC = await this.dbService.queryOne(sqlCi, [c]);
+        if (rowC) return this.mapRowToMedicine(rowC);
+      }
+    }
+
+    // Fuzzy paths: align with short product codes (EAN-8) and long GS1 strings
+    if (primary.length >= 8) {
+      const esc = escapeSqlLikePattern(primary);
+      const likeParam = `%${esc}%`;
+      const sqlLike = baseSqlFuzzy.replace(
+        '%WHERE%',
+        "m.barcode IS NOT NULL AND m.barcode != '' AND m.barcode LIKE ? ESCAPE '\\'"
+      );
+      const rowLike = await this.dbService.queryOne(sqlLike, [likeParam]);
+      if (rowLike) return this.mapRowToMedicine(rowLike);
+
+      const sqlRev = baseSqlFuzzy.replace(
+        '%WHERE%',
+        'm.barcode IS NOT NULL AND LENGTH(TRIM(m.barcode)) >= 8 AND ? LIKE (\'%\' || m.barcode || \'%\')'
+      );
+      const rowRev = await this.dbService.queryOne(sqlRev, [primary]);
+      if (rowRev) return this.mapRowToMedicine(rowRev);
+    }
+
+    return null;
   }
 
   /**

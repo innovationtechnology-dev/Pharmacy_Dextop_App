@@ -1,4 +1,4 @@
-import { ipcMain, IpcMainEvent, dialog } from 'electron';
+import { ipcMain, IpcMainEvent, IpcMainInvokeEvent, dialog } from 'electron';
 import { promises as fs } from 'fs';
 import { MedicineService, Medicine, LowStockAlert } from '../services/medicine.service';
 import { SalesService, Sale } from '../services/sales.service';
@@ -361,17 +361,31 @@ export class MedicineController {
       }
     });
 
-    // Get medicine by barcode
-    ipcMain.on('medicine-get-by-barcode', async (event: IpcMainEvent, args: any[]) => {
-      try {
-        const barcode = args[0] as string;
-        const medicine = await this.medicineService.getMedicineByBarcode(barcode);
-        event.reply('medicine-get-by-barcode-reply', { success: true, data: medicine });
-      } catch (error) {
-        console.error('Get medicine by barcode error:', error);
-        event.reply('medicine-get-by-barcode-reply', { success: false, error: String(error) });
+    // Get medicine by barcode (invoke — each scan gets its own response; avoids stacked `once` listeners)
+    ipcMain.removeHandler('medicine-get-by-barcode');
+    ipcMain.handle(
+      'medicine-get-by-barcode',
+      async (
+        _event: IpcMainInvokeEvent,
+        barcode: unknown
+      ): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+        try {
+          const raw =
+            typeof barcode === 'string'
+              ? barcode
+              : Array.isArray(barcode) && typeof barcode[0] === 'string'
+                ? barcode[0]
+                : '';
+          const medicine = raw
+            ? await this.medicineService.getMedicineByBarcode(raw)
+            : null;
+          return { success: true, data: medicine };
+        } catch (error) {
+          console.error('Get medicine by barcode error:', error);
+          return { success: false, error: String(error) };
+        }
       }
-    });
+    );
 
     // Get medicine by ID
     ipcMain.on('medicine-get-by-id', async (event: IpcMainEvent, args: any[]) => {
