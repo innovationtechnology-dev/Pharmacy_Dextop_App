@@ -701,11 +701,11 @@ const PurchasingPanel: React.FC = () => {
   };
 
 
-  const formatCurrency = (value: number) => {
+  const formatCurrency = useCallback((value: number) => {
     const currency = pharmacySettings.currency || 'USD';
     const symbol = getSymbol(currency);
     return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
+  }, [pharmacySettings.currency]);
 
   const formatDate = (value?: string) =>
     value ? new Date(value).toLocaleDateString() : '—';
@@ -854,10 +854,12 @@ const PurchasingPanel: React.FC = () => {
   }, [setHeader]);
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
-  const subtotal = calculateSubtotal();
-  const discountTotal = calculateDiscountTotal();
-  const taxTotal = calculateTaxTotal();
-  const grandTotal = calculateGrandTotal();
+  
+  // Memoize calculations to prevent recalculation on every render
+  const subtotal = useMemo(() => calculateSubtotal(), [cart]);
+  const discountTotal = useMemo(() => calculateDiscountTotal(), [cart]);
+  const taxTotal = useMemo(() => calculateTaxTotal(), [cart]);
+  const grandTotal = useMemo(() => calculateGrandTotal(), [cart]);
 
   const overpaymentAmount = useMemo(() => {
     if (!editingPurchaseId) return 0;

@@ -1202,14 +1202,25 @@ const SellingPanel: React.FC = () => {
     return subtotalValue - discountValue + taxValue;
   }, [subtotalValue, discountValue, taxValue]);
 
-  const formatCurrency = (value: number) => {
+  // Memoize net payable to avoid recalculation
+  const netPayable = useMemo(() => {
+    return Math.max(0, grandTotal - currentSaleReturnTotal);
+  }, [grandTotal, currentSaleReturnTotal]);
+
+  // Memoize return amount calculation
+  const returnAmount = useMemo(() => {
+    if (!receivedAmount || receivedAmount === '') return 0;
+    return Number(receivedAmount) - netPayable;
+  }, [receivedAmount, netPayable]);
+
+  const formatCurrency = useCallback((value: number) => {
     const currency = pharmacyInfo.currency || 'USD';
     const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
-  };
+  }, [pharmacyInfo.currency]);
 
   // Function to load sale details into the form
   const loadSaleDetails = useCallback(
@@ -2560,19 +2571,19 @@ const SellingPanel: React.FC = () => {
                       expandedSaleSummary ? 'text-2xl sm:text-3xl leading-tight' : 'text-2xl'
                     }`}
                   >
-                    {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
+                    {formatCurrency(netPayable)}
                   </div>
                   {currentSaleReturnTotal > 0 && (
                     <div className="mt-2 pt-2 border-t border-white/20">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/80">Original Total:</span>
-                        <span className="text-white/90 font-semibold">{formatCurrency(calculateTotal())}</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(grandTotal)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1">
                         <span className="text-white/80">Returned:</span>
                         <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
                       </div>
-                      {calculateTotal() < currentSaleReturnTotal && (
+                      {grandTotal < currentSaleReturnTotal && (
                         <div className="mt-2 pt-2 border-t border-red-300/30">
                           <p className="text-xs text-red-200">
                             ⚠️ Data inconsistency detected
@@ -2731,8 +2742,7 @@ const SellingPanel: React.FC = () => {
                         className={`border transition-colors flex flex-col ${
                           expandedSaleSummary ? 'p-2.5 rounded-lg justify-center' : 'p-2.5 rounded-lg'
                         } ${
-                          receivedAmount &&
-                          Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                          returnAmount >= 0
                             ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
                             : 'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-800/50'
                         }`}
@@ -2741,8 +2751,7 @@ const SellingPanel: React.FC = () => {
                           className={`font-bold uppercase tracking-wide ${
                             expandedSaleSummary ? 'text-xs mb-1.5' : 'text-[10px] font-semibold mb-1'
                           } ${
-                            receivedAmount &&
-                            Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                            returnAmount >= 0
                               ? 'text-blue-700 dark:text-blue-400'
                               : 'text-red-700 dark:text-red-400'
                           }`}
@@ -2753,17 +2762,12 @@ const SellingPanel: React.FC = () => {
                           className={`font-black tabular-nums ${
                             expandedSaleSummary ? 'text-lg' : 'text-sm'
                           } ${
-                            receivedAmount &&
-                            Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal) >= 0
+                            returnAmount >= 0
                               ? 'text-blue-600 dark:text-blue-400'
                               : 'text-red-600 dark:text-red-400'
                           }`}
                         >
-                          {formatCurrency(
-                            receivedAmount
-                              ? Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)
-                              : 0
-                          )}
+                          {formatCurrency(returnAmount)}
                         </div>
                       </div>
                     </div>
