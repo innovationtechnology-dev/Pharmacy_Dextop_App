@@ -1141,7 +1141,7 @@ const SellingPanel: React.FC = () => {
       },
       // The HTML printer script + our iframe onload print can both fire.
       // We only print from the iframe onload handler.
-      { includePrintScript: false }
+      { includePrintScript: false, showBarcode: RECEIPT_PREVIEW_MODE }
     );
     if (!html) return;
     if (RECEIPT_PREVIEW_MODE) {

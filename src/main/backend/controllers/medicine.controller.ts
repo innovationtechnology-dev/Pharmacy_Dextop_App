@@ -362,7 +362,6 @@ export class MedicineController {
     });
 
     // Get medicine by barcode (invoke — each scan gets its own response; avoids stacked `once` listeners)
-    ipcMain.removeHandler('medicine-get-by-barcode');
     ipcMain.handle(
       'medicine-get-by-barcode',
       async (
@@ -386,6 +385,7 @@ export class MedicineController {
         }
       }
     );
+    console.log('[IPC] Registered handler: medicine-get-by-barcode');
 
     // Get medicine by ID
     ipcMain.on('medicine-get-by-id', async (event: IpcMainEvent, args: any[]) => {
