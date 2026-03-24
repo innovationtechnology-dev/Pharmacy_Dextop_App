@@ -14,6 +14,7 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role?: string;
   phone?: string;
   address?: string;
   firstName?: string;
@@ -119,14 +120,15 @@ export const getAllUsers = async (): Promise<User[]> => {
 export const createUser = async (
   name: string,
   email: string,
-  password: string
+  password: string,
+  role: string = 'cashier'
 ): Promise<{ success: boolean; error?: string; user?: User }> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('super-admin-create-user-reply', (response: any) => {
       resolve(response);
     });
 
-    window.electron.ipcRenderer.sendMessage('super-admin-create-user', [name, email, password] as any);
+    window.electron.ipcRenderer.sendMessage('super-admin-create-user', [name, email, password, role] as any);
   });
 };
 
@@ -136,14 +138,15 @@ export const createUser = async (
 export const updateUser = async (
   userId: number,
   name: string,
-  email: string
+  email: string,
+  role?: string
 ): Promise<{ success: boolean; error?: string }> => {
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('super-admin-update-user-reply', (response: any) => {
       resolve(response);
     });
 
-    window.electron.ipcRenderer.sendMessage('super-admin-update-user', [userId, name, email] as any);
+    window.electron.ipcRenderer.sendMessage('super-admin-update-user', [userId, name, email, role] as any);
   });
 };
 

@@ -95,7 +95,7 @@ Create a table if it doesn't already exist:
 
 ```bash
 db.serialize(() => {
-  db.run('CREATE TABLE IF NOT EXISTS myCoolTable (info TEXT NULL)');
+  db.run('CREATE TABLE IF NOT EXISTS your_table_name (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NULL)');
 });
 ```
 

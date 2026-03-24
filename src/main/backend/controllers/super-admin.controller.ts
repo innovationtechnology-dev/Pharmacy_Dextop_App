@@ -55,7 +55,8 @@ export class SuperAdminController {
         const name = args[0] as string;
         const email = args[1] as string;
         const password = args[2] as string;
-        const result = await this.superAdminService.createUser(name, email, password);
+        const role = args[3] as string || 'cashier';
+        const result = await this.superAdminService.createUser(name, email, password, role);
         event.reply('super-admin-create-user-reply', result);
       } catch (error) {
         console.error('Create user error:', error);
@@ -72,7 +73,8 @@ export class SuperAdminController {
         const userId = args[0] as number;
         const name = args[1] as string;
         const email = args[2] as string;
-        const result = await this.superAdminService.updateUser(userId, name, email);
+        const role = args[3] as string | undefined;
+        const result = await this.superAdminService.updateUser(userId, name, email, role);
         event.reply('super-admin-update-user-reply', result);
       } catch (error) {
         console.error('Update user error:', error);
@@ -201,6 +203,15 @@ export class SuperAdminController {
     // Handle download database
     ipcMain.on('super-admin-download-database', async (event: IpcMainEvent) => {
       try {
+        // Force WAL checkpoint before downloading to ensure all changes are in the main file
+        try {
+          await this.superAdminService.checkpointDatabase();
+          console.log('WAL checkpoint completed before download');
+        } catch (checkpointError) {
+          console.warn('WAL checkpoint warning:', checkpointError);
+          // Continue with download even if checkpoint fails
+        }
+
         const dbPath = this.superAdminService.getDatabasePath();
         const dbExists = fs.existsSync(dbPath);
 

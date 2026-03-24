@@ -41,6 +41,8 @@ export type Channels =
   | 'payment-export-csv' | 'payment-export-csv-reply'
   | 'asynchronous-sql-command' | 'asynchronous-sql-reply'
   | 'ipc-show-userDataPaths'
+  | 'system-reset-all-data' | 'system-reset-all-data-reply'
+  | 'get-table-counts' | 'get-table-counts-reply'
   | (string & {});
 
 contextBridge.exposeInMainWorld('electron', {

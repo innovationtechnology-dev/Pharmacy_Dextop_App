@@ -168,12 +168,10 @@ export class LicenseService {
         attempts += 1;
       }
 
-      const generatedAt = new Date().toISOString();
-
       await this.dbService.execute(
         `INSERT INTO generated_licenses
           (code, pharmacy_name, doctor_name, email, phone, address, city, country, generated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`,
         [
           code,
           details.pharmacyName ?? null,
@@ -183,7 +181,6 @@ export class LicenseService {
           details.address ?? null,
           details.city ?? null,
           details.country ?? null,
-          generatedAt,
         ]
       );
 
@@ -200,7 +197,6 @@ export class LicenseService {
         address: details.address,
         city: details.city,
         country: details.country,
-        generatedAt,
       };
     } catch (error) {
       console.error('❌ generateLicenseKey error:', error);
@@ -309,8 +305,8 @@ export class LicenseService {
 
       // Mark the key as used
       await this.dbService.execute(
-        `UPDATE generated_licenses SET is_used = 1, used_at = ? WHERE code = ?`,
-        [now.toISOString(), normalized]
+        `UPDATE generated_licenses SET is_used = 1, used_at = datetime('now', 'localtime') WHERE code = ?`,
+        [normalized]
       );
 
       console.log(`✅ System license activated until ${validUntil.toISOString()}`);

@@ -30,6 +30,7 @@ declare module 'react-icons/fi' {
   export const FiEdit: any;
   export const FiEdit2: any;
   export const FiEye: any;
+  export const FiEyeOff: any;
   export const FiFileText: any;
   export const FiFilter: any;
   export const FiHelpCircle: any;

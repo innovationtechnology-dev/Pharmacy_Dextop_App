@@ -211,7 +211,7 @@ const Settings: React.FC = () => {
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
     ].filter(section => {
         if (user?.role === 'cashier') {
-            return ['profile', 'pharmacy', 'appearance'].includes(section.id);
+            return ['profile', 'pharmacy', 'appearance', 'security'].includes(section.id);
         }
         return true;
     });
