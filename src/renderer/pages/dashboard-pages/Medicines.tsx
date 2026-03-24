@@ -424,6 +424,18 @@ export default function MedicinesPage() {
         return;
       }
 
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable =
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target?.isContentEditable;
+
+      // Don't intercept typing in editable fields
+      if (isEditable) {
+        return;
+      }
+
       if (event.key === 'Enter') {
         if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
           flushGlobalBarcode(globalBarcodeBufferRef.current);
@@ -435,7 +447,8 @@ export default function MedicinesPage() {
         return;
       }
 
-      if (event.key.length === 1) {
+      // Only capture single printable characters (not special keys)
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         event.stopPropagation();
         globalBarcodeBufferRef.current += event.key;

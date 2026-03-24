@@ -72,7 +72,12 @@ type MedicineRecord = {
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatNumber = (value: number) => numberFormatter.format(value);
 
-const getDateKey = (date: Date) => date.toISOString().slice(0, 10);
+const getDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
