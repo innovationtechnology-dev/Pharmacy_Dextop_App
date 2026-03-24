@@ -2589,13 +2589,13 @@ const SellingPanel: React.FC = () => {
               </div>
               <div
                 className={`flex-1 flex flex-col min-h-0 ${
-                  expandedSaleSummary ? 'p-3 gap-2.5' : 'p-3 gap-2'
+                  expandedSaleSummary ? 'p-2.5 gap-2' : 'p-2.5 gap-2'
                 }`}
               >
                 {/* Net Payable - Most Prominent */}
                 <div
                   className={`bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 border border-emerald-600 dark:border-emerald-500 shadow-lg flex-shrink-0 rounded-xl ${
-                    expandedSaleSummary ? 'p-3' : 'p-2'
+                    expandedSaleSummary ? 'p-2.5' : 'p-2'
                   }`}
                 >
                   <div className={`flex items-center justify-between ${expandedSaleSummary ? 'mb-1' : 'mb-0'}`}>
@@ -2608,7 +2608,7 @@ const SellingPanel: React.FC = () => {
                     </div>
                     <div
                       className={`bg-white/20 dark:bg-white/10 rounded-full ${
-                        expandedSaleSummary ? 'px-3 py-1' : 'px-2 py-0.5'
+                        expandedSaleSummary ? 'px-2.5 py-1' : 'px-2 py-0.5'
                       }`}
                     >
                       <span
@@ -2656,14 +2656,14 @@ const SellingPanel: React.FC = () => {
                     }
                   >
                     <div
-                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-2.5' : 'gap-2'}`}
+                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-2' : 'gap-2'}`}
                     >
                       {/* Block 1: Discounts & Taxes */}
                       <div
                         className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
                           expandedSaleSummary
-                            ? 'p-2.5 rounded-lg flex flex-col justify-center gap-2.5 shadow-sm dark:shadow-none'
-                            : 'p-2.5 rounded-lg space-y-2'
+                            ? 'p-2 rounded-lg flex flex-col justify-center gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg space-y-2'
                         }`}
                       >
                         <div
@@ -2712,8 +2712,8 @@ const SellingPanel: React.FC = () => {
                       <div
                         className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 text-right ${
                           expandedSaleSummary
-                            ? 'p-2.5 rounded-lg flex flex-col justify-center gap-2.5 shadow-sm dark:shadow-none'
-                            : 'p-2.5 rounded-lg space-y-2'
+                            ? 'p-2 rounded-lg flex flex-col justify-center gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg space-y-2'
                         }`}
                       >
                         <div className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}>
@@ -2759,13 +2759,13 @@ const SellingPanel: React.FC = () => {
                     <div
                       className={`grid grid-cols-2 ${
                         expandedSaleSummary
-                          ? 'gap-2.5'
+                          ? 'gap-2'
                           : 'gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700'
                       }`}
                     >
                       <div
                         className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex flex-col ${
-                          expandedSaleSummary ? 'p-2.5 rounded-lg justify-center' : 'p-2.5 rounded-lg'
+                          expandedSaleSummary ? 'p-2 rounded-lg justify-center' : 'p-2 rounded-lg'
                         }`}
                       >
                         <div

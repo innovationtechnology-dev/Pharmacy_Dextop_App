@@ -284,22 +284,40 @@ const Dashboard = () => {
     setLoading(true);
     setError(null);
     try {
-      const [salesData, purchaseData, medicineData, saleReturnsData] = await Promise.all([
+      const [salesData, purchaseData, medicineData] = await Promise.all([
         invokeIpc<SaleRecord[]>('sale-get-all', 'sale-get-all-reply'),
         invokeIpc<PurchaseRecord[]>('purchase-get-all', 'purchase-get-all-reply'),
         invokeIpc<MedicineRecord[]>('medicine-get-all', 'medicine-get-all-reply'),
-        invokeIpc<number>('sale-return-get-total', 'sale-return-get-total-reply'),
       ]);
       setSales(salesData || []);
       setPurchases(purchaseData || []);
       setMedicines(medicineData || []);
-      setSaleReturnsTotal(saleReturnsData || 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data.');
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Load sale returns filtered by date range
+  const loadSaleReturns = useCallback(async () => {
+    try {
+      const returns = await invokeIpc<any[]>(
+        'sale-return-get-by-date-range',
+        'sale-return-get-by-date-range-reply',
+        [kpiFromDate, kpiToDate]
+      );
+      const total = (returns || []).reduce((sum: number, ret: any) => sum + (ret.total || 0), 0);
+      setSaleReturnsTotal(total);
+    } catch (err) {
+      console.error('Failed to load sale returns:', err);
+      setSaleReturnsTotal(0);
+    }
+  }, [kpiFromDate, kpiToDate]);
+
+  useEffect(() => {
+    loadSaleReturns();
+  }, [loadSaleReturns]);
 
   useEffect(() => {
     loadData();
@@ -340,69 +358,108 @@ const Dashboard = () => {
     });
   }, [purchases, kpiFromDate, kpiToDate]);
 
-  const totals = useMemo(
-    () => buildTotals(filteredSales, filteredPurchases, medicines, saleReturnsTotal),
-    [filteredSales, filteredPurchases, medicines, saleReturnsTotal]
-  );
+  const totals = useMemo(() => {
+    // For accurate profit calculation matching Financial Summary,
+    // we should use the backend calculation instead of estimating locally
+    // However, for now we'll use the local calculation with filtered data
+    return buildTotals(filteredSales, filteredPurchases, medicines, saleReturnsTotal);
+  }, [filteredSales, filteredPurchases, medicines, saleReturnsTotal]);
+
+  // Fetch accurate profit from backend (same calculation as Financial Summary)
+  const [accurateProfit, setAccurateProfit] = useState<number | null>(null);
+  
+  useEffect(() => {
+    const fetchAccurateProfit = async () => {
+      try {
+        console.log('Fetching accurate profit for date range:', kpiFromDate, 'to', kpiToDate);
+        const response = await invokeIpc<any>(
+          'financial-get-date-range',
+          'financial-get-date-range-reply',
+          [kpiFromDate, kpiToDate]
+        );
+        console.log('Financial data received:', response);
+        
+        // invokeIpc already extracts response.data, so response IS the data object
+        if (response?.profit !== undefined) {
+          console.log('Setting accurate profit to:', response.profit);
+          setAccurateProfit(response.profit);
+        } else {
+          console.log('No profit data in response');
+        }
+      } catch (err) {
+        console.error('Failed to fetch accurate profit:', err);
+      }
+    };
+    fetchAccurateProfit();
+  }, [kpiFromDate, kpiToDate]);
+
+  // Use accurate profit from backend if available, otherwise use calculated
+  const displayTotals = useMemo(() => {
+    console.log('displayTotals - accurateProfit:', accurateProfit, 'calculated profit:', totals.profit);
+    if (accurateProfit !== null) {
+      return { ...totals, profit: accurateProfit };
+    }
+    return totals;
+  }, [totals, accurateProfit]);
 
   const metrics = useMemo(
     () => [
       {
         id: 'purchases',
         title: 'Purchases',
-        value: formatCurrency(totals.purchasesTotal),
+        value: formatCurrency(displayTotals.purchasesTotal),
         icon: <FiPackage />,
       },
       {
         id: 'revenue',
         title: 'Gross Sales',
-        value: formatCurrency(totals.revenue),
+        value: formatCurrency(displayTotals.revenue),
         icon: <FiDollarSign />,
       },
       {
         id: 'netRevenue',
         title: 'Net Sales',
-        value: formatCurrency(totals.netRevenue),
+        value: formatCurrency(displayTotals.netRevenue),
         icon: <FiShoppingBag />,
       },
       {
         id: 'profit',
         title: 'Net Profit',
-        value: formatCurrency(totals.profit),
+        value: formatCurrency(displayTotals.profit),
         icon: <FiTrendingUp />,
       },
       {
         id: 'customers',
         title: 'Customers',
-        value: formatNumber(totals.uniqueCustomers),
+        value: formatNumber(displayTotals.uniqueCustomers),
         icon: <FiUsers />,
       },
       {
         id: 'inventory',
         title: 'Medicines',
-        value: formatNumber(totals.totalMedicines),
+        value: formatNumber(displayTotals.totalMedicines),
         icon: <FiPackage />,
       },
       {
         id: 'family',
         title: 'Relative',
-        value: formatCurrency(totals.familyTotal),
+        value: formatCurrency(displayTotals.familyTotal),
         icon: <FiUsers />,
       },
       {
         id: 'charity',
         title: 'Charity',
-        value: formatCurrency(totals.charityTotal),
+        value: formatCurrency(displayTotals.charityTotal),
         icon: <FiPackage />,
       },
       {
         id: 'saleReturns',
         title: 'Return Amount',
-        value: formatCurrency(totals.saleReturnsTotal),
+        value: formatCurrency(displayTotals.saleReturnsTotal),
         icon: <FiRefreshCw />,
       },
     ],
-    [totals]
+    [displayTotals]
   );
 
   const chartData = useMemo(() => buildSalesSeries(sales, range), [sales, range]);
@@ -669,12 +726,12 @@ const Dashboard = () => {
                   <div className="flex items-center justify-between p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/30">
                     <div>
                       <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Net Profit</div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(totals.profit)}</div>
+                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(displayTotals.profit)}</div>
                     </div>
                     <div className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                      totals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+                      displayTotals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
                     }`}>
-                      {totals.profit >= 0 ? 'PROFIT' : 'LOSS'}
+                      {displayTotals.profit >= 0 ? 'PROFIT' : 'LOSS'}
                     </div>
                   </div>
 
