@@ -340,12 +340,19 @@ export class MedicineService {
     const sql = `
       ${this.baseInventorySelect}
       WHERE m.name LIKE ? OR m.barcode LIKE ?
+        OR IFNULL(m.manufacturer, '') LIKE ?
+        OR IFNULL(m.brand_name, '') LIKE ?
       GROUP BY m.id
       ORDER BY m.name ASC
       LIMIT 50
     `;
     const searchPattern = `%${searchTerm}%`;
-    const rows = await this.dbService.query(sql, [searchPattern, searchPattern]);
+    const rows = await this.dbService.query(sql, [
+      searchPattern,
+      searchPattern,
+      searchPattern,
+      searchPattern,
+    ]);
     return rows.map((row) => this.mapRowToMedicine(row));
   }
 

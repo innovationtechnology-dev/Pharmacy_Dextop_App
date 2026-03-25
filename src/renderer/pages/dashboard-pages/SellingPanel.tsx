@@ -55,6 +55,8 @@ interface Medicine {
   name: string;
   pillQuantity: number;
   status: MedicineStatus;
+  manufacturer?: string;
+  brandName?: string;
   sellablePills?: number;
   totalAvailablePills?: number;
   normalExpiryPills?: number;
@@ -86,6 +88,30 @@ interface CartItem {
   finalPrice: number;
 }
 
+
+/** Pills to add for a new line / each cart add — matches medicine "pills per packet" (pillQuantity). */
+const defaultSaleQuantity = (medicine: Medicine): number =>
+  Math.max(1, medicine.pillQuantity || 1);
+
+const BARCODE_PREVIEW_MAX = 12;
+
+/** Short barcode/label for UI (e.g. `010896110177...`). Full value stays in data/receipts. */
+const formatBarcodePreview = (barcode: string | undefined | null): string => {
+  if (barcode == null || String(barcode).trim() === '') return '—';
+  const t = String(barcode).trim();
+  if (t.length <= BARCODE_PREVIEW_MAX) return t;
+  return `${t.slice(0, BARCODE_PREVIEW_MAX)}...`;
+};
+
+const medicineCompanyLine = (m: {
+  manufacturer?: string;
+  brandName?: string;
+}): string => {
+  const a = m.manufacturer?.trim();
+  const b = m.brandName?.trim();
+  if (a && b) return `${a} · ${b}`;
+  return a || b || '—';
+};
 
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
@@ -241,7 +267,7 @@ const SellingPanel: React.FC = () => {
     }
   }, []);
 
-  const addToCart = useCallback((medicine: Medicine, quantityParam = 1) => {
+  const addToCart = useCallback((medicine: Medicine, quantityParam?: number) => {
     const available = medicine.sellablePills ?? 0;
     if (available <= 0) {
       const totalAvailable = medicine.totalAvailablePills ?? 0;
@@ -272,7 +298,7 @@ const SellingPanel: React.FC = () => {
       }
     }
 
-    let quantity = quantityParam;
+    let quantity = quantityParam ?? defaultSaleQuantity(medicine);
     if (available < quantity) {
       warning(`Only ${available} pills available for sale!`);
       quantity = available;
@@ -382,7 +408,7 @@ const SellingPanel: React.FC = () => {
         if (response.data) {
           const medicine = response.data as Medicine;
           if ((medicine.sellablePills ?? 0) > 0) {
-            addToCart(medicine, 1);
+            addToCart(medicine);
             setIsScanning(true);
             setBarcodeInput('');
             setSearchTerm('');
@@ -901,7 +927,7 @@ const SellingPanel: React.FC = () => {
         e.preventDefault();
         const medicine = medicines[highlightedIndex];
         if (medicine && (medicine.sellablePills ?? 0) > 0) {
-          addToCart(medicine, 1);
+          addToCart(medicine);
           setSearchTerm('');
           setShowSearchResults(false);
           setHighlightedIndex(-1);
@@ -917,7 +943,7 @@ const SellingPanel: React.FC = () => {
         const medicine = medicines[0];
         if (medicine && (medicine.sellablePills ?? 0) > 0) {
           e.preventDefault();
-          addToCart(medicine, 1);
+          addToCart(medicine);
           setSearchTerm('');
           setShowSearchResults(false);
           setHighlightedIndex(-1);
@@ -943,7 +969,7 @@ const SellingPanel: React.FC = () => {
   };
 
   const addToCartWithFeedback = useCallback(
-    (medicine: Medicine, quantity = 1) => {
+    (medicine: Medicine, quantity?: number) => {
       addToCart(medicine, quantity);
       setShowSearchResults(false);
       setSearchTerm('');
@@ -1669,22 +1695,31 @@ const SellingPanel: React.FC = () => {
                             role="button"
                             tabIndex={0}
                             className="p-2.5 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors flex items-center justify-between"
-                            onClick={() => addToCart(medicine, 1)}
+                            onClick={() => addToCart(medicine)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                               }
                             }}
                           >
                             <div className="flex-1 min-w-0">
                               <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                                 {medicine.name}
+                                {medicineCompanyLine(medicine) !== '—' && (
+                                  <span className="font-normal text-gray-500 dark:text-gray-400">
+                                    {' '}
+                                    — {medicineCompanyLine(medicine)}
+                                  </span>
+                                )}
                               </h3>
-                              <div className="flex items-center gap-3 mt-1">
+                              <div className="flex items-center gap-3 mt-1 flex-wrap">
                                 {medicine.barcode && (
-                                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                                    Barcode: {medicine.barcode}
+                                  <p
+                                    className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[10rem]"
+                                    title={medicine.barcode}
+                                  >
+                                    Barcode: {formatBarcodePreview(medicine.barcode)}
                                   </p>
                                 )}
                                 <span className="text-xs font-semibold text-green-600 dark:text-green-400">
@@ -1714,7 +1749,7 @@ const SellingPanel: React.FC = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                               }}
                               disabled={(medicine.sellablePills ?? 0) === 0}
                               className="ml-3 px-3 py-1.5 bg-emerald-600 dark:bg-emerald-500 text-white rounded-md hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 text-xs font-medium flex-shrink-0"
@@ -1738,22 +1773,31 @@ const SellingPanel: React.FC = () => {
                       role="button"
                       tabIndex={0}
                       className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                      onClick={() => addToCart(medicine, 1)}
+                      onClick={() => addToCart(medicine)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          addToCart(medicine, 1);
+                          addToCart(medicine);
                         }
                       }}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-900 dark:text-white">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-gray-900 dark:text-white truncate">
                             {medicine.name}
+                            {medicineCompanyLine(medicine) !== '—' && (
+                              <span className="font-normal text-gray-500 dark:text-gray-400 font-medium">
+                                {' '}
+                                — {medicineCompanyLine(medicine)}
+                              </span>
+                            )}
                           </h3>
                           {medicine.barcode && (
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              Barcode: {medicine.barcode}
+                            <p
+                              className="text-sm text-gray-500 dark:text-gray-400 truncate"
+                              title={medicine.barcode}
+                            >
+                              Barcode: {formatBarcodePreview(medicine.barcode)}
                             </p>
                           )}
                           <div className="flex items-center gap-4 mt-2">
@@ -1785,7 +1829,7 @@ const SellingPanel: React.FC = () => {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            addToCart(medicine, 1);
+                            addToCart(medicine);
                           }}
                           disabled={(medicine.sellablePills ?? 0) === 0}
                           className="ml-4 px-4 py-2 bg-emerald-600 dark:bg-emerald-500 text-white rounded-lg hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
@@ -2182,7 +2226,7 @@ const SellingPanel: React.FC = () => {
                           onFocus={() => setHighlightedIndex(index)}
                           onMouseDown={(e) => {
                             e.preventDefault(); // Prevent input blur
-                            addToCart(medicine, 1);
+                            addToCart(medicine);
                             setSearchTerm('');
                             setShowSearchResults(false);
                             setHighlightedIndex(-1);
@@ -2191,7 +2235,7 @@ const SellingPanel: React.FC = () => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
                               if ((medicine.sellablePills ?? 0) > 0) {
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                                 setSearchTerm('');
                                 setShowSearchResults(false);
                                 setHighlightedIndex(-1);
@@ -2221,11 +2265,20 @@ const SellingPanel: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {medicine.name}
+                              {medicineCompanyLine(medicine) !== '—' && (
+                                <span className="font-normal text-gray-500 dark:text-gray-400">
+                                  {' '}
+                                  — {medicineCompanyLine(medicine)}
+                                </span>
+                              )}
                             </div>
-                            <div className="flex items-center gap-3 mt-1">
+                            <div className="flex items-center gap-3 mt-1 flex-wrap">
                               {medicine.barcode && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400">
-                                  Barcode: {medicine.barcode}
+                                <span
+                                  className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[10rem]"
+                                  title={medicine.barcode}
+                                >
+                                  Barcode: {formatBarcodePreview(medicine.barcode)}
                                 </span>
                               )}
                               <span className="text-xs font-semibold text-green-600 dark:text-green-400">
@@ -2257,7 +2310,7 @@ const SellingPanel: React.FC = () => {
                             onMouseDown={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              addToCart(medicine, 1);
+                              addToCart(medicine);
                               setSearchTerm('');
                               setShowSearchResults(false);
                             }}
@@ -2334,16 +2387,19 @@ const SellingPanel: React.FC = () => {
                     {/* Table Header */}
                     <div className="grid grid-cols-12 gap-1.5 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider">
                       <div className="col-span-1">Sr#</div>
-                      <div className="col-span-3">Product</div>
+                      <div className="col-span-2">Product</div>
+                      <div className="col-span-2">Company</div>
                       <div className="col-span-1 text-center">Qty</div>
                       <div className="col-span-2 text-center">Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
-                      <div className="col-span-2 text-center">Amount</div>
+                      <div className="col-span-1 text-center">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
                     {/* Cart Items */}
-                    {cart.map((item, index) => (
+                    {cart.map((item, index) => {
+                      const companyLabel = medicineCompanyLine(item.medicine);
+                      return (
                       <div
                         key={item.medicine.id}
                         className="grid grid-cols-12 gap-1.5 px-3 py-2.5 hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30"
@@ -2351,13 +2407,22 @@ const SellingPanel: React.FC = () => {
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
                         </div>
-                        <div className="col-span-3">
+                        <div className="col-span-2 min-w-0">
                           <div className="font-medium text-gray-900 dark:text-white truncate text-[11px]">
                             {item.medicine.name}
                           </div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                            {item.medicine.barcode || '-'}
+                          <div
+                            className="text-[10px] text-gray-500 dark:text-gray-500 truncate"
+                            title={item.medicine.barcode || undefined}
+                          >
+                            {formatBarcodePreview(item.medicine.barcode)}
                           </div>
+                        </div>
+                        <div
+                          className="col-span-2 min-w-0 text-[10px] text-gray-700 dark:text-gray-300 truncate"
+                          title={companyLabel !== '—' ? companyLabel : undefined}
+                        >
+                          {companyLabel}
                         </div>
                         <div className="col-span-1">
                           <div className="flex items-center gap-0.5 justify-center">
@@ -2440,7 +2505,7 @@ const SellingPanel: React.FC = () => {
                             </div>
                           )}
                         </div>
-                        <div className="col-span-2 text-center">
+                        <div className="col-span-2 text-center min-w-0">
 
                           <input
                             type="number"
@@ -2535,7 +2600,7 @@ const SellingPanel: React.FC = () => {
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-2 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
                           {symbol}{(() => {
                             const returned = returnedQuantities.get(item.medicine.id) || 0;
                             const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
@@ -2565,7 +2630,8 @@ const SellingPanel: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
               </div>
