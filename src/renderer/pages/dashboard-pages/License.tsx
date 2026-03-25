@@ -610,7 +610,7 @@ const License: React.FC = () => {
                   </div>
                 </div>
               )}
-              {!license && (
+              {!license && (!isAdmin || serverStatus.state !== 'ok') && (
                 <div className="h-full flex flex-col items-center justify-center py-12 opacity-60">
                   <div className="w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center mb-4">
                     <FiKey className="w-10 h-10 text-gray-400" />
@@ -621,7 +621,7 @@ const License: React.FC = () => {
               )}
 
               {/* Generate License Key form — shown after successful connection check */}
-              {isAdmin && serverStatus.state === 'ok' && (
+              {isAdmin && !license && serverStatus.state === 'ok' && (
                 <div className="bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                   {/* Form header */}
                   <div className="flex items-center gap-3 px-4 py-3 bg-blue-600 dark:bg-blue-700">

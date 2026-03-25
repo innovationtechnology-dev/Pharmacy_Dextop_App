@@ -34,6 +34,8 @@ export interface ThermalReceiptOptions {
   customerPhone: string;
   currentBillIndex: number;
   returnedQuantities: Map<number, number>;
+  saleType?: string;
+  additionalDiscount?: number;
   /** Amount received from customer (cash tendered). If omitted, receipt shows total as received and change 0. */
   amountGiven?: number;
 }
@@ -54,7 +56,7 @@ export const buildThermalReceiptHtml = (
   opts: BuildReceiptOpts = {}
 ): string => {
   const { includePrintScript = true, showBarcode = true } = opts;
-  const { cart, pharmacyInfo, customerName, customerPhone, currentBillIndex, returnedQuantities, amountGiven } =
+  const { cart, pharmacyInfo, customerName, customerPhone, currentBillIndex, returnedQuantities, saleType, additionalDiscount, amountGiven } =
     options;
 
   if (!cart.length) return '';
@@ -91,7 +93,11 @@ export const buildThermalReceiptHtml = (
     return sum + (discountedAmount * item.tax) / 100;
   }, 0);
 
-  const grandTotal = subtotal - discountTotal + taxTotal;
+  const baseTotal = subtotal - discountTotal + taxTotal;
+  const additionalDiscountAmount = (saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount 
+    ? (baseTotal * additionalDiscount) / 100 
+    : 0;
+  const grandTotal = baseTotal - additionalDiscountAmount;
   const cashReceived = amountGiven != null && amountGiven >= 0 ? amountGiven : grandTotal;
   const changeReturned = Math.max(0, cashReceived - grandTotal);
   const printInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
@@ -518,6 +524,14 @@ export const buildThermalReceiptHtml = (
           ? `<div class="tot-row tax-row">
               <span class="tot-label">Tax (GST)</span>
               <span class="tot-val">+ ${symbol}${taxTotal.toFixed(2)}</span>
+            </div>`
+          : ''
+      }
+      ${
+        additionalDiscountAmount > 0
+          ? `<div class="tot-row savings">
+              <span class="tot-label">Extra Discount (${additionalDiscount}%)</span>
+              <span class="tot-val">&minus; ${symbol}${additionalDiscountAmount.toFixed(2)}</span>
             </div>`
           : ''
       }

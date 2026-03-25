@@ -169,18 +169,9 @@ export class DatabaseConnection {
   private initializeTables(): void {
     if (!this.db) return;
 
-    this.db.serialize(() => {
-      this.db?.run(
-        'CREATE TABLE IF NOT EXISTS myCoolTable (info TEXT NULL)',
-        (err) => {
-          if (err) {
-            console.error('Table creation error: ', err);
-          } else {
-            console.log('Database tables initialized');
-          }
-        }
-      );
-    });
+    // Database tables are initialized by individual services
+    // No demo tables needed
+    console.log('Database connection ready');
   }
 
   /**

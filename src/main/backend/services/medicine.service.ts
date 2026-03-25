@@ -276,25 +276,24 @@ export class MedicineService {
       LIMIT 1
     `;
 
-    for (const c of candidates) {
-      const sql = baseSqlExact.replace('%WHERE%', 'm.barcode = ?');
-      const result = await this.dbService.queryOne(sql, [c]);
+    // Try exact match with all candidates in one query using OR
+    if (candidates.length > 0) {
+      const placeholders = candidates.map(() => 'm.barcode = ?').join(' OR ');
+      const sql = baseSqlExact.replace('%WHERE%', placeholders);
+      const result = await this.dbService.queryOne(sql, candidates);
       if (result) return this.mapRowToMedicine(result);
     }
 
     const primary = normalizeScannedBarcode(barcode);
     if (primary) {
+      // Try case-insensitive match with all candidates in one query
+      const placeholders = candidates.map(() => 'LOWER(TRIM(m.barcode)) = LOWER(TRIM(?))').join(' OR ');
       const sqlCi = baseSqlExact.replace(
         '%WHERE%',
-        "m.barcode IS NOT NULL AND LOWER(TRIM(m.barcode)) = LOWER(TRIM(?))"
+        `m.barcode IS NOT NULL AND (${placeholders})`
       );
-      const rowCi = await this.dbService.queryOne(sqlCi, [primary]);
+      const rowCi = await this.dbService.queryOne(sqlCi, candidates);
       if (rowCi) return this.mapRowToMedicine(rowCi);
-
-      for (const c of candidates) {
-        const rowC = await this.dbService.queryOne(sqlCi, [c]);
-        if (rowC) return this.mapRowToMedicine(rowC);
-      }
     }
 
     // Fuzzy paths: align with short product codes (EAN-8) and long GS1 strings
@@ -307,14 +306,14 @@ export class MedicineService {
       );
       const rowLike = await this.dbService.queryOne(sqlLike, [likeParam]);
       if (rowLike) return this.mapRowToMedicine(rowLike);
-
-      const sqlRev = baseSqlFuzzy.replace(
-        '%WHERE%',
-        'm.barcode IS NOT NULL AND LENGTH(TRIM(m.barcode)) >= 8 AND ? LIKE (\'%\' || m.barcode || \'%\')'
-      );
-      const rowRev = await this.dbService.queryOne(sqlRev, [primary]);
-      if (rowRev) return this.mapRowToMedicine(rowRev);
     }
+
+    const sqlRev = baseSqlFuzzy.replace(
+      '%WHERE%',
+      'm.barcode IS NOT NULL AND LENGTH(TRIM(m.barcode)) >= 8 AND ? LIKE (\'%\' || m.barcode || \'%\')'
+    );
+    const rowRev = await this.dbService.queryOne(sqlRev, [primary]);
+    if (rowRev) return this.mapRowToMedicine(rowRev);
 
     return null;
   }

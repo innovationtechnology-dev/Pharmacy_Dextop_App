@@ -14,23 +14,19 @@ function SqlDemoApp() {
             <div className="h4" >Test it out</div>
 
             <div className="infoItem" >
-                For demo purposes, myCoolTable is created at startup in src/main/main.ts. You can create more tables, add rows, or execute other sql commands below.
-            </div>
-
-            <div className="infoItem" >
-                Type in an sql command, or copy and paste one of the example sql commands below, and submit it to the main process (by clicking 'Send').
+                Type in an SQL command, or copy and paste one of the example SQL commands below, and submit it to the main process (by clicking 'Send').
             </div>
 
             <pre>
-                SELECT * FROM myCoolTable
-                <br/>
                 SELECT sqlite_version()
                 <br/>
-                CREATE TABLE IF NOT EXISTS anotherCoolTable (id INTEGER PRIMARY KEY AUTOINCREMENT, itemName TEXT NULL)
-                <br/>
-                INSERT OR IGNORE INTO anotherCoolTable (itemName) VALUES ('foo')
-                <br/>
                 SELECT * FROM sqlite_schema
+                <br/>
+                CREATE TABLE IF NOT EXISTS testTable (id INTEGER PRIMARY KEY AUTOINCREMENT, itemName TEXT NULL)
+                <br/>
+                INSERT OR IGNORE INTO testTable (itemName) VALUES ('foo')
+                <br/>
+                SELECT * FROM testTable
             </pre>
 
             <div className="infoItem" >

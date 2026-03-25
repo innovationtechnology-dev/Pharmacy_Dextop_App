@@ -178,12 +178,17 @@ export default function SalesReport() {
       }
     });
 
-    const groupedData = Array.from(map.values()).map(row => ({
-      ...row,
-      displayMedicineName: row.itemDetails.join(', '), 
-      isGrouped: row.itemDetails.length > 1,
-      children: row.items
-    }));
+    const groupedData = Array.from(map.values()).map(row => {
+      // Subtract additional discount from the total (it's applied at sale level, not item level)
+      const finalTotal = row.total - (row.additionalDiscountAmount || 0);
+      return {
+        ...row,
+        total: finalTotal,
+        displayMedicineName: row.itemDetails.join(', '), 
+        isGrouped: row.itemDetails.length > 1,
+        children: row.items
+      };
+    });
 
     // Step 2: Filter based on search
     if (!searchQuery.trim()) return groupedData;
@@ -434,7 +439,14 @@ export default function SalesReport() {
                         <div className="font-medium text-gray-900 dark:text-white truncate" title={row.displayMedicineName}>{row.displayMedicineName}</div>
                       </div>
                       <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={`${row.customerName || 'Walk-in'} - ${row.saleType || 'Regular'}`}>
-                        <div>{row.customerName || 'Walk-in Customer'}</div>
+                        <div className="flex items-center gap-2">
+                          <span>{row.customerName || 'Walk-in Customer'}</span>
+                          {row.additionalDiscount && row.additionalDiscount > 0 && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded text-[8px] font-bold text-amber-700 dark:text-amber-400 whitespace-nowrap">
+                              Special Disc. -{row.additionalDiscount}%
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
                         {row.isGrouped ? (
@@ -588,9 +600,13 @@ export default function SalesReport() {
         }}
         summaryItems={[
           { label: 'Subtotal', value: `${getCurrencySymbol()}${selectedSale?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Net Amount', type: 'total', value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
+          { label: 'Discount', type: 'discount' as const, value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          { label: 'Tax', type: 'tax' as const, value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
+          ...(selectedSale?.additionalDiscountAmount && selectedSale.additionalDiscountAmount > 0 
+            ? [{ label: 'Extra Discount', type: 'discount' as const, value: `${getCurrencySymbol()}${selectedSale.additionalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }]
+            : []
+          ),
+          { label: 'Net Amount', type: 'total' as const, value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
         ]}
         footerStatus={{
           label: 'Transaction Finalized',

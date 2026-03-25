@@ -1025,7 +1025,7 @@ export default function MedicinesPage() {
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {/* Table Header */}
-                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-b-2 border-gray-200 dark:border-gray-600 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
                     <div className="col-span-1">#</div>
                     <div className="col-span-3">Medicine</div>
                     <div className="col-span-2">Barcode</div>

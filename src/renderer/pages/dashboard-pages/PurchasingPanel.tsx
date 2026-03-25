@@ -1605,12 +1605,23 @@ const PurchasingPanel: React.FC = () => {
                               onChange={(e) => {
                                 if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                                 const v = e.target.value;
+                                const id = item.medicine.id;
                                 // Only allow digits and check if value is <= 100
-                                if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                if (v === '') {
                                   setDiscountInputDraft((prev) => ({
                                     ...prev,
-                                    [item.medicine.id]: v,
+                                    [id]: v,
                                   }));
+                                  updateCartItemField(id, 'discount', 0);
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  if (numVal <= 100) {
+                                    setDiscountInputDraft((prev) => ({
+                                      ...prev,
+                                      [id]: v,
+                                    }));
+                                    updateCartItemField(id, 'discount', numVal);
+                                  }
                                 }
                               }}
                               onBlur={() => {
@@ -1650,12 +1661,23 @@ const PurchasingPanel: React.FC = () => {
                               onChange={(e) => {
                                 if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
                                 const v = e.target.value;
+                                const id = item.medicine.id;
                                 // Only allow digits and check if value is <= 100
-                                if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                                if (v === '') {
                                   setTaxInputDraft((prev) => ({
                                     ...prev,
-                                    [item.medicine.id]: v,
+                                    [id]: v,
                                   }));
+                                  updateCartItemField(id, 'tax', 0);
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  if (numVal <= 100) {
+                                    setTaxInputDraft((prev) => ({
+                                      ...prev,
+                                      [id]: v,
+                                    }));
+                                    updateCartItemField(id, 'tax', numVal);
+                                  }
                                 }
                               }}
                               onBlur={() => {

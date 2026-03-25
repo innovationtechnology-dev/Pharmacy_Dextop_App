@@ -24,6 +24,8 @@ export interface Sale {
   subtotal: number;
   discountTotal: number;
   taxTotal: number;
+  additionalDiscount?: number;
+  additionalDiscountAmount?: number;
   total: number;
   customerName?: string;
   customerPhone?: string;
@@ -46,6 +48,8 @@ export class SalesService {
     customerName?: string;
     customerPhone?: string;
     saleType?: string;
+    additionalDiscount?: number;
+    additionalDiscountAmount?: number;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -64,6 +68,8 @@ export class SalesService {
           s.customer_name AS customerName,
           s.customer_phone AS customerPhone,
           s.sale_type AS saleType,
+          s.additional_discount AS additionalDiscount,
+          s.additional_discount_amount AS additionalDiscountAmount,
           si.medicine_id AS medicineId,
           si.medicine_name AS medicineName,
           si.pills,
@@ -89,6 +95,8 @@ export class SalesService {
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
         s.sale_type AS saleType,
+        s.additional_discount AS additionalDiscount,
+        s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -137,6 +145,8 @@ export class SalesService {
     customerName?: string;
     customerPhone?: string;
     saleType?: string;
+    additionalDiscount?: number;
+    additionalDiscountAmount?: number;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -153,6 +163,8 @@ export class SalesService {
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
         s.sale_type AS saleType,
+        s.additional_discount AS additionalDiscount,
+        s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -215,6 +227,12 @@ export class SalesService {
     }
     if (!salesInfoCheck.some((col: any) => col.name === 'doctor_name')) {
       await this.dbService.execute(`ALTER TABLE sales ADD COLUMN doctor_name TEXT`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'additional_discount')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN additional_discount REAL NOT NULL DEFAULT 0`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'additional_discount_amount')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN additional_discount_amount REAL NOT NULL DEFAULT 0`);
     }
 
     const saleItemsInfoCheck = await this.dbService.query(`PRAGMA table_info(sale_items)`);
@@ -325,7 +343,7 @@ export class SalesService {
   /**
    * Create a new sale and deduct inventory from eligible batches.
    */
-  public async createSale(payload: Omit<Sale, 'id' | 'items' | 'createdAt' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'total'> & {
+  public async createSale(payload: Omit<Sale, 'id' | 'items' | 'createdAt' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'additionalDiscountAmount' | 'total'> & {
     items: SaleItemInput[];
   }): Promise<number> {
     if (!payload.items || payload.items.length === 0) {
@@ -337,7 +355,12 @@ export class SalesService {
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    const total = subtotal - discountTotal + taxTotal;
+    const baseTotal = subtotal - discountTotal + taxTotal;
+    
+    // Apply additional discount for Family/Relatives or Charity
+    const additionalDiscount = payload.additionalDiscount || 0;
+    const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+    const total = baseTotal - additionalDiscountAmount;
 
     for (const item of computedItems) {
       await this.ensureInventoryAvailable(item.medicineId, item.pills);
@@ -346,13 +369,15 @@ export class SalesService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertSaleSql = `
-        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, sale_type, prescription_number, doctor_name, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        INSERT INTO sales (subtotal, discount_total, tax_total, additional_discount, additional_discount_amount, total, customer_name, customer_phone, sale_type, prescription_number, doctor_name, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleResult = await this.dbService.execute(insertSaleSql, [
         subtotal,
         discountTotal,
         taxTotal,
+        additionalDiscount,
+        additionalDiscountAmount,
         total,
         payload.customerName || null,
         payload.customerPhone || null,

@@ -15,6 +15,7 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role?: string;
   created_at: string;
 }
 
@@ -157,7 +158,7 @@ export class SuperAdminService {
       if (email !== this.SUPER_ADMIN_EMAIL) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -168,7 +169,7 @@ export class SuperAdminService {
       if (!user) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -176,7 +177,7 @@ export class SuperAdminService {
       if (user.password_hash !== passwordHash) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Incorrect password. Please try again.',
         };
       }
 
@@ -201,12 +202,20 @@ export class SuperAdminService {
   }
 
   /**
+   * Force WAL checkpoint to ensure all changes are written to main database file
+   */
+  public async checkpointDatabase(): Promise<void> {
+    await this.dbService.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+  }
+
+
+  /**
    * Get all users
    */
   public async getAllUsers(): Promise<User[]> {
     try {
       const users = await this.dbService.query(
-        'SELECT id, name, email, password_hash, created_at FROM users ORDER BY created_at DESC'
+        'SELECT id, name, email, password_hash, role, created_at FROM users ORDER BY created_at DESC'
       );
       return users as User[];
     } catch (error) {
@@ -220,9 +229,34 @@ export class SuperAdminService {
   public async createUser(
     name: string,
     email: string,
-    password: string
+    password: string,
+    role: string = 'cashier'
   ): Promise<{ success: boolean; error?: string; user?: User }> {
     try {
+      // Prevent creating superadmin role
+      if (role === 'superadmin' || role === 'super_admin') {
+        return {
+          success: false,
+          error: 'Cannot create user with superadmin role. Only "admin" or "cashier" roles are allowed',
+        };
+      }
+
+      // Validate role
+      if (role !== 'admin' && role !== 'cashier') {
+        return {
+          success: false,
+          error: 'Invalid role. Must be either "admin" or "cashier"',
+        };
+      }
+
+      // Prevent creating user with super admin email
+      if (email.toLowerCase() === this.SUPER_ADMIN_EMAIL.toLowerCase()) {
+        return {
+          success: false,
+          error: 'Cannot create user with Super Admin email address',
+        };
+      }
+
       // Check if user exists
       const existingUser = await this.dbService.queryOne(
         `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
@@ -237,12 +271,12 @@ export class SuperAdminService {
 
       const passwordHash = this.hashPassword(password);
       const result = await this.dbService.execute(
-        `INSERT INTO users (name, email, password_hash) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}')`
+        `INSERT INTO users (name, email, password_hash, role) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}', '${role}')`
       );
 
       const userId = (result as any).lastID;
       const user = (await this.dbService.queryOne(
-        `SELECT id, name, email, password_hash, created_at FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, password_hash, role, created_at FROM users WHERE id = ${userId}`
       )) as User;
 
       return {
@@ -263,9 +297,38 @@ export class SuperAdminService {
   public async updateUser(
     userId: number,
     name: string,
-    email: string
+    email: string,
+    role?: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Prevent modifying the super admin account
+      const userToUpdate = await this.dbService.queryOne(
+        `SELECT email, role FROM users WHERE id = ${userId}`
+      ) as { email: string; role?: string } | null;
+
+      if (userToUpdate && userToUpdate.email === this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Cannot modify the Super Admin account',
+        };
+      }
+
+      // Prevent setting or changing to superadmin role
+      if (role && (role === 'superadmin' || role === 'super_admin')) {
+        return {
+          success: false,
+          error: 'Cannot assign superadmin role. Only "admin" or "cashier" roles are allowed',
+        };
+      }
+
+      // Validate role if provided
+      if (role && role !== 'admin' && role !== 'cashier') {
+        return {
+          success: false,
+          error: 'Invalid role. Must be either "admin" or "cashier"',
+        };
+      }
+
       // Check if email is already taken by another user
       const existingUser = await this.dbService.queryOne(
         `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}' AND id != ${userId}`
@@ -278,9 +341,14 @@ export class SuperAdminService {
         };
       }
 
-      await this.dbService.execute(
-        `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}' WHERE id = ${userId}`
-      );
+      // Build update query
+      let updateQuery = `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}'`;
+      if (role) {
+        updateQuery += `, role = '${role}'`;
+      }
+      updateQuery += ` WHERE id = ${userId}`;
+
+      await this.dbService.execute(updateQuery);
 
       return {
         success: true,
@@ -301,6 +369,18 @@ export class SuperAdminService {
     newPassword: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Prevent changing super admin password through this method
+      const user = await this.dbService.queryOne(
+        `SELECT email FROM users WHERE id = ${userId}`
+      ) as { email: string } | null;
+
+      if (user && user.email === this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Cannot change Super Admin password through this method',
+        };
+      }
+
       const passwordHash = this.hashPassword(newPassword);
       await this.dbService.execute(
         `UPDATE users SET password_hash = '${passwordHash}' WHERE id = ${userId}`
@@ -369,8 +449,28 @@ export class SuperAdminService {
     isActive: boolean
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Get the activation code for this license
+      const license = await this.dbService.queryOne(
+        `SELECT activation_code FROM licenses WHERE id = ${licenseId}`
+      ) as { activation_code: string } | null;
+
+      if (!license) {
+        return {
+          success: false,
+          error: 'License not found',
+        };
+      }
+
+      // Update the license
       await this.dbService.execute(
         `UPDATE licenses SET expiry_date = '${expiryDate}', is_active = ${isActive ? 1 : 0}, updated_at = CURRENT_TIMESTAMP WHERE id = ${licenseId}`
+      );
+
+      // Sync with generated_licenses table
+      // If activating the license, mark the generated key as used
+      // If deactivating the license, mark the generated key as unused
+      await this.dbService.execute(
+        `UPDATE generated_licenses SET is_used = ${isActive ? 1 : 0}, used_at = ${isActive ? "datetime('now', 'localtime')" : 'NULL'} WHERE code = '${license.activation_code.replace(/'/g, "''")}'`
       );
 
       return {
@@ -610,6 +710,9 @@ export class SuperAdminService {
         // Create timestamped backup of current database (if it exists)
         if (fs.existsSync(currentDbPath)) {
           fs.copyFileSync(currentDbPath, timestampedBackupPath);
+          
+          // Automatically cleanup old backups, keeping only the 3 most recent
+          this.cleanupOldBackups(3);
         }
 
         // Copy new database

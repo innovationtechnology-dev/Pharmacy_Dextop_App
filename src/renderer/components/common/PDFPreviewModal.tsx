@@ -43,12 +43,11 @@ export default function PDFPreviewModal({
         </div>
         
         {/* HTML Preview */}
-        <div className="flex-1 overflow-auto bg-gray-100 dark:bg-gray-900 p-4">
+        <div className="flex-1 bg-gray-100 dark:bg-gray-900 p-4">
           <iframe
             title="PDF Preview"
             srcDoc={htmlContent}
             className="w-full h-full bg-white border-0 rounded shadow-lg"
-            style={{ minHeight: '800px' }}
           />
         </div>
       </div>

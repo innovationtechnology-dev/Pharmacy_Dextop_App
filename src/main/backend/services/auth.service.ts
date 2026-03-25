@@ -168,7 +168,7 @@ export class AuthService {
       if (!user) {
         return {
           success: false,
-          error: 'Invalid email or password',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -177,7 +177,7 @@ export class AuthService {
       if (user.password_hash !== passwordHash) {
         return {
           success: false,
-          error: 'Invalid email or password',
+          error: 'Incorrect password. Please try again.',
         };
       }
 
