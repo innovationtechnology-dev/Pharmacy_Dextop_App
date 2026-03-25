@@ -621,7 +621,7 @@ const License: React.FC = () => {
               )}
 
               {/* Generate License Key form — shown after successful connection check */}
-              {isAdmin && !license && serverStatus.state === 'ok' && (
+              {isAdmin && serverStatus.state === 'ok' && (
                 <div className="bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                   {/* Form header */}
                   <div className="flex items-center gap-3 px-4 py-3 bg-blue-600 dark:bg-blue-700">

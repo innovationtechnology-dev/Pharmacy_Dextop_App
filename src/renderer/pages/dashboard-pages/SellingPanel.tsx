@@ -1111,10 +1111,9 @@ const SellingPanel: React.FC = () => {
           loadSalesHistory(); // Reload sales history
           refreshExpiringAlerts();
           // Keep viewing the updated sale
-          const successTimer = setTimeout(() => {
+          setTimeout(() => {
             setShowSuccess(false);
           }, SUCCESS_MESSAGE_DURATION_MS);
-          return () => clearTimeout(successTimer);
         } else {
           alert(`Error updating sale: ${result.error || 'Unknown error'}`);
         }
@@ -1146,13 +1145,12 @@ const SellingPanel: React.FC = () => {
             loadMedicines(); // Reload medicines to update quantities
             loadSalesHistory(); // Reload sales history
             refreshExpiringAlerts();
-            const successTimer = setTimeout(() => {
+            setTimeout(() => {
               setShowSuccess(false);
               if (barcodeInputRef.current) {
                 barcodeInputRef.current.focus();
               }
             }, SUCCESS_MESSAGE_DURATION_MS);
-            return () => clearTimeout(successTimer);
           } else {
             alert(`Error processing sale: ${response.error || 'Unknown error'}`);
           }
