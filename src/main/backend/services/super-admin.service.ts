@@ -158,7 +158,7 @@ export class SuperAdminService {
       if (email !== this.SUPER_ADMIN_EMAIL) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -169,7 +169,7 @@ export class SuperAdminService {
       if (!user) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -177,7 +177,7 @@ export class SuperAdminService {
       if (user.password_hash !== passwordHash) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Incorrect password. Please try again.',
         };
       }
 
@@ -710,6 +710,9 @@ export class SuperAdminService {
         // Create timestamped backup of current database (if it exists)
         if (fs.existsSync(currentDbPath)) {
           fs.copyFileSync(currentDbPath, timestampedBackupPath);
+          
+          // Automatically cleanup old backups, keeping only the 3 most recent
+          this.cleanupOldBackups(3);
         }
 
         // Copy new database

@@ -200,12 +200,17 @@ const SuperAdminDashboard: React.FC = () => {
     try {
       const result = await downloadDatabase();
       if (result.success) {
+        setLoadingText('Download complete!');
         success(`Database downloaded successfully!`);
+        // Keep overlay visible briefly so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } else {
         error(result.error || 'Failed to download database');
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
     } catch (err) {
       error('Failed to download database');
+      await new Promise(resolve => setTimeout(resolve, 1500));
     } finally {
       setLoading(false);
       setShowOverlay(false);
@@ -224,24 +229,29 @@ const SuperAdminDashboard: React.FC = () => {
       if (result.success) {
         setLoadingText('Import successful! Preparing to reload...');
         
-        // Show summary if available
+        // Show success toast
         if (result.summary) {
-          const summaryText = `Database imported successfully!\n\nImported Data:\n- Users: ${result.summary.users}\n- Medicines: ${result.summary.medicines}\n- Customers: ${result.summary.customers}\n- Sales: ${result.summary.sales}\n- Purchases: ${result.summary.purchases}\n- Payments: ${result.summary.payments}\n\nThe application will reload to apply changes.`;
-          alert(summaryText);
+          success(`Database imported successfully! Users: ${result.summary.users}, Medicines: ${result.summary.medicines}, Sales: ${result.summary.sales}. Reloading...`);
         } else {
-          success(`Database imported successfully! The application will reload to apply changes.`);
+          success('Database imported successfully! The application will reload to apply changes.');
         }
         
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
+        // Keep overlay visible so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Reload the application
+        window.location.reload();
       } else {
         error(result.error || 'Failed to import database');
+        // Keep overlay visible briefly so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 1500));
         setLoading(false);
         setShowOverlay(false);
       }
     } catch (err) {
       error('Failed to import database');
+      // Keep overlay visible briefly so user sees the toast
+      await new Promise(resolve => setTimeout(resolve, 1500));
       setLoading(false);
       setShowOverlay(false);
     }
@@ -292,18 +302,21 @@ const SuperAdminDashboard: React.FC = () => {
     
     try {
       // Set up the listener first
-      window.electron.ipcRenderer.once('system-reset-all-data-reply', (response: any) => {
+      window.electron.ipcRenderer.once('system-reset-all-data-reply', async (response: any) => {
         console.log('Received system-reset-all-data-reply:', response);
-        setLoading(false);
-        setShowOverlay(false);
         
         if (response.success) {
+          setLoadingText('Reset complete! Reloading...');
           success('System reset successfully! All data has been deleted. The page will now reload.');
-          setTimeout(() => {
-            window.location.reload();
-          }, 2000);
+          // Keep overlay visible so user sees the toast
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          window.location.reload();
         } else {
           error('Failed to reset system: ' + (response.error || 'Unknown error'));
+          // Keep overlay visible briefly so user sees the toast
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          setLoading(false);
+          setShowOverlay(false);
         }
       });
       
@@ -529,46 +542,60 @@ const SuperAdminDashboard: React.FC = () => {
       if (result.success) {
         setLoadingText('Restore successful! Preparing to reload...');
         
+        // Show success toast with summary
         if (result.summary) {
-          const summaryText = `Database restored successfully!\n\nRestored Data:\n- Users: ${result.summary.users}\n- Medicines: ${result.summary.medicines}\n- Customers: ${result.summary.customers}\n- Sales: ${result.summary.sales}\n- Purchases: ${result.summary.purchases}\n- Payments: ${result.summary.payments}\n\nThe application will reload to apply changes.`;
-          alert(summaryText);
+          success(`Database restored! Users: ${result.summary.users}, Medicines: ${result.summary.medicines}, Sales: ${result.summary.sales}. Reloading...`);
         } else {
           success('Database restored successfully! The application will reload.');
         }
         
-        setTimeout(() => {
-          window.location.reload();
-        }, 2000);
+        // Keep overlay visible so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Reload the application
+        window.location.reload();
       } else {
         error(result.error || 'Failed to restore backup');
+        // Keep overlay visible briefly so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 1500));
         setLoading(false);
         setShowOverlay(false);
       }
     } catch (err) {
       error('Failed to restore backup');
+      // Keep overlay visible briefly so user sees the toast
+      await new Promise(resolve => setTimeout(resolve, 1500));
       setLoading(false);
       setShowOverlay(false);
     }
   };
 
   const handleCleanupBackups = async () => {
-    if (!confirm('Delete old backups, keeping only the 10 most recent?\n\nThis action cannot be undone.')) {
+    if (!confirm('Delete old backups, keeping only the 3 most recent?\n\nThis action cannot be undone.')) {
       return;
     }
 
     setLoading(true);
+    setShowOverlay(true);
+    setLoadingText('Cleaning up old backups...');
     try {
-      const result = await cleanupOldBackups(10);
+      const result = await cleanupOldBackups(3);
       if (result.success) {
+        setLoadingText('Cleanup complete!');
         success(`Cleaned up ${result.deletedCount} old backup(s)`);
         loadBackups();
+        // Keep overlay visible briefly so user sees the toast
+        await new Promise(resolve => setTimeout(resolve, 1500));
       } else {
         error('Failed to cleanup backups');
+        await new Promise(resolve => setTimeout(resolve, 1500));
       }
     } catch (err) {
       error('Failed to cleanup backups');
+      await new Promise(resolve => setTimeout(resolve, 1500));
     } finally {
       setLoading(false);
+      setShowOverlay(false);
     }
   };
 
@@ -1684,7 +1711,7 @@ const SuperAdminDashboard: React.FC = () => {
                   </p>
                 </div>
                 <div className="flex gap-3">
-                  {backups.length > 10 && (
+                  {backups.length > 3 && (
                     <button
                       onClick={handleCleanupBackups}
                       disabled={loading}

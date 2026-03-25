@@ -387,49 +387,65 @@ export class PurchaseService {
     query += ' ORDER BY p.created_at DESC';
 
     const purchases = await this.dbService.query(query, params);
-    const purchasesWithItems: Purchase[] = [];
-
-    for (const purchase of purchases) {
-      const items = await this.dbService.query('SELECT * FROM purchase_items WHERE purchase_id = ?', [purchase.id]);
-      purchasesWithItems.push({
-        id: purchase.id,
-        supplierId: purchase.supplier_id,
-        supplierName: purchase.supplier_name,
-        supplierCompanyName: purchase.supplier_company_name,
-        supplierAddress: purchase.supplier_address,
-        supplierPhone: purchase.supplier_phone,
-        supplierEmail: purchase.supplier_email,
-        subtotal: purchase.subtotal,
-        discountTotal: purchase.discount_total,
-        taxTotal: purchase.tax_total,
-        grandTotal: purchase.grand_total,
-        paymentAmount: purchase.payment_amount,
-        remainingBalance: purchase.remaining_balance,
-        status: purchase.status || 'ordered',
-        invoiceNumber: purchase.invoice_number || undefined,
-        notes: purchase.notes,
-        createdAt: purchase.created_at,
-        updatedAt: purchase.updated_at,
-        items: items.map((item: any) => ({
-          id: item.id, // Include the purchase item ID
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          packetQuantity: item.packet_quantity,
-          pillsPerPacket: item.pills_per_packet,
-          totalPills: item.total_pills,
-          availablePills: item.available_pills,
-          pricePerPacket: item.price_per_packet,
-          pricePerPill: item.price_per_pill,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          lineSubtotal: item.line_subtotal,
-          lineTotal: item.line_total,
-          expiryDate: item.expiry_date,
-        })),
-      });
+    
+    if (purchases.length === 0) {
+      return [];
     }
 
-    return purchasesWithItems;
+    // Fetch all items in one query using IN clause
+    const purchaseIds = purchases.map((p: any) => p.id);
+    const placeholders = purchaseIds.map(() => '?').join(',');
+    const allItems = await this.dbService.query(
+      `SELECT * FROM purchase_items WHERE purchase_id IN (${placeholders})`,
+      purchaseIds
+    );
+
+    // Group items by purchase_id
+    const itemsMap = new Map<number, any[]>();
+    allItems.forEach((item: any) => {
+      if (!itemsMap.has(item.purchase_id)) {
+        itemsMap.set(item.purchase_id, []);
+      }
+      itemsMap.get(item.purchase_id)!.push(item);
+    });
+
+    // Build result with items
+    return purchases.map((purchase: any) => ({
+      id: purchase.id,
+      supplierId: purchase.supplier_id,
+      supplierName: purchase.supplier_name,
+      supplierCompanyName: purchase.supplier_company_name,
+      supplierAddress: purchase.supplier_address,
+      supplierPhone: purchase.supplier_phone,
+      supplierEmail: purchase.supplier_email,
+      subtotal: purchase.subtotal,
+      discountTotal: purchase.discount_total,
+      taxTotal: purchase.tax_total,
+      grandTotal: purchase.grand_total,
+      paymentAmount: purchase.payment_amount,
+      remainingBalance: purchase.remaining_balance,
+      status: purchase.status || 'ordered',
+      invoiceNumber: purchase.invoice_number || undefined,
+      notes: purchase.notes,
+      createdAt: purchase.created_at,
+      updatedAt: purchase.updated_at,
+      items: (itemsMap.get(purchase.id) || []).map((item: any) => ({
+        id: item.id,
+        medicineId: item.medicine_id,
+        medicineName: item.medicine_name,
+        packetQuantity: item.packet_quantity,
+        pillsPerPacket: item.pills_per_packet,
+        totalPills: item.total_pills,
+        availablePills: item.available_pills,
+        pricePerPacket: item.price_per_packet,
+        pricePerPill: item.price_per_pill,
+        discountAmount: item.discount_amount,
+        taxAmount: item.tax_amount,
+        lineSubtotal: item.line_subtotal,
+        lineTotal: item.line_total,
+        expiryDate: item.expiry_date,
+      })),
+    }));
   }
 
   /**

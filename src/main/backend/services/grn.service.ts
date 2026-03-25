@@ -329,15 +329,54 @@ export class GRNService {
             'SELECT * FROM goods_received_notes ORDER BY created_at DESC'
         );
 
-        const result: GRN[] = [];
-        for (const grn of grns) {
-            const fullGRN = await this.getGRNById(grn.id);
-            if (fullGRN) {
-                result.push(fullGRN);
-            }
+        if (grns.length === 0) {
+            return [];
         }
 
-        return result;
+        // Fetch all items in one query using IN clause
+        const grnIds = grns.map((g: any) => g.id);
+        const placeholders = grnIds.map(() => '?').join(',');
+        const allItems = await this.dbService.query(
+            `SELECT * FROM grn_items WHERE grn_id IN (${placeholders})`,
+            grnIds
+        );
+
+        // Group items by grn_id
+        const itemsMap = new Map<number, any[]>();
+        allItems.forEach((item: any) => {
+            if (!itemsMap.has(item.grn_id)) {
+                itemsMap.set(item.grn_id, []);
+            }
+            itemsMap.get(item.grn_id)!.push(item);
+        });
+
+        // Build result with items
+        return grns.map((grn: any) => ({
+            id: grn.id,
+            purchaseId: grn.purchase_id,
+            purchaseOrderNumber: grn.purchase_order_number,
+            supplierId: grn.supplier_id,
+            supplierName: grn.supplier_name,
+            totalOrdered: grn.total_ordered,
+            totalReceived: grn.total_received,
+            totalDamaged: grn.total_damaged,
+            totalAccepted: grn.total_accepted,
+            receivedBy: grn.received_by,
+            notes: grn.notes || undefined,
+            createdAt: grn.created_at,
+            items: (itemsMap.get(grn.id) || []).map((item: any) => ({
+                purchaseItemId: item.purchase_item_id,
+                medicineId: item.medicine_id,
+                medicineName: item.medicine_name,
+                orderedQuantity: item.ordered_quantity,
+                receivedQuantity: item.received_quantity,
+                damagedQuantity: item.damaged_quantity,
+                acceptedQuantity: item.accepted_quantity,
+                expiryDate: item.expiry_date,
+                batchNumber: item.batch_number || undefined,
+                notes: item.notes || undefined,
+            })),
+        }));
     }
 
     /**
@@ -355,15 +394,54 @@ export class GRNService {
             [fromDateTime, toDateTime]
         );
 
-        const result: GRN[] = [];
-        for (const grn of grns) {
-            const fullGRN = await this.getGRNById(grn.id);
-            if (fullGRN) {
-                result.push(fullGRN);
-            }
+        if (grns.length === 0) {
+            return [];
         }
 
-        return result;
+        // Fetch all items in one query using IN clause
+        const grnIds = grns.map((g: any) => g.id);
+        const placeholders = grnIds.map(() => '?').join(',');
+        const allItems = await this.dbService.query(
+            `SELECT * FROM grn_items WHERE grn_id IN (${placeholders})`,
+            grnIds
+        );
+
+        // Group items by grn_id
+        const itemsMap = new Map<number, any[]>();
+        allItems.forEach((item: any) => {
+            if (!itemsMap.has(item.grn_id)) {
+                itemsMap.set(item.grn_id, []);
+            }
+            itemsMap.get(item.grn_id)!.push(item);
+        });
+
+        // Build result with items
+        return grns.map((grn: any) => ({
+            id: grn.id,
+            purchaseId: grn.purchase_id,
+            purchaseOrderNumber: grn.purchase_order_number,
+            supplierId: grn.supplier_id,
+            supplierName: grn.supplier_name,
+            totalOrdered: grn.total_ordered,
+            totalReceived: grn.total_received,
+            totalDamaged: grn.total_damaged,
+            totalAccepted: grn.total_accepted,
+            receivedBy: grn.received_by,
+            notes: grn.notes || undefined,
+            createdAt: grn.created_at,
+            items: (itemsMap.get(grn.id) || []).map((item: any) => ({
+                purchaseItemId: item.purchase_item_id,
+                medicineId: item.medicine_id,
+                medicineName: item.medicine_name,
+                orderedQuantity: item.ordered_quantity,
+                receivedQuantity: item.received_quantity,
+                damagedQuantity: item.damaged_quantity,
+                acceptedQuantity: item.accepted_quantity,
+                expiryDate: item.expiry_date,
+                batchNumber: item.batch_number || undefined,
+                notes: item.notes || undefined,
+            })),
+        }));
     }
 
     /**

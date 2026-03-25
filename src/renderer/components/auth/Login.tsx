@@ -183,7 +183,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
@@ -196,7 +196,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         [name]: undefined,
       }));
     }
-  };
+  }, [errors]);
 
     return (
     <>
@@ -476,7 +476,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </div>
 
           {/* Right Side - Image Section */}
-          <div className={`hidden lg:flex w-full lg:w-1/2 items-center justify-center p-2 xl:p-4 relative overflow-hidden transition-colors duration-300 ${
+          <div className={`hidden lg:flex w-full lg:w-1/2 items-center justify-center relative overflow-hidden transition-colors duration-300 ${
             theme === 'dark'
               ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-slate-900'
               : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
@@ -488,18 +488,17 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
             </div>
 
             {/* Image Container */}
-            <div className="relative z-10 w-full h-full flex items-center justify-center">
-              <div className="relative w-full max-w-lg h-full rounded-2xl overflow-hidden shadow-2xl transform hover:scale-[1.02] transition-transform duration-300">
-                <img
-                  src={pharmacist_1}
-                  alt="Professional pharmacist managing pharmacy operations"
-                  className="w-full h-full object-cover object-center"
-                />
-                {/* Overlay Gradient */}
-                <div className="absolute inset-0 bg-gradient-to-b from-emerald-900/60 via-emerald-800/20 to-transparent"></div>
-                
-                {/* Content Overlay - positioned at top */}
-                <div className="absolute top-0 left-0 right-0 p-8 text-white">
+            <div className="relative z-10 w-full h-full">
+              <img
+                src={pharmacist_1}
+                alt="Professional pharmacist managing pharmacy operations"
+                className="w-full h-full object-cover object-top"
+              />
+              {/* Overlay Gradient */}
+              <div className="absolute inset-0 bg-gradient-to-b from-emerald-900/60 via-emerald-800/20 to-transparent"></div>
+              
+              {/* Content Overlay - positioned at top */}
+              <div className="absolute top-0 left-0 right-0 p-8 text-white">
                   <div className="mb-4">
                     <h3 className="text-2xl xl:text-3xl font-bold mb-2 drop-shadow-lg">
                       Pharmacy Management System
@@ -559,7 +558,6 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     </div>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
         </div>

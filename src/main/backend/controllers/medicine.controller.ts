@@ -83,11 +83,47 @@ export class MedicineController {
         
         const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
         
-        // Calculate totals
-        const total = rows.reduce((sum, r: any) => sum + (r.total || 0), 0);
-        const totalDiscount = rows.reduce((sum, r: any) => sum + (r.discountAmount || 0), 0);
-        const totalTax = rows.reduce((sum, r: any) => sum + (r.taxAmount || 0), 0);
-        const subtotal = rows.reduce((sum, r: any) => sum + (r.subtotal || 0), 0);
+        // Group rows by saleId to calculate totals with additional discount
+        const salesMap = new Map<number, any>();
+        rows.forEach((r: any) => {
+          if (!salesMap.has(r.saleId)) {
+            salesMap.set(r.saleId, {
+              saleId: r.saleId,
+              createdAt: r.createdAt,
+              customerName: r.customerName,
+              customerPhone: r.customerPhone,
+              saleType: r.saleType,
+              additionalDiscount: r.additionalDiscount || 0,
+              additionalDiscountAmount: r.additionalDiscountAmount || 0,
+              items: [],
+              subtotal: 0,
+              discountAmount: 0,
+              taxAmount: 0,
+              total: 0
+            });
+          }
+          const sale = salesMap.get(r.saleId)!;
+          sale.items.push(r);
+          sale.subtotal += r.subtotal || 0;
+          sale.discountAmount += r.discountAmount || 0;
+          sale.taxAmount += r.taxAmount || 0;
+          sale.total += r.total || 0;
+        });
+        
+        // Calculate totals including additional discount
+        let subtotal = 0;
+        let totalDiscount = 0;
+        let totalTax = 0;
+        let totalAdditionalDiscount = 0;
+        let grandTotal = 0;
+        
+        salesMap.forEach(sale => {
+          subtotal += sale.subtotal;
+          totalDiscount += sale.discountAmount;
+          totalTax += sale.taxAmount;
+          totalAdditionalDiscount += sale.additionalDiscountAmount;
+          grandTotal += (sale.total - sale.additionalDiscountAmount);
+        });
 
         // Helper function to escape CSV values
         const esc = (v: any) => {
@@ -117,11 +153,13 @@ export class MedicineController {
         ].map(row => row.map(esc).join(',')).join('\n');
 
         // Column headers
-        const columnHeaders = ['Item', 'Date', 'Sale ID', 'Customer', 'Phone', 'Medicine', 'Qty', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Total'].map(esc).join(',');
+        const columnHeaders = ['Item', 'Date', 'Sale ID', 'Customer', 'Phone', 'Medicine', 'Qty', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Extra Disc', 'Total'].map(esc).join(',');
 
         // Data rows
-        const dataRows = rows.map((r: any, index: number) => 
-          [
+        const dataRows = rows.map((r: any, index: number) => {
+          const sale = salesMap.get(r.saleId)!;
+          const extraDiscText = sale.additionalDiscount > 0 ? `${sale.additionalDiscount}%` : '-';
+          return [
             index + 1,
             r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '',
             `SALE-${r.saleId}`,
@@ -133,9 +171,10 @@ export class MedicineController {
             `${currencySymbol}${r.subtotal.toFixed(2)}`,
             `${currencySymbol}${r.discountAmount.toFixed(2)}`,
             `${currencySymbol}${r.taxAmount.toFixed(2)}`,
+            extraDiscText,
             `${currencySymbol}${r.total.toFixed(2)}`
-          ].map(esc).join(',')
-        ).join('\n');
+          ].map(esc).join(',');
+        }).join('\n');
 
         // Footer with totals
         const footer = [
@@ -145,7 +184,8 @@ export class MedicineController {
           ['Subtotal', `${currencySymbol}${subtotal.toFixed(2)}`],
           ['Total Discount', `${currencySymbol}${totalDiscount.toFixed(2)}`],
           ['Total Tax', `${currencySymbol}${totalTax.toFixed(2)}`],
-          ['Grand Total', `${currencySymbol}${total.toFixed(2)}`],
+          ['Total Extra Discount', `${currencySymbol}${totalAdditionalDiscount.toFixed(2)}`],
+          ['Grand Total', `${currencySymbol}${grandTotal.toFixed(2)}`],
           [''],
           ['Remark: Computer Generated Report'],
           ['E. & O.E.']
@@ -173,10 +213,45 @@ export class MedicineController {
         const settings = args[2] || {};
         const preview = args[3] === true;
         const rows = await this.salesService.getAllSalesFlatRowsByRange(fromDate, toDate);
-        const total = rows.reduce((sum, r: any) => sum + (r.total || 0), 0);
-        const totalDiscount = rows.reduce((sum, r: any) => sum + (r.discountAmount || 0), 0);
-        const totalTax = rows.reduce((sum, r: any) => sum + (r.taxAmount || 0), 0);
-        const subtotal = rows.reduce((sum, r: any) => sum + (r.subtotal || 0), 0);
+        
+        // Group rows by saleId to calculate totals with additional discount
+        const salesMap = new Map<number, any>();
+        rows.forEach((r: any) => {
+          if (!salesMap.has(r.saleId)) {
+            salesMap.set(r.saleId, {
+              saleId: r.saleId,
+              additionalDiscount: r.additionalDiscount || 0,
+              additionalDiscountAmount: r.additionalDiscountAmount || 0,
+              items: [],
+              subtotal: 0,
+              discountAmount: 0,
+              taxAmount: 0,
+              total: 0
+            });
+          }
+          const sale = salesMap.get(r.saleId)!;
+          sale.items.push(r);
+          sale.subtotal += r.subtotal || 0;
+          sale.discountAmount += r.discountAmount || 0;
+          sale.taxAmount += r.taxAmount || 0;
+          sale.total += r.total || 0;
+        });
+        
+        // Calculate totals including additional discount
+        let subtotal = 0;
+        let totalDiscount = 0;
+        let totalTax = 0;
+        let totalAdditionalDiscount = 0;
+        let grandTotal = 0;
+        
+        salesMap.forEach(sale => {
+          subtotal += sale.subtotal;
+          totalDiscount += sale.discountAmount;
+          totalTax += sale.taxAmount;
+          totalAdditionalDiscount += sale.additionalDiscountAmount;
+          grandTotal += (sale.total - sale.additionalDiscountAmount);
+        });
+        
         const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
         
         // Import professional template utilities
@@ -211,15 +286,19 @@ export class MedicineController {
                 <th class="text-right" style="width: 90px;">Subtotal</th>
                 <th class="text-right" style="width: 80px;">Disc.</th>
                 <th class="text-right" style="width: 70px;">Tax</th>
+                <th class="text-right" style="width: 70px;">Extra Disc</th>
                 <th class="text-right" style="width: 100px;">Total</th>
               </tr>
             </thead>
             <tbody>
-              ${rows.map((r: any, index: number) => `
+              ${rows.map((r: any, index: number) => {
+                const sale = salesMap.get(r.saleId)!;
+                const extraDiscText = sale.additionalDiscount > 0 ? `${sale.additionalDiscount}%` : '-';
+                return `
                 <tr>
                   <td>${index + 1} ${r.createdAt ? new Date(r.createdAt).toLocaleDateString() : ''}</td>
                   <td>
-                    <div style="">${r.customerName || 'WIC'}</div>
+                    <div style="">${r.customerName || 'Walk-In-Cust.'}</div>
                     ${r.customerPhone ? `<div style="font-size: 8pt; color: #666;">${r.customerPhone}</div>` : ''}
                   </td>
                   <td>${r.medicineName}</td>
@@ -228,9 +307,10 @@ export class MedicineController {
                   <td class="text-right">${currencySymbol}${r.subtotal.toFixed(2)}</td>
                   <td class="text-right">${currencySymbol}${r.discountAmount.toFixed(2)}</td>
                   <td class="text-right">${currencySymbol}${r.taxAmount.toFixed(2)}</td>
+                  <td class="text-right">${extraDiscText}</td>
                   <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.total.toFixed(2)}</td>
                 </tr>
-              `).join('')}
+              `;}).join('')}
             </tbody>
           </table>
         `;
@@ -240,13 +320,14 @@ export class MedicineController {
             <div class="footer-content">
               <div class="footer-left">
                 <div class="remark">
-                  <strong>${settings.currency || 'USD'}</strong> - Total Sales Value of <strong>${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> Only
+                  <strong>${settings.currency || 'USD'}</strong> - Total Sales Value of <strong>${currencySymbol}${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> Only
                 </div>
                 <div class="remark">
                   <strong>Sales Breakdown:</strong><br/>
                   Subtotal: ${currencySymbol}${subtotal.toFixed(2)}<br/>
                   Total Discount: ${currencySymbol}${totalDiscount.toFixed(2)}<br/>
-                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}
+                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}<br/>
+                  Total Extra Discount: ${currencySymbol}${totalAdditionalDiscount.toFixed(2)}
                 </div>
                 <div class="remark">
                   <strong>Remark:</strong> Computer Generated Report
@@ -281,9 +362,13 @@ export class MedicineController {
                     <span class="totals-label">Tax:</span>
                     <span class="totals-value">${currencySymbol}${totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
+                  <div class="totals-row">
+                    <span class="totals-label">Extra Discount:</span>
+                    <span class="totals-value">-${currencySymbol}${totalAdditionalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                  </div>
                   <div class="totals-row grand">
                     <span class="totals-label">Grand Total:</span>
-                    <span class="totals-value">${currencySymbol}${total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    <span class="totals-value">${currencySymbol}${grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>

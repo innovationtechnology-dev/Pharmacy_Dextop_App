@@ -16,6 +16,8 @@ import {
     FiCheckCircle,
     FiTrash2,
     FiUpload,
+    FiShoppingBag,
+    FiShoppingCart
 } from 'react-icons/fi';
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -23,7 +25,7 @@ import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } 
 import { useTheme } from '../../contexts/ThemeContext';
 import { colorThemes, ColorTheme } from '../../themes/colorThemes';
 
-type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance';
+type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management';
 
 interface ProfileData {
     firstName: string;
@@ -63,6 +65,16 @@ const Settings: React.FC = () => {
     const [user, setUser] = useState<any>(null);
     const { theme, setTheme, colorTheme, setColorTheme } = useTheme();
     const [saving, setSaving] = useState(false);
+
+    // Data Management states
+    const [showDeleteMedicineModal, setShowDeleteMedicineModal] = useState(false);
+    const [showDeleteSaleModal, setShowDeleteSaleModal] = useState(false);
+    const [showDeletePurchaseModal, setShowDeletePurchaseModal] = useState(false);
+    const [medicines, setMedicines] = useState<any[]>([]);
+    const [sales, setSales] = useState<any[]>([]);
+    const [purchases, setPurchases] = useState<any[]>([]);
+    const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+    const [deleting, setDeleting] = useState(false);
 
     const [profileData, setProfileData] = useState<ProfileData>({
         firstName: '',
@@ -124,6 +136,27 @@ const Settings: React.FC = () => {
         setPharmacySettings(getStoredPharmacySettings());
     }, []);
 
+    // Load medicines when modal opens
+    useEffect(() => {
+        if (showDeleteMedicineModal) {
+            loadMedicines();
+        }
+    }, [showDeleteMedicineModal]);
+
+    // Load sales when modal opens
+    useEffect(() => {
+        if (showDeleteSaleModal) {
+            loadSales();
+        }
+    }, [showDeleteSaleModal]);
+
+    // Load purchases when modal opens
+    useEffect(() => {
+        if (showDeletePurchaseModal) {
+            loadPurchases();
+        }
+    }, [showDeletePurchaseModal]);
+
     const handleThemeChange = (newTheme: 'light' | 'dark') => {
         setTheme(newTheme);
     };
@@ -145,6 +178,160 @@ const Settings: React.FC = () => {
     };
 
     const { setHeader } = useDashboardHeader();
+
+    // Data Management handlers
+    const loadMedicines = async () => {
+        window.electron.ipcRenderer.sendMessage('medicine-get-all', []);
+        window.electron.ipcRenderer.once('medicine-get-all-reply', (...args: unknown[]) => {
+            const response = args[0] as any;
+            if (response?.success && Array.isArray(response.data)) {
+                setMedicines(response.data);
+            } else {
+                setMedicines([]);
+            }
+        });
+    };
+
+    const loadSales = async () => {
+        window.electron.ipcRenderer.sendMessage('sale-get-all', []);
+        window.electron.ipcRenderer.once('sale-get-all-reply', (...args: unknown[]) => {
+            const response = args[0] as any;
+            if (response?.success && Array.isArray(response.data)) {
+                setSales(response.data);
+            } else {
+                setSales([]);
+            }
+        });
+    };
+
+    const loadPurchases = async () => {
+        window.electron.ipcRenderer.sendMessage('purchase-get-all', []);
+        window.electron.ipcRenderer.once('purchase-get-all-reply', (...args: unknown[]) => {
+            const response = args[0] as any;
+            if (response?.success && Array.isArray(response.data)) {
+                setPurchases(response.data);
+            } else {
+                setPurchases([]);
+            }
+        });
+    };
+
+    const handleDeleteMedicine = async () => {
+        if (selectedItemIds.length === 0) return;
+        if (!confirm(`Are you sure you want to delete ${selectedItemIds.length} medicine(s)? This action cannot be undone.`)) return;
+        
+        setDeleting(true);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const id of selectedItemIds) {
+            await new Promise<void>((resolve) => {
+                window.electron.ipcRenderer.sendMessage('medicine-delete', [id]);
+                window.electron.ipcRenderer.once('medicine-delete-reply', (...args: unknown[]) => {
+                    const result = args[0] as any;
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        errorCount++;
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        setDeleting(false);
+        if (successCount > 0) {
+            alert(`Successfully deleted ${successCount} medicine(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
+            setShowDeleteMedicineModal(false);
+            setSelectedItemIds([]);
+            loadMedicines();
+        } else {
+            alert('Failed to delete medicines');
+        }
+    };
+
+    const handleDeleteSale = async () => {
+        if (selectedItemIds.length === 0) return;
+        if (!confirm(`Are you sure you want to delete ${selectedItemIds.length} sale(s)? This will restore inventory.`)) return;
+        
+        setDeleting(true);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const id of selectedItemIds) {
+            await new Promise<void>((resolve) => {
+                window.electron.ipcRenderer.sendMessage('sale-delete', [id]);
+                window.electron.ipcRenderer.once('sale-delete-reply', (...args: unknown[]) => {
+                    const result = args[0] as any;
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        errorCount++;
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        setDeleting(false);
+        if (successCount > 0) {
+            alert(`Successfully deleted ${successCount} sale(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
+            setShowDeleteSaleModal(false);
+            setSelectedItemIds([]);
+            loadSales();
+        } else {
+            alert('Failed to delete sales');
+        }
+    };
+
+    const handleDeletePurchase = async () => {
+        if (selectedItemIds.length === 0) return;
+        if (!confirm(`Are you sure you want to delete ${selectedItemIds.length} purchase(s)? This will adjust inventory.`)) return;
+        
+        setDeleting(true);
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const id of selectedItemIds) {
+            await new Promise<void>((resolve) => {
+                window.electron.ipcRenderer.sendMessage('purchase-delete', [id]);
+                window.electron.ipcRenderer.once('purchase-delete-reply', (...args: unknown[]) => {
+                    const result = args[0] as any;
+                    if (result.success) {
+                        successCount++;
+                    } else {
+                        errorCount++;
+                    }
+                    resolve();
+                });
+            });
+        }
+
+        setDeleting(false);
+        if (successCount > 0) {
+            alert(`Successfully deleted ${successCount} purchase(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
+            setShowDeletePurchaseModal(false);
+            setSelectedItemIds([]);
+            loadPurchases();
+        } else {
+            alert('Failed to delete purchases');
+        }
+    };
+
+    // Multi-select helper functions
+    const toggleItemSelection = (id: number) => {
+        setSelectedItemIds(prev => 
+            prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]
+        );
+    };
+
+    const toggleSelectAll = (items: any[]) => {
+        if (selectedItemIds.length === items.length) {
+            setSelectedItemIds([]);
+        } else {
+            setSelectedItemIds(items.map(item => item.id));
+        }
+    };
 
     const handleSave = useCallback(async () => {
         setSaving(true);
@@ -209,9 +396,14 @@ const Settings: React.FC = () => {
         // { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
         { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
+        { id: 'data-management' as SettingsSection, label: 'Data Management', icon: FiTrash2 },
     ].filter(section => {
         if (user?.role === 'cashier') {
             return ['profile', 'pharmacy', 'appearance', 'security'].includes(section.id);
+        }
+        // Only admin can access data-management
+        if (section.id === 'data-management' && user?.role !== 'admin') {
+            return false;
         }
         return true;
     });
@@ -359,7 +551,7 @@ const Settings: React.FC = () => {
                             <div className="px-4 py-2 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
                                 <div className="flex items-center gap-2">
                                     <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600">
-                                        <FiBriefcase className="w-4 h-4 text-white" />
+                                        <FiShoppingCart className="w-4 h-4 text-white" />
                                     </div>
                                     <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
                                         Establishment Profile
@@ -903,6 +1095,356 @@ const Settings: React.FC = () => {
                     </div>
                 );
 
+            case 'data-management':
+                return (
+                    <div className="space-y-4 animate-fadeIn">
+                        {/* Warning Banner */}
+                        <div className="bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                            <div className="flex items-start gap-3">
+                                <FiShield className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                                <div>
+                                    <h4 className="text-sm font-bold text-red-900 dark:text-red-100 mb-1">Admin Only - Danger Zone</h4>
+                                    <p className="text-xs text-red-700 dark:text-red-300">
+                                        These actions permanently delete data and cannot be undone. Use with extreme caution.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Delete Cards Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {/* Delete Medicine Card */}
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                                <div className="px-4 py-3 bg-gradient-to-r from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-800/10 border-b border-gray-200 dark:border-gray-700">
+                                    <div className="flex items-center gap-2">
+                                        <FiPackage className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                                        <h3 className="text-sm font-bold text-gray-900 dark:text-white">Delete Medicine</h3>
+                                    </div>
+                                </div>
+                                <div className="p-4">
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
+                                        Permanently remove medicine(s) from the system.
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (showDeleteMedicineModal) {
+                                                setShowDeleteMedicineModal(false);
+                                                setSelectedItemIds([]);
+                                            } else {
+                                                loadMedicines();
+                                                setShowDeleteMedicineModal(true);
+                                            }
+                                        }}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium w-full justify-center ${
+                                            showDeleteMedicineModal
+                                                ? 'bg-gray-500 hover:bg-gray-600 text-white'
+                                                : 'bg-red-600 hover:bg-red-700 text-white'
+                                        }`}
+                                    >
+                                        <FiTrash2 className="w-4 h-4" />
+                                        {showDeleteMedicineModal ? 'Cancel' : 'Delete Medicine'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Delete Sale Card */}
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                                <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-gray-200 dark:border-gray-700">
+                                    <div className="flex items-center gap-2">
+                                        <FiShoppingBag className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                                        <h3 className="text-sm font-bold text-gray-900 dark:text-white">Delete Sale</h3>
+                                    </div>
+                                </div>
+                                <div className="p-4">
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
+                                        Permanently remove sale transaction(s).
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (showDeleteSaleModal) {
+                                                setShowDeleteSaleModal(false);
+                                                setSelectedItemIds([]);
+                                            } else {
+                                                loadSales();
+                                                setShowDeleteSaleModal(true);
+                                            }
+                                        }}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium w-full justify-center ${
+                                            showDeleteSaleModal
+                                                ? 'bg-gray-500 hover:bg-gray-600 text-white'
+                                                : 'bg-red-600 hover:bg-red-700 text-white'
+                                        }`}
+                                    >
+                                        <FiTrash2 className="w-4 h-4" />
+                                        {showDeleteSaleModal ? 'Cancel' : 'Delete Sale'}
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Delete Purchase Card */}
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                                <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-gray-200 dark:border-gray-700">
+                                    <div className="flex items-center gap-2">
+                                        <FiShoppingCart className="w-4 h-4 text-green-600 dark:text-green-400" />
+                                        <h3 className="text-sm font-bold text-gray-900 dark:text-white">Delete Purchase</h3>
+                                    </div>
+                                </div>
+                                <div className="p-4">
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
+                                        Permanently remove purchase transaction(s).
+                                    </p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (showDeletePurchaseModal) {
+                                                setShowDeletePurchaseModal(false);
+                                                setSelectedItemIds([]);
+                                            } else {
+                                                loadPurchases();
+                                                setShowDeletePurchaseModal(true);
+                                            }
+                                        }}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium w-full justify-center ${
+                                            showDeletePurchaseModal
+                                                ? 'bg-gray-500 hover:bg-gray-600 text-white'
+                                                : 'bg-red-600 hover:bg-red-700 text-white'
+                                        }`}
+                                    >
+                                        <FiTrash2 className="w-4 h-4" />
+                                        {showDeletePurchaseModal ? 'Cancel' : 'Delete Purchase'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Inline Delete Medicine Section */}
+                        {showDeleteMedicineModal && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border-2 border-purple-300 dark:border-purple-700 shadow-lg animate-fadeIn">
+                                <div className="px-6 py-4 bg-gradient-to-r from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-800/10 border-b border-purple-200 dark:border-purple-700">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <FiPackage className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                                            <h3 className="text-base font-bold text-gray-900 dark:text-white">Select Medicines to Delete</h3>
+                                        </div>
+                                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                                            {selectedItemIds.length} selected
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="p-6">
+                                    {!Array.isArray(medicines) || medicines.length === 0 ? (
+                                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">No medicines found</p>
+                                    ) : (
+                                        <>
+                                            <div className="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+                                                <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 px-3 py-2 rounded-lg transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItemIds.length === medicines.length && medicines.length > 0}
+                                                        onChange={() => toggleSelectAll(medicines)}
+                                                        className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                                                    />
+                                                    <span className="font-medium text-gray-900 dark:text-white">
+                                                        Select All ({medicines.length})
+                                                    </span>
+                                                </label>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                                                {medicines.map((medicine) => (
+                                                    <label
+                                                        key={medicine.id}
+                                                        className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${
+                                                            selectedItemIds.includes(medicine.id)
+                                                                ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20'
+                                                                : 'border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700'
+                                                        }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedItemIds.includes(medicine.id)}
+                                                            onChange={() => toggleItemSelection(medicine.id)}
+                                                            className="w-4 h-4 text-purple-600 rounded focus:ring-2 focus:ring-purple-500"
+                                                        />
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="font-medium text-gray-900 dark:text-white truncate">{medicine.name}</div>
+                                                            <div className="text-xs text-gray-500 dark:text-gray-400">ID: {medicine.id}</div>
+                                                        </div>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                                                <button
+                                                    onClick={handleDeleteMedicine}
+                                                    disabled={selectedItemIds.length === 0 || deleting}
+                                                    className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                                                >
+                                                    {deleting ? 'Deleting...' : `Delete ${selectedItemIds.length > 0 ? `(${selectedItemIds.length})` : ''}`}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Inline Delete Sale Section */}
+                        {showDeleteSaleModal && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border-2 border-blue-300 dark:border-blue-700 shadow-lg animate-fadeIn">
+                                <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200 dark:border-blue-700">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <FiShoppingBag className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                                            <h3 className="text-base font-bold text-gray-900 dark:text-white">Select Sales to Delete</h3>
+                                        </div>
+                                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                                            {selectedItemIds.length} selected
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="p-6">
+                                    {!Array.isArray(sales) || sales.length === 0 ? (
+                                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">No sales found</p>
+                                    ) : (
+                                        <>
+                                            <div className="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+                                                <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 px-3 py-2 rounded-lg transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItemIds.length === sales.length && sales.length > 0}
+                                                        onChange={() => toggleSelectAll(sales)}
+                                                        className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                                    />
+                                                    <span className="font-medium text-gray-900 dark:text-white">
+                                                        Select All ({sales.length})
+                                                    </span>
+                                                </label>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                                                {sales.map((sale) => (
+                                                    <label
+                                                        key={sale.id}
+                                                        className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${
+                                                            selectedItemIds.includes(sale.id)
+                                                                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                                                : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700'
+                                                        }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedItemIds.includes(sale.id)}
+                                                            onChange={() => toggleItemSelection(sale.id)}
+                                                            className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                                        />
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <div className="font-medium text-gray-900 dark:text-white">Sale #{sale.id}</div>
+                                                                <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                                                    {new Date(sale.createdAt).toLocaleDateString()}
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                                                ${Number(sale.total).toFixed(2)}
+                                                            </div>
+                                                        </div>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                                                <button
+                                                    onClick={handleDeleteSale}
+                                                    disabled={selectedItemIds.length === 0 || deleting}
+                                                    className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                                                >
+                                                    {deleting ? 'Deleting...' : `Delete ${selectedItemIds.length > 0 ? `(${selectedItemIds.length})` : ''}`}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Inline Delete Purchase Section */}
+                        {showDeletePurchaseModal && (
+                            <div className="bg-white dark:bg-gray-800 rounded-lg border-2 border-green-300 dark:border-green-700 shadow-lg animate-fadeIn">
+                                <div className="px-6 py-4 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-green-200 dark:border-green-700">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                            <FiShoppingCart className="w-5 h-5 text-green-600 dark:text-green-400" />
+                                            <h3 className="text-base font-bold text-gray-900 dark:text-white">Select Purchases to Delete</h3>
+                                        </div>
+                                        <span className="text-sm text-gray-600 dark:text-gray-400">
+                                            {selectedItemIds.length} selected
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="p-6">
+                                    {!Array.isArray(purchases) || purchases.length === 0 ? (
+                                        <p className="text-center text-gray-500 dark:text-gray-400 py-8">No purchases found</p>
+                                    ) : (
+                                        <>
+                                            <div className="mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
+                                                <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 px-3 py-2 rounded-lg transition-colors">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedItemIds.length === purchases.length && purchases.length > 0}
+                                                        onChange={() => toggleSelectAll(purchases)}
+                                                        className="w-4 h-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
+                                                    />
+                                                    <span className="font-medium text-gray-900 dark:text-white">
+                                                        Select All ({purchases.length})
+                                                    </span>
+                                                </label>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto">
+                                                {purchases.map((purchase) => (
+                                                    <label
+                                                        key={purchase.id}
+                                                        className={`flex items-center gap-3 px-4 py-3 rounded-lg border cursor-pointer transition-colors ${
+                                                            selectedItemIds.includes(purchase.id)
+                                                                ? 'border-green-500 bg-green-50 dark:bg-green-900/20'
+                                                                : 'border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-700'
+                                                        }`}
+                                                    >
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={selectedItemIds.includes(purchase.id)}
+                                                            onChange={() => toggleItemSelection(purchase.id)}
+                                                            className="w-4 h-4 text-green-600 rounded focus:ring-2 focus:ring-green-500"
+                                                        />
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <div className="font-medium text-gray-900 dark:text-white">Purchase #{purchase.id}</div>
+                                                                <div className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                                                                    {purchase.createdAt ? new Date(purchase.createdAt).toLocaleDateString() : 'N/A'}
+                                                                </div>
+                                                            </div>
+                                                            <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                                                                ${Number(purchase.grandTotal).toFixed(2)} | {purchase.supplierName || 'N/A'}
+                                                            </div>
+                                                        </div>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                            <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                                                <button
+                                                    onClick={handleDeletePurchase}
+                                                    disabled={selectedItemIds.length === 0 || deleting}
+                                                    className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                                                >
+                                                    {deleting ? 'Deleting...' : `Delete ${selectedItemIds.length > 0 ? `(${selectedItemIds.length})` : ''}`}
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                );
+
             default:
                 return null;
         }
@@ -934,6 +1476,11 @@ const Settings: React.FC = () => {
                 return {
                     title: 'Appearance Settings',
                     subtitle: 'Switch themes and personalize the interface',
+                };
+            case 'data-management':
+                return {
+                    title: 'Data Management',
+                    subtitle: 'Delete medicines, sales, and purchases (Admin Only)',
                 };
             default:
                 return {
@@ -987,11 +1534,12 @@ const Settings: React.FC = () => {
     }, [setHeader, sectionMeta, headerActions]);
 
     return (
-        <div className="w-full h-full flex flex-col overflow-hidden min-h-0">
-            <div className="flex-1 overflow-hidden flex min-h-0">
-                {/* Left Sidebar - Fixed Width */}
-                <div className="w-64 flex-shrink-0 h-full flex flex-col">
-                    <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 border-r border-gray-200 dark:border-gray-700 h-full flex flex-col overflow-hidden">
+        <>
+            <div className="w-full h-full flex flex-col overflow-hidden min-h-0">
+                <div className="flex-1 overflow-hidden flex min-h-0">
+                    {/* Left Sidebar - Fixed Width */}
+                    <div className="w-64 flex-shrink-0 h-full flex flex-col">
+                        <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 border-r border-gray-200 dark:border-gray-700 h-full flex flex-col overflow-hidden">
 
 
                         <nav className="flex-1 overflow-y-auto p-1.5 space-y-1 min-h-0">
@@ -1034,8 +1582,9 @@ const Settings: React.FC = () => {
                     </div>
                 </div>
             </div>
-        </div>
-    );
+
+    </div>
+    </>)
 };
 
 export default Settings;

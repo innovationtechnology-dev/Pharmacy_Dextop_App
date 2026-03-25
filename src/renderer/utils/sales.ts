@@ -44,6 +44,8 @@ export type FlatSaleRow = {
   customerName?: string;
   customerPhone?: string;
   saleType?: string;
+  additionalDiscount?: number;
+  additionalDiscountAmount?: number;
   medicineId: number;
   medicineName: string;
   pills: number;

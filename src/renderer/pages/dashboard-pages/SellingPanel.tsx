@@ -25,6 +25,7 @@ import {
   FiRotateCcw,
   FiRefreshCw,
 } from 'react-icons/fi';
+import { FaPercent } from 'react-icons/fa';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
   PharmacySettings,
@@ -92,8 +93,9 @@ const recalculateSaleItem = (item: CartItem): CartItem => {
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
   const subtotal = item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
-  const taxAmount = (subtotal * taxPercent) / 100; // Tax calculated on original subtotal
-  const finalPrice = subtotal - discountAmount + taxAmount;
+  const discountedAmount = subtotal - discountAmount;
+  const taxAmount = (discountedAmount * taxPercent) / 100; // Tax calculated on discounted amount
+  const finalPrice = discountedAmount + taxAmount;
 
   return {
     ...item,
@@ -139,6 +141,9 @@ const SellingPanel: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [saleType, setSaleType] = useState<string>('Regular');
+  const [additionalDiscount, setAdditionalDiscount] = useState<number>(0);
+  const [additionalDiscountDraft, setAdditionalDiscountDraft] = useState<string>('');
+  const [isEditingAdditionalDiscount, setIsEditingAdditionalDiscount] = useState(false);
   const [prescriptionNumber, setPrescriptionNumber] = useState('');
   const [doctorName, setDoctorName] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -540,6 +545,8 @@ const SellingPanel: React.FC = () => {
     setCustomerName('');
     setCustomerPhone('');
     setSaleType('Regular');
+    setAdditionalDiscount(0);
+    setAdditionalDiscountDraft('');
     setPrescriptionNumber('');
     setDoctorName('');
     setReceivedAmount('');
@@ -570,6 +577,8 @@ const SellingPanel: React.FC = () => {
           customerName: sale.customerName || '',
           customerPhone: sale.customerPhone || '-',
           saleType: sale.saleType || 'Regular',
+          additionalDiscount: sale.additionalDiscount || 0,
+          additionalDiscountAmount: sale.additionalDiscountAmount || 0,
           items: [],
           total: 0,
         };
@@ -577,7 +586,14 @@ const SellingPanel: React.FC = () => {
       acc[sale.saleId].items.push(sale);
       acc[sale.saleId].total += sale.total;
       return acc;
-    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }>);
+    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; additionalDiscount?: number; additionalDiscountAmount?: number; items: FlatSaleRow[]; total: number }>);
+
+    // Subtract additional discount from each sale's total
+    Object.values(groupedSales).forEach(sale => {
+      if (sale.additionalDiscountAmount && sale.additionalDiscountAmount > 0) {
+        sale.total -= sale.additionalDiscountAmount;
+      }
+    });
 
     return Object.values(groupedSales).sort(
       (a, b) =>
@@ -1035,6 +1051,7 @@ const SellingPanel: React.FC = () => {
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
+        additionalDiscount: (saleType === 'Family/Relatives' || saleType === 'Charity') ? additionalDiscount : 0,
         prescriptionNumber: prescriptionNumber.trim() || undefined,
         doctorName: doctorName.trim() || undefined,
       };
@@ -1073,6 +1090,8 @@ const SellingPanel: React.FC = () => {
             setReturnedQuantities(new Map());
             setCustomerName('');
             setCustomerPhone('');
+            setAdditionalDiscount(0);
+            setAdditionalDiscountDraft('');
             setBarcodeInput('');
             setSelectedSaleId(null); // Clear selection after successful sale
             setCurrentBillIndex(-1); // Reset to new bill
@@ -1143,6 +1162,8 @@ const SellingPanel: React.FC = () => {
         customerPhone,
         currentBillIndex,
         returnedQuantities,
+        saleType,
+        additionalDiscount,
         amountGiven: amountGivenForReceipt,
       },
       // The HTML printer script + our iframe onload print can both fire.
@@ -1179,7 +1200,9 @@ const SellingPanel: React.FC = () => {
       setCart([]);
       setReturnedQuantities(new Map());
       setSelectedSaleId(null);
-      setCurrentBillIndex(-1); // Reset to new bill
+      setCurrentBillIndex(-1);
+      setAdditionalDiscount(0);
+      setAdditionalDiscountDraft(''); // Reset to new bill
       clearFormForNewBill();
     }
   };
@@ -1214,8 +1237,14 @@ const SellingPanel: React.FC = () => {
   }, [cart, returnedQuantities, currentBillIndex]);
 
   const grandTotal = useMemo(() => {
-    return subtotalValue - discountValue + taxValue;
-  }, [subtotalValue, discountValue, taxValue]);
+    const baseTotal = subtotalValue - discountValue + taxValue;
+    // Apply additional discount for Family/Relatives or Charity
+    if (saleType === 'Family/Relatives' || saleType === 'Charity') {
+      const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+      return baseTotal - additionalDiscountAmount;
+    }
+    return baseTotal;
+  }, [subtotalValue, discountValue, taxValue, saleType, additionalDiscount]);
 
   // Memoize net payable to avoid recalculation
   const netPayable = useMemo(() => {
@@ -1247,6 +1276,14 @@ const SellingPanel: React.FC = () => {
         setCustomerPhone(sale.customerPhone || '0000');
         setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
+        
+        // Set additional discount from the first item (all items in a sale have the same additional discount)
+        const firstItem = sale.items[0];
+        if (firstItem && (firstItem.additionalDiscount !== undefined && firstItem.additionalDiscount !== null)) {
+          setAdditionalDiscount(firstItem.additionalDiscount);
+        } else {
+          setAdditionalDiscount(0);
+        }
 
         // Set date and time from sale
         const saleDate = new Date(sale.createdAt);
@@ -2017,7 +2054,7 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
-                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setAdditionalDiscount(0); setAdditionalDiscountDraft(''); setShowCustomerDropdown(false); }}
                         >
                           CASH CUSTOMER
                         </div>
@@ -2385,11 +2422,27 @@ const SellingPanel: React.FC = () => {
                               onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                 if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                                 const v = e.target.value;
-                                if (v === '' || /^\d+$/.test(v)) {
+                                const id = item.medicine.id;
+                                if (v === '') {
                                   setQtyInputDraft((prev) => ({
                                     ...prev,
-                                    [item.medicine.id]: v,
+                                    [id]: v,
                                   }));
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  setQtyInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  if (numVal >= 1) {
+                                    const maxAvail = item.medicine.sellablePills;
+                                    if (typeof maxAvail === 'number' && numVal > maxAvail) {
+                                      warning(`Only ${maxAvail} pills available for sale!`);
+                                      setCartItemQuantity(id, maxAvail);
+                                    } else {
+                                      setCartItemQuantity(id, numVal);
+                                    }
+                                  }
                                 }
                               }}
                               onBlur={() => {
@@ -2464,12 +2517,23 @@ const SellingPanel: React.FC = () => {
                             onFocus={(e) => e.target.select()}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                               const v = e.target.value;
+                              const id = item.medicine.id;
                               // Only allow digits and check if value is <= 100
-                              if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                              if (v === '') {
                                 setDiscountInputDraft((prev) => ({
                                   ...prev,
-                                  [item.medicine.id]: v,
+                                  [id]: v,
                                 }));
+                                updateCartItemField(id, 'discount', 0);
+                              } else if (/^\d+$/.test(v)) {
+                                const numVal = parseInt(v, 10);
+                                if (numVal <= 100) {
+                                  setDiscountInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  updateCartItemField(id, 'discount', numVal);
+                                }
                               }
                             }}
                             onBlur={() => {
@@ -2506,12 +2570,23 @@ const SellingPanel: React.FC = () => {
                             onFocus={(e) => e.target.select()}
                             onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                               const v = e.target.value;
+                              const id = item.medicine.id;
                               // Only allow digits and check if value is <= 100
-                              if (v === '' || (/^\d+$/.test(v) && parseInt(v, 10) <= 100)) {
+                              if (v === '') {
                                 setTaxInputDraft((prev) => ({
                                   ...prev,
-                                  [item.medicine.id]: v,
+                                  [id]: v,
                                 }));
+                                updateCartItemField(id, 'tax', 0);
+                              } else if (/^\d+$/.test(v)) {
+                                const numVal = parseInt(v, 10);
+                                if (numVal <= 100) {
+                                  setTaxInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  updateCartItemField(id, 'tax', numVal);
+                                }
                               }
                             }}
                             onBlur={() => {
@@ -2662,25 +2737,24 @@ const SellingPanel: React.FC = () => {
                     }
                   >
                     <div
-                      className={`grid grid-cols-2 ${expandedSaleSummary ? 'gap-2' : 'gap-2'}`}
+                      className={`grid ${expandedSaleSummary ? 'gap-2' : 'gap-2'}`}
+                      style={{ gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr' }}
                     >
                       {/* Block 1: Discounts & Taxes */}
                       <div
-                        className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
+                        className={`h-full bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
                           expandedSaleSummary
-                            ? 'p-2 rounded-lg flex flex-col justify-center gap-2 shadow-sm dark:shadow-none'
-                            : 'p-2 rounded-lg space-y-2'
+                            ? 'p-2 rounded-lg flex flex-col gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg flex flex-col space-y-2'
                         }`}
                       >
-                        <div
-                          className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}
-                        >
+                        <div className="flex items-center justify-between gap-4">
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
                               expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                             }`}
                           >
-                            Discount
+                            Disc
                           </div>
                           <div
                             className={`font-bold text-red-600 dark:text-red-400 tabular-nums ${
@@ -2690,13 +2764,8 @@ const SellingPanel: React.FC = () => {
                             -{formatCurrency(discountValue)}
                           </div>
                         </div>
-                        <div
-                          className={`flex justify-between items-center border-gray-100 dark:border-gray-600/50 ${
-                            expandedSaleSummary
-                              ? 'pt-2.5 border-t-2 gap-2'
-                              : 'pt-1.5 border-t'
-                          }`}
-                        >
+                        
+                        <div className="flex items-center justify-between gap-4">
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
                               expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
@@ -2712,17 +2781,88 @@ const SellingPanel: React.FC = () => {
                             +{formatCurrency(taxValue)}
                           </div>
                         </div>
+                        
+                        {/* ADDITIONAL DISCOUNT INPUT - Only show for Family/Relatives or Charity */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && (
+                          <div
+                            className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
+                              expandedSaleSummary
+                                ? 'pt-1.5 border-t-2'
+                                : 'pt-1.5 border-t'
+                            }`}
+                          >
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              }`}
+                            >
+                              Extra Disc%
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Extra Discount"
+                              value={
+                                isEditingAdditionalDiscount
+                                  ? additionalDiscountDraft
+                                  : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
+                              }
+                              onFocus={(e) => {
+                                setIsEditingAdditionalDiscount(true);
+                                if (additionalDiscount === 0) {
+                                  setAdditionalDiscountDraft('');
+                                } else {
+                                  setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
+                                }
+                                e.target.select();
+                              }}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                // Allow empty string or digits only, and check if value is <= 100
+                                if (v === '') {
+                                  setAdditionalDiscountDraft('');
+                                  setAdditionalDiscount(0);
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  if (numVal <= 100) {
+                                    setAdditionalDiscountDraft(v);
+                                    setAdditionalDiscount(numVal);
+                                  }
+                                }
+                              }}
+                              onBlur={() => {
+                                setIsEditingAdditionalDiscount(false);
+                                const draft = additionalDiscountDraft;
+                                setAdditionalDiscountDraft('');
+                                if (draft === undefined || draft === '') {
+                                  setAdditionalDiscount(0);
+                                  return;
+                                }
+                                const trimmed = draft.trim();
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                  val = 0;
+                                }
+                                if (val > 100) val = 100;
+                                setAdditionalDiscount(val);
+                              }}
+                              placeholder="0"
+                              className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       {/* Block 2: Values & Final Total */}
                       <div
-                        className={`bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 text-right ${
+                        className={`h-full bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
                           expandedSaleSummary
-                            ? 'p-2 rounded-lg flex flex-col justify-center gap-2 shadow-sm dark:shadow-none'
-                            : 'p-2 rounded-lg space-y-2'
+                            ? 'p-2 rounded-lg flex flex-col gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg flex flex-col space-y-2'
                         }`}
                       >
-                        <div className={`flex justify-between items-center ${expandedSaleSummary ? 'gap-2' : ''}`}>
+                        <div className="flex items-center justify-between gap-4">
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
                               expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
@@ -2738,11 +2878,27 @@ const SellingPanel: React.FC = () => {
                             {formatCurrency(subtotalValue)}
                           </div>
                         </div>
-                        <div
-                          className={`flex justify-between items-center border-emerald-100 dark:border-emerald-900/30 ${
-                            expandedSaleSummary ? 'pt-2.5 border-t-2 gap-2' : 'pt-1.5 border-t'
-                          }`}
-                        >
+                        
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount > 0 && (
+                          <div className="flex items-center justify-between gap-4">
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              }`}
+                            >
+                              Extra Disc
+                            </div>
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 tabular-nums ${
+                                expandedSaleSummary ? 'text-sm' : 'text-sm'
+                              }`}
+                            >
+                              -{formatCurrency(((subtotalValue - discountValue + taxValue) * additionalDiscount) / 100)}
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className={`flex items-center justify-between gap-4 border-t border-gray-200 dark:border-gray-600 ${expandedSaleSummary ? 'pt-1 mt-0' : 'pt-1.5 mt-1.5'}`}>
                           <div
                             className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
                               expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
@@ -2770,18 +2926,19 @@ const SellingPanel: React.FC = () => {
                       }`}
                     >
                       <div
-                        className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex flex-col ${
-                          expandedSaleSummary ? 'p-2 rounded-lg justify-center' : 'p-2 rounded-lg'
+                        className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex items-center gap-2 ${
+                          expandedSaleSummary ? 'p-2 rounded-lg' : 'p-2 rounded-lg'
                         }`}
                       >
                         <div
-                          className={`font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide ${
+                          className={`font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide leading-tight ${
                             expandedSaleSummary
-                              ? 'text-xs mb-1.5'
-                              : 'text-[10px] font-semibold mb-1'
+                              ? 'text-xs'
+                              : 'text-[10px] font-semibold'
                           }`}
                         >
-                          Given Amount
+                          <div>Given</div>
+                          <div>Amount</div>
                         </div>
                         <input
                           type="number"
@@ -2789,16 +2946,16 @@ const SellingPanel: React.FC = () => {
                           onFocus={(e) => e.target.select()}
                           onChange={(e) => setReceivedAmount(e.target.value)}
                           placeholder="0.00"
-                          className={`w-full bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 outline-none transition-all tabular-nums ${
+                          className={`bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 outline-none transition-all tabular-nums ${
                             expandedSaleSummary
-                              ? 'px-2.5 py-1.5 text-base'
-                              : 'px-2 py-1 text-sm border focus:ring-2'
+                              ? 'px-2.5 py-1.5 text-base w-32'
+                              : 'px-2 py-1 text-sm w-28'
                           }`}
                         />
                       </div>
                       <div
-                        className={`border transition-colors flex flex-col ${
-                          expandedSaleSummary ? 'p-2.5 rounded-lg justify-center' : 'p-2.5 rounded-lg'
+                        className={`border transition-colors flex items-center gap-2 ${
+                          expandedSaleSummary ? 'p-2 rounded-lg' : 'p-2 rounded-lg'
                         } ${
                           returnAmount >= 0
                             ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
@@ -2806,19 +2963,20 @@ const SellingPanel: React.FC = () => {
                         }`}
                       >
                         <div
-                          className={`font-bold uppercase tracking-wide ${
-                            expandedSaleSummary ? 'text-xs mb-1.5' : 'text-[10px] font-semibold mb-1'
+                          className={`font-bold uppercase tracking-wide leading-tight ${
+                            expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                           } ${
                             returnAmount >= 0
                               ? 'text-blue-700 dark:text-blue-400'
                               : 'text-red-700 dark:text-red-400'
                           }`}
                         >
-                          Return Amount
+                          <div>Return</div>
+                          <div>Amount</div>
                         </div>
                         <div
-                          className={`font-black tabular-nums ${
-                            expandedSaleSummary ? 'text-lg' : 'text-sm'
+                          className={`text-right font-black tabular-nums ${
+                            expandedSaleSummary ? 'text-lg w-32' : 'text-sm w-28'
                           } ${
                             returnAmount >= 0
                               ? 'text-blue-600 dark:text-blue-400'
@@ -3105,6 +3263,14 @@ const SellingPanel: React.FC = () => {
                                   {sale.items.length === 1 ? 'item' : 'items'}
                                 </span>
                               </div>
+                              {/* Additional Discount Badge */}
+                              {sale.additionalDiscount && sale.additionalDiscount > 0 && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded">
+                                  <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400">
+                                    Special Disc. -{sale.additionalDiscount}%
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span
