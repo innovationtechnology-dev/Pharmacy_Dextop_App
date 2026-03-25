@@ -48,6 +48,15 @@ import {
 // false => send to browser/Electron print dialog
 const RECEIPT_PREVIEW_MODE = false;
 
+// Constants
+const BARCODE_SCAN_TIMEOUT_MS = 200;
+const BARCODE_MIN_LENGTH = 4;
+const SALES_HISTORY_LIMIT = 20;
+const SEARCH_DEBOUNCE_MS = 300;
+const SUCCESS_MESSAGE_DURATION_MS = 2000;
+const DROPDOWN_BLUR_DELAY_MS = 200;
+const PRINT_FRAME_CLEANUP_MS = 500;
+
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
 interface Medicine {
@@ -523,7 +532,7 @@ const SellingPanel: React.FC = () => {
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
-          .slice(0, 25);
+          .slice(0, SALES_HISTORY_LIMIT);
         setSalesHistory(recent);
       }
     } catch (error) {
@@ -616,8 +625,9 @@ const SellingPanel: React.FC = () => {
 
     // Subtract additional discount from each sale's total
     Object.values(groupedSales).forEach(sale => {
-      if (sale.additionalDiscountAmount && sale.additionalDiscountAmount > 0) {
-        sale.total -= sale.additionalDiscountAmount;
+      const discountAmount = sale.additionalDiscountAmount ?? 0;
+      if (discountAmount > 0) {
+        sale.total -= discountAmount;
       }
     });
 
@@ -651,7 +661,7 @@ const SellingPanel: React.FC = () => {
     if (salesHistoryList.length > 0) {
       loadReturnsForAllSales();
     }
-  }, [salesHistoryList.length]); // Only re-run when the number of sales changes
+  }, [salesHistoryList]); // Fixed: Use full salesHistoryList instead of just length
 
   // Reset to new bill when sales history is loaded and no bill is selected
   useEffect(() => {
@@ -729,7 +739,7 @@ const SellingPanel: React.FC = () => {
 
     // Check after initial load
     const timer = setTimeout(checkMedicines, 500);
-    return () => clearTimeout(timer);
+    return () => clearTimeout(timer); // Cleanup timeout
   }, []);
 
   const seedSampleMedicines = useCallback(async () => {
@@ -779,7 +789,7 @@ const SellingPanel: React.FC = () => {
         if (barcodeInput.trim().length > 0) {
           handleBarcodeScan(barcodeInput);
         }
-      }, 200);
+      }, BARCODE_SCAN_TIMEOUT_MS);
     }
 
     return () => {
@@ -804,15 +814,14 @@ const SellingPanel: React.FC = () => {
   // Global barcode scanner: capture phase so keys are not lost when focus is outside Product (F2).
   // `data-wedge-typing` marks areas where normal keyboard typing must reach inputs (customer, cart, etc.).
   useEffect(() => {
-    const MIN_BARCODE_LENGTH = 4;
-    const SCAN_END_MS = 200;
+    const SCAN_END_MS = BARCODE_SCAN_TIMEOUT_MS;
 
     const isWedgeTypingField = (el: EventTarget | null) =>
       el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
 
     const flushGlobalBarcode = (raw: string) => {
       const normalized = normalizeScannedBarcode(raw);
-      if (!normalized || normalized.length < MIN_BARCODE_LENGTH) {
+      if (!normalized || normalized.length < BARCODE_MIN_LENGTH) {
         globalBarcodeBufferRef.current = '';
         return;
       }
@@ -855,7 +864,7 @@ const SellingPanel: React.FC = () => {
       }
 
       if (event.key === 'Enter') {
-        if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
+        if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
           flushGlobalBarcode(globalBarcodeBufferRef.current);
           event.preventDefault();
           event.stopPropagation();
@@ -874,7 +883,7 @@ const SellingPanel: React.FC = () => {
           clearTimeout(globalBarcodeTimerRef.current);
         }
         globalBarcodeTimerRef.current = setTimeout(() => {
-          if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
+          if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
             flushGlobalBarcode(globalBarcodeBufferRef.current);
           } else {
             globalBarcodeBufferRef.current = '';
@@ -910,8 +919,17 @@ const SellingPanel: React.FC = () => {
     // Set new timeout - only search after 300ms of no typing
     debouncedSearch.current = setTimeout(() => {
       handleSearch(value);
-    }, 300);
+    }, SEARCH_DEBOUNCE_MS);
   };
+
+  // Cleanup debounced search on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedSearch.current) {
+        clearTimeout(debouncedSearch.current);
+      }
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Tab' && showSearchResults && medicines.length > 0) {
@@ -1093,9 +1111,10 @@ const SellingPanel: React.FC = () => {
           loadSalesHistory(); // Reload sales history
           refreshExpiringAlerts();
           // Keep viewing the updated sale
-          setTimeout(() => {
+          const successTimer = setTimeout(() => {
             setShowSuccess(false);
-          }, 2000);
+          }, SUCCESS_MESSAGE_DURATION_MS);
+          return () => clearTimeout(successTimer);
         } else {
           alert(`Error updating sale: ${result.error || 'Unknown error'}`);
         }
@@ -1127,12 +1146,13 @@ const SellingPanel: React.FC = () => {
             loadMedicines(); // Reload medicines to update quantities
             loadSalesHistory(); // Reload sales history
             refreshExpiringAlerts();
-            setTimeout(() => {
+            const successTimer = setTimeout(() => {
               setShowSuccess(false);
               if (barcodeInputRef.current) {
                 barcodeInputRef.current.focus();
               }
-            }, 2000);
+            }, SUCCESS_MESSAGE_DURATION_MS);
+            return () => clearTimeout(successTimer);
           } else {
             alert(`Error processing sale: ${response.error || 'Unknown error'}`);
           }
@@ -1154,10 +1174,34 @@ const SellingPanel: React.FC = () => {
     }
     // Always read latest from Settings so receipt reflects current pharmacy details
     const pharmacyInfo = getStoredPharmacySettings();
+    
+    // Calculate values locally to avoid dependency issues
+    const localSubtotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+    
+    const localDiscount = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+    
+    const localTax = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      const itemDiscount = (itemSubtotal * item.discount) / 100;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      return sum + ((discountedAmount * item.tax) / 100);
+    }, 0);
+    
     const amountGivenForReceipt =
       currentBillIndex === -1 && receivedAmount && !Number.isNaN(Number(receivedAmount))
         ? Number(receivedAmount)
-        : subtotalValue - discountValue + taxValue;
+        : localSubtotal - localDiscount + localTax;
 
     const html = buildThermalReceiptHtml(
       {
@@ -1213,13 +1257,13 @@ const SellingPanel: React.FC = () => {
       printFrame.onload = () => {
         printFrame.contentWindow?.focus();
         printFrame.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(printFrame), 500);
+        setTimeout(() => document.body.removeChild(printFrame), PRINT_FRAME_CLEANUP_MS);
       };
       frameDoc.open();
       frameDoc.write(html);
       frameDoc.close();
     }
-  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount]);
+  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount, saleType, additionalDiscount]);
 
   const clearCart = () => {
     if (window.confirm('Clear cart and start a new sale?')) {
@@ -2239,7 +2283,7 @@ const SellingPanel: React.FC = () => {
                           setShowSearchResults(false);
                           setHighlightedIndex(-1);
                         }
-                      }, 200);
+                      }, DROPDOWN_BLUR_DELAY_MS);
                     }}
                     placeholder="Search or scan product..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"
@@ -3330,7 +3374,7 @@ const SellingPanel: React.FC = () => {
                                 </span>
                               </div>
                               {/* Additional Discount Badge */}
-                              {sale.additionalDiscount && sale.additionalDiscount > 0 && (
+                              {(sale.additionalDiscount ?? 0) > 0 && (
                                 <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded">
                                   <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400">
                                     Special Disc. -{sale.additionalDiscount}%

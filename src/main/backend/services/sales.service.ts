@@ -453,6 +453,8 @@ export class SalesService {
         s.subtotal,
         s.discount_total,
         s.tax_total,
+        s.additional_discount,
+        s.additional_discount_amount,
         s.total,
         s.customer_name,
         s.customer_phone,
@@ -482,6 +484,8 @@ export class SalesService {
           subtotal: row.subtotal,
           discountTotal: row.discount_total,
           taxTotal: row.tax_total,
+          additionalDiscount: row.additional_discount,
+          additionalDiscountAmount: row.additional_discount_amount,
           total: row.total,
           customerName: row.customer_name || undefined,
           customerPhone: row.customer_phone || undefined,
@@ -553,6 +557,8 @@ export class SalesService {
       subtotal: sale.subtotal,
       discountTotal: sale.discount_total,
       taxTotal: sale.tax_total,
+      additionalDiscount: sale.additional_discount,
+      additionalDiscountAmount: sale.additional_discount_amount,
       total: sale.total,
       customerName: sale.customer_name || undefined,
       customerPhone: sale.customer_phone || undefined,
@@ -700,14 +706,19 @@ export class SalesService {
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    const total = subtotal - discountTotal + taxTotal;
+    
+    // Calculate additional discount
+    const baseTotal = subtotal - discountTotal + taxTotal;
+    const additionalDiscount = payload.additionalDiscount || 0;
+    const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+    const total = baseTotal - additionalDiscountAmount;
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       // Update sale record
       const updateSaleSql = `
         UPDATE sales 
-        SET subtotal = ?, discount_total = ?, tax_total = ?, total = ?, 
+        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?, 
             customer_name = ?, customer_phone = ?, sale_type = ?
         WHERE id = ?
       `;
@@ -715,6 +726,8 @@ export class SalesService {
         subtotal,
         discountTotal,
         taxTotal,
+        additionalDiscount,
+        additionalDiscountAmount,
         total,
         payload.customerName || null,
         payload.customerPhone || null,
@@ -866,8 +879,8 @@ export class SalesService {
         COALESCE(SUM(total), 0) as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN total ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN total ELSE 0 END), 0) as charity_total
+        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN additional_discount_amount ELSE 0 END), 0) as family_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
         AND datetime(created_at) <= datetime(?)

@@ -194,7 +194,7 @@ const FinancialSummary = () => {
             <FiDollarSign className="w-3.5 h-3.5 text-teal-500" />
             <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Net Profit</span>
             <span className={`text-xs font-bold ml-1 ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {formatCurrency(financialData.profit)}
+              {formatCurrency(Math.max(0, financialData.profit))}
             </span>
           </div>
 
@@ -321,13 +321,13 @@ const FinancialSummary = () => {
                       </div>
                       <div className="border-t border-gray-200 dark:border-gray-600 pt-3 col-span-2">
                         <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-purple-50 dark:bg-purple-900/10 p-2.5 rounded-lg border border-purple-100 dark:border-purple-800/30">
-                            <p className="text-[10px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-widest mb-0.5">Family/Relative</p>
-                            <p className="text-sm font-bold text-purple-700 dark:text-purple-300">{formatCurrency(financialData.familyTotal)}</p>
+                          <div className="bg-purple-50/50 dark:bg-purple-900/10 p-2.5 rounded-lg border border-purple-100/50 dark:border-purple-800/30">
+                            <p className="text-[9px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mb-0.5">Relative</p>
+                            <p className="text-xs font-bold text-purple-700 dark:text-purple-300">{formatCurrency(financialData.familyTotal)}</p>
                           </div>
-                          <div className="bg-pink-50 dark:bg-pink-900/10 p-2.5 rounded-lg border border-pink-100 dark:border-pink-800/30">
-                            <p className="text-[10px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-widest mb-0.5">Charity</p>
-                            <p className="text-sm font-bold text-pink-700 dark:text-pink-300">{formatCurrency(financialData.charityTotal)}</p>
+                          <div className="bg-pink-50/50 dark:bg-pink-900/10 p-2.5 rounded-lg border border-pink-100/50 dark:border-pink-800/30">
+                            <p className="text-[9px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-wider mb-0.5">Charity</p>
+                            <p className="text-xs font-bold text-pink-700 dark:text-pink-300">{formatCurrency(financialData.charityTotal)}</p>
                           </div>
                         </div>
                       </div>
@@ -340,7 +340,7 @@ const FinancialSummary = () => {
                     <div>
                       <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Net Profit Margin</p>
                       <p className={`text-2xl font-black ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {formatCurrency(financialData.profit)}
+                        {formatCurrency(Math.max(0, financialData.profit))}
                       </p>
                     </div>
                     <div className="text-right">

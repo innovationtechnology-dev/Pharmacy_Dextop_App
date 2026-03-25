@@ -45,6 +45,8 @@ type SaleRecord = {
   customerName?: string;
   customerPhone?: string;
   saleType?: string;
+  additionalDiscount?: number;
+  additionalDiscountAmount?: number;
   createdAt?: string;
   items: SaleItemSummary[];
 };
@@ -112,10 +114,10 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
 
   const familyTotal = sales
     .filter((sale) => sale.saleType === 'Family/Relatives')
-    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
   const charityTotal = sales
     .filter((sale) => sale.saleType === 'Charity')
-    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
 
   const uniqueCustomers = new Set(
     sales
@@ -430,7 +432,7 @@ const Dashboard = () => {
       {
         id: 'profit',
         title: 'Net Profit',
-        value: formatCurrency(displayTotals.profit),
+        value: formatCurrency(Math.max(0, displayTotals.profit)),
         icon: <FiTrendingUp />,
       },
       {
@@ -731,7 +733,7 @@ const Dashboard = () => {
                   <div className="flex items-center justify-between p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/30">
                     <div>
                       <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Net Profit</div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(displayTotals.profit)}</div>
+                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(Math.max(0, displayTotals.profit))}</div>
                     </div>
                     <div className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       displayTotals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
