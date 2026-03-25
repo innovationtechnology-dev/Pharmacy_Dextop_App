@@ -5,12 +5,14 @@ const container = document.getElementById('root')!;
 const root = createRoot(container);
 root.render(<App />);
 
-// calling IPC exposed from preload script
-window.electron.ipcRenderer.once('ipc-example', (arg: any) => {
-  // eslint-disable-next-line no-console
-  console.log(arg);
-});
-window.electron.ipcRenderer.sendMessage('ipc-example', ['ping']);
+// calling IPC exposed from preload script (only if available)
+if (window.electron?.ipcRenderer) {
+  window.electron.ipcRenderer.once('ipc-example', (arg: any) => {
+    // eslint-disable-next-line no-console
+    console.log(arg);
+  });
+  window.electron.ipcRenderer.sendMessage('ipc-example', ['ping']);
+}
 
 /*
 We will use asyncSql(sql) in src/renderer/pages/sqlDemoApp to send sql commmands and replies back and forth
