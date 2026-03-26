@@ -1648,14 +1648,16 @@ const SellingPanel: React.FC = () => {
 
   // Handle delete sale
   const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
-    if (isCashier) {
-      alert('Cashiers are not allowed to delete sales');
-      return;
-    }
-
+    // Check if sale is from today
     if (!isToday(saleDate)) {
-      alert('You can only delete sales created today');
-      return;
+      if (isCashier) {
+        alert('Cashiers can only delete sales from today. Please contact an administrator for older records.');
+        return;
+      }
+      // Admin can delete any sale, but confirm for old sales
+      if (!window.confirm('This sale is not from today. Are you sure you want to delete it?')) {
+        return;
+      }
     }
 
     if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
@@ -1679,12 +1681,13 @@ const SellingPanel: React.FC = () => {
           alert(`Error deleting sale: ${response.error || 'Unknown error'}`);
         }
       });
-      window.electron.ipcRenderer.sendMessage('sale-delete', [saleId]);
+      const authUser = getAuthUser();
+      window.electron.ipcRenderer.sendMessage('sale-delete', [saleId, authUser?.role]);
     } catch (error) {
       console.error('Error deleting sale:', error);
       alert('Error deleting sale. Please try again.');
     }
-  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
+  }, [isCashier, selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -3174,27 +3177,29 @@ const SellingPanel: React.FC = () => {
                         </div>
                       )}
 
-                      <button
-                        type="button"
-                        onClick={handleOpenReturnModal}
-                        className="w-full py-2.5 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                      >
-                        <FiRotateCcw className="w-4 h-4" />
-                        <span>Return Items</span>
-                      </button>
+                      <div className="flex gap-3">
+                        <button
+                          type="button"
+                          onClick={handleOpenReturnModal}
+                          className="flex-1 py-2.5 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        >
+                          <FiRotateCcw className="w-4 h-4" />
+                          <span>Return Items</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          clearFormForNewBill();
-                          setCurrentBillIndex(-1);
-                          setSelectedSaleId(null);
-                        }}
-                        className="w-full py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600"
-                      >
-                        <FiX className="w-4 h-4" />
-                        <span>Cancel / New Sale</span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            clearFormForNewBill();
+                            setCurrentBillIndex(-1);
+                            setSelectedSaleId(null);
+                          }}
+                          className="flex-1 py-2.5 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-600 transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2 border border-gray-300 dark:border-gray-600"
+                        >
+                          <FiX className="w-4 h-4" />
+                          <span>Cancel / New Sale</span>
+                        </button>
+                      </div>
                     </>
                   ) : (
                     // When creating new sale - Show Checkout Actions

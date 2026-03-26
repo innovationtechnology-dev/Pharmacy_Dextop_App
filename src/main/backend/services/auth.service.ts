@@ -334,6 +334,69 @@ export class AuthService {
       return { success: false, error: 'Failed to change password' };
     }
   }
+
+  /**
+   * Admin reset password - allows admin to reset CASHIER passwords only (not admin or superadmin)
+   * @param adminUserId - The ID of the admin performing the reset
+   * @param targetUserId - The ID of the user whose password is being reset
+   * @param newPassword - The new password to set
+   */
+  public async adminResetPassword(adminUserId: number, targetUserId: number, newPassword: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      // Verify admin user exists and has admin role
+      const adminUser = await this.dbService.queryOne(
+        `SELECT role FROM users WHERE id = ${adminUserId}`
+      ) as any;
+      
+      if (!adminUser) {
+        return { success: false, error: 'Admin user not found' };
+      }
+
+      if (adminUser.role !== 'admin') {
+        return { success: false, error: 'Only admins can reset passwords' };
+      }
+
+      // Verify target user exists
+      const targetUser = await this.dbService.queryOne(
+        `SELECT id, role FROM users WHERE id = ${targetUserId}`
+      ) as any;
+      
+      if (!targetUser) {
+        return { success: false, error: 'Target user not found' };
+      }
+
+      // Only allow resetting cashier passwords (not admin or superadmin)
+      if (targetUser.role !== 'cashier') {
+        return { success: false, error: 'Can only reset cashier passwords' };
+      }
+
+      // Hash and set new password (no password_change_required flag)
+      const newHash = this.hashPassword(newPassword);
+      await this.dbService.execute(
+        `UPDATE users SET password_hash = '${newHash}', password_change_required = 0 WHERE id = ${targetUserId}`
+      );
+
+      return { success: true };
+    } catch (error) {
+      console.error('Admin reset password error:', error);
+      return { success: false, error: 'Failed to reset password' };
+    }
+  }
+
+  /**
+   * Get all users (for admin user management)
+   */
+  public async getAllUsers(): Promise<any[]> {
+    try {
+      const users = await this.dbService.query(
+        `SELECT id, name, email, role, created_at, phone, address FROM users ORDER BY created_at DESC`
+      );
+      return users;
+    } catch (error) {
+      console.error('Get all users error:', error);
+      return [];
+    }
+  }
 }
 
 export default AuthService;

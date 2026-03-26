@@ -171,7 +171,8 @@ export class PurchaseController {
     ipcMain.on('purchase-delete', async (event: IpcMainEvent, args: any[]) => {
       try {
         const purchaseId = args[0] as number;
-        await this.purchaseService.deletePurchase(purchaseId);
+        const userRole = args[1] as string | undefined; // Get user role from frontend
+        await this.purchaseService.deletePurchase(purchaseId, userRole);
         event.reply('purchase-delete-reply', { success: true });
       } catch (error) {
         console.error('Delete purchase error:', error);

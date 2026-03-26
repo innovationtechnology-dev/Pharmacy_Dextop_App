@@ -140,7 +140,7 @@ const PurchasingPanel: React.FC = () => {
   const [recordingRefund, setRecordingRefund] = useState(false);
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; date: string } | null>(null);
   const [viewPurchase, setViewPurchase] = useState<any | null>(null);
   const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
   const [purchaseHistoryList, setPurchaseHistoryList] = useState<any[]>([]);
@@ -682,7 +682,37 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const handleDeletePurchase = async (purchaseId: number) => {
+  // Helper function to check if a date is today
+  const isToday = (dateString: string): boolean => {
+    try {
+      const date = new Date(dateString);
+      const today = new Date();
+
+      // Compare year, month, and day
+      return (
+        date.getFullYear() === today.getFullYear() &&
+        date.getMonth() === today.getMonth() &&
+        date.getDate() === today.getDate()
+      );
+    } catch (error) {
+      console.error('Error checking if date is today:', error);
+      return false;
+    }
+  };
+
+  const handleDeletePurchase = async (purchaseId: number, purchaseDate?: string) => {
+    // Check if purchase is from today
+    if (purchaseDate && !isToday(purchaseDate)) {
+      if (isCashier) {
+        alert('Cashiers can only delete purchases from today. Please contact an administrator for older records.');
+        return;
+      }
+      // Admin can delete any purchase, but confirm for old purchases
+      if (!window.confirm('This purchase is not from today. Are you sure you want to delete it?')) {
+        return;
+      }
+    }
+
     if (!window.confirm(`Are you sure you want to delete purchase PO-${purchaseId}? This action cannot be undone.`)) {
       return;
     }
@@ -697,7 +727,8 @@ const PurchasingPanel: React.FC = () => {
           error('Error deleting purchase: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
+      const authUser = getAuthUser();
+      window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId, authUser?.role]);
     } catch (err) {
       setDeleteConfirm(null);
       error('Error deleting purchase. Please try again.');
@@ -2029,26 +2060,47 @@ const PurchasingPanel: React.FC = () => {
                   purchaseHistoryList.map((purchase) => {
                     const isSelected = selectedPurchaseId === purchase.id;
                     const dateObj = new Date(purchase.createdAt);
+                    const canDelete = isToday(purchase.createdAt) || !isCashier;
+                    
                     return (
                       <div
                         key={purchase.id}
-                        onClick={() => {
-                          const index = purchaseHistoryList.findIndex(p => p.id === purchase.id);
-                          loadPurchaseDetails(purchase, index);
-                        }}
-                        className={`p-3 rounded-lg border transition-all cursor-pointer ${isSelected
+                        className={`p-3 rounded-lg border transition-all ${isSelected
                           ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 shadow-sm'
                           : 'bg-white dark:bg-gray-800/50 border-gray-100 dark:border-gray-700 hover:border-emerald-200 dark:hover:border-emerald-800'
                           }`}
                       >
-                        <div className="flex justify-between items-start mb-1">
-                          <span className="font-bold text-xs text-gray-900 dark:text-white">PO-{purchase.id}</span>
-                          <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(purchase.grandTotal)}</span>
+                        <div
+                          onClick={() => {
+                            const index = purchaseHistoryList.findIndex(p => p.id === purchase.id);
+                            loadPurchaseDetails(purchase, index);
+                          }}
+                          className="cursor-pointer"
+                        >
+                          <div className="flex justify-between items-start mb-1">
+                            <span className="font-bold text-xs text-gray-900 dark:text-white">PO-{purchase.id}</span>
+                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(purchase.grandTotal)}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 capitalize">{purchase.supplierName}</span>
+                            <span className="text-[10px] text-gray-400 dark:text-gray-500">{dateObj.toLocaleDateString()}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-[10px] text-gray-500 dark:text-gray-400 capitalize">{purchase.supplierName}</span>
-                          <span className="text-[10px] text-gray-400 dark:text-gray-500">{dateObj.toLocaleDateString()}</span>
-                        </div>
+                        {canDelete && (
+                          <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-700">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteConfirm({ id: purchase.id, date: purchase.createdAt });
+                              }}
+                              className="w-full py-1.5 px-2 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded text-[10px] font-semibold hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors flex items-center justify-center gap-1"
+                              title={isCashier && !isToday(purchase.createdAt) ? "Cashiers can only delete today's purchases" : "Delete purchase"}
+                            >
+                              <FiTrash2 className="w-3 h-3" />
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })
@@ -2162,7 +2214,7 @@ const PurchasingPanel: React.FC = () => {
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-500 mb-6">
-                Are you sure you want to delete purchase PO-{deleteConfirm}? This action cannot be undone and will remove all associated items.
+                Are you sure you want to delete purchase PO-{deleteConfirm.id}? This action cannot be undone and will remove all associated items.
               </p>
               <div className="flex gap-3">
                 <button
@@ -2172,7 +2224,7 @@ const PurchasingPanel: React.FC = () => {
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleDeletePurchase(deleteConfirm)}
+                  onClick={() => handleDeletePurchase(deleteConfirm.id, deleteConfirm.date)}
                   className="flex-1 px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors font-medium"
                 >
                   Delete

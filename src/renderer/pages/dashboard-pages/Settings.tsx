@@ -17,9 +17,15 @@ import {
     FiTrash2,
     FiUpload,
     FiShoppingBag,
-    FiShoppingCart
+    FiShoppingCart,
+    FiDownload,
+    FiDatabase,
+    FiInfo,
+    FiLock,
+    FiEye,
+    FiEyeOff,
 } from 'react-icons/fi';
-import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
+import { getAuthUser, updateProfile, setPasswordChangeRequired, changePassword, adminResetPassword } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -51,6 +57,619 @@ interface SecuritySettings {
     sessionTimeout: number;
     passwordChangeRequired: boolean;
 }
+
+// Password Change Form Component
+const PasswordChangeForm: React.FC<{ userId?: number }> = ({ userId }) => {
+    const [currentPassword, setCurrentPassword] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [changing, setChanging] = useState(false);
+    const [error, setError] = useState('');
+
+    const handleChangePassword = async () => {
+        if (!userId) {
+            setError('User not found');
+            return;
+        }
+
+        if (!currentPassword || !newPassword || !confirmPassword) {
+            setError('All fields are required');
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            setError('New passwords do not match');
+            return;
+        }
+
+        if (newPassword.length < 6) {
+            setError('New password must be at least 6 characters');
+            return;
+        }
+
+        setChanging(true);
+        setError('');
+
+        try {
+            const result = await changePassword(userId, currentPassword, newPassword);
+            if (result.success) {
+                alert('Password changed successfully!');
+                setCurrentPassword('');
+                setNewPassword('');
+                setConfirmPassword('');
+            } else {
+                setError(result.error || 'Failed to change password');
+            }
+        } catch (err: any) {
+            setError(err.message || 'An error occurred');
+        } finally {
+            setChanging(false);
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            {error && (
+                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+                </div>
+            )}
+
+            <div>
+                <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Current Password
+                </label>
+                <div className="relative">
+                    <input
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        className="w-full px-4 py-2 pr-10 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                        placeholder="Enter current password"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                        {showCurrentPassword ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    New Password
+                </label>
+                <div className="relative">
+                    <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-4 py-2 pr-10 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                        placeholder="Enter new password (min 6 characters)"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                        {showNewPassword ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
+                    </button>
+                </div>
+            </div>
+
+            <div>
+                <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Confirm New Password
+                </label>
+                <div className="relative">
+                    <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="w-full px-4 py-2 pr-10 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all"
+                        placeholder="Confirm new password"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                    >
+                        {showConfirmPassword ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
+                    </button>
+                </div>
+            </div>
+
+            <button
+                onClick={handleChangePassword}
+                disabled={changing}
+                className="w-full px-4 py-2.5 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-lg hover:from-emerald-700 hover:to-emerald-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
+            >
+                {changing ? (
+                    <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Changing Password...</span>
+                    </>
+                ) : (
+                    <>
+                        <FiLock className="w-4 h-4" />
+                        <span>Change Password</span>
+                    </>
+                )}
+            </button>
+
+            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <p className="text-[10px] text-blue-600 dark:text-blue-400">
+                    <strong>Password Requirements:</strong> Minimum 6 characters. Use a strong, unique password for better security.
+                </p>
+            </div>
+        </div>
+    );
+};
+
+// Admin Password Reset Component (for admins to reset cashier passwords)
+const AdminPasswordReset: React.FC<{ adminUserId: number }> = ({ adminUserId }) => {
+    const [users, setUsers] = useState<any[]>([]);
+    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
+    const [newPassword, setNewPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [showNewPassword, setShowNewPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [resetting, setResetting] = useState(false);
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        loadUsers();
+    }, []);
+
+    const loadUsers = async () => {
+        setLoading(true);
+        console.log('🔄 Loading users for admin password reset...');
+        try {
+            const response = await new Promise<any>((resolve) => {
+                window.electron.ipcRenderer.once('auth-get-all-users-reply', (data: any) => {
+                    console.log('📨 Received response from backend:', data);
+                    resolve(data);
+                });
+                console.log('📤 Sending auth-get-all-users request...');
+                window.electron.ipcRenderer.sendMessage('auth-get-all-users', []);
+            });
+
+            if (response.success && Array.isArray(response.users)) {
+                const filteredUsers = response.users.filter((u: any) => u.role === 'cashier');
+                console.log(`✅ Loaded ${filteredUsers.length} cashier users:`, filteredUsers);
+                setUsers(filteredUsers);
+            } else {
+                console.error('❌ Failed to load users:', response);
+                setUsers([]);
+            }
+        } catch (err) {
+            console.error('❌ Error loading users:', err);
+            setUsers([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleResetPassword = async (userId: number) => {
+        if (!newPassword || !confirmPassword) {
+            setError('All fields are required');
+            return;
+        }
+
+        if (newPassword !== confirmPassword) {
+            setError('Passwords do not match');
+            return;
+        }
+
+        if (newPassword.length < 6) {
+            setError('Password must be at least 6 characters');
+            return;
+        }
+
+        setResetting(true);
+        setError('');
+
+        try {
+            const result = await adminResetPassword(adminUserId, userId, newPassword);
+            if (result.success) {
+                alert('Password reset successfully! The cashier can now login with the new password.');
+                setSelectedUserId(null);
+                setNewPassword('');
+                setConfirmPassword('');
+            } else {
+                setError(result.error || 'Failed to reset password');
+            }
+        } catch (err: any) {
+            setError(err.message || 'An error occurred');
+        } finally {
+            setResetting(false);
+        }
+    };
+
+    const handleCancelReset = () => {
+        setSelectedUserId(null);
+        setNewPassword('');
+        setConfirmPassword('');
+        setError('');
+        setShowNewPassword(false);
+        setShowConfirmPassword(false);
+    };
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center py-8">
+                <div className="flex items-center gap-3">
+                    <div className="w-5 h-5 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-sm text-gray-600 dark:text-gray-400">Loading cashier users...</span>
+                </div>
+            </div>
+        );
+    }
+
+    if (users.length === 0) {
+        return (
+            <div className="text-center py-8">
+                <FiUser className="w-12 h-12 text-gray-300 dark:text-gray-600 mx-auto mb-3" />
+                <p className="text-sm text-gray-600 dark:text-gray-400">No cashier users found</p>
+                <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">Create cashier accounts to manage them here</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            {error && (
+                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
+                    <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+                </div>
+            )}
+
+            {/* Cashier Users Table */}
+            <div className="overflow-hidden border border-gray-200 dark:border-gray-700 rounded-lg">
+                <table className="w-full">
+                    <thead className="bg-gray-50 dark:bg-gray-700/50">
+                        <tr>
+                            <th className="px-4 py-3 text-left text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                                Cashier Name
+                            </th>
+                            <th className="px-4 py-3 text-left text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                                Email
+                            </th>
+                            <th className="px-4 py-3 text-left text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                                Role
+                            </th>
+                            <th className="px-4 py-3 text-center text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">
+                                Action
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                        {users.map((user) => (
+                            <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
+                                <td className="px-4 py-3 text-xs font-semibold text-gray-900 dark:text-white">
+                                    {user.name}
+                                </td>
+                                <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-400">
+                                    {user.email}
+                                </td>
+                                <td className="px-4 py-3">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
+                                        {user.role}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                    <button
+                                        onClick={() => setSelectedUserId(user.id)}
+                                        disabled={resetting}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white rounded text-[10px] font-semibold uppercase tracking-wide transition-colors disabled:opacity-50"
+                                    >
+                                        <FiLock className="w-3 h-3" />
+                                        Change Password
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Password Reset Modal */}
+            {selectedUserId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                    <div className="w-full max-w-md mx-4 bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700">
+                        {/* Modal Header */}
+                        <div className="px-6 py-4 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-orange-200/50 dark:border-orange-800/30 rounded-t-xl">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600">
+                                        <FiLock className="w-5 h-5 text-white" />
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+                                            Reset Password
+                                        </h3>
+                                        <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">
+                                            {users.find(u => u.id === selectedUserId)?.name}
+                                        </p>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleCancelReset}
+                                    disabled={resetting}
+                                    className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Modal Content */}
+                        <div className="p-6 space-y-4">
+                            <div>
+                                <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    New Password
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showNewPassword ? 'text' : 'password'}
+                                        value={newPassword}
+                                        onChange={(e) => setNewPassword(e.target.value)}
+                                        className="w-full px-4 py-2 pr-10 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                                        placeholder="Enter new password (min 6 characters)"
+                                        autoFocus
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowNewPassword(!showNewPassword)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                    >
+                                        {showNewPassword ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                    Confirm New Password
+                                </label>
+                                <div className="relative">
+                                    <input
+                                        type={showConfirmPassword ? 'text' : 'password'}
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        className="w-full px-4 py-2 pr-10 text-xs font-semibold bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all"
+                                        placeholder="Confirm new password"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                                    >
+                                        {showConfirmPassword ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                                <p className="text-[10px] text-amber-700 dark:text-amber-400">
+                                    <strong>Note:</strong> The cashier can use the new password immediately.
+                                </p>
+                            </div>
+
+                            {/* Modal Actions */}
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    onClick={handleCancelReset}
+                                    disabled={resetting}
+                                    className="flex-1 px-4 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 font-semibold text-xs uppercase tracking-wide disabled:opacity-50 transition-all"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={() => handleResetPassword(selectedUserId)}
+                                    disabled={resetting}
+                                    className="flex-1 px-4 py-2.5 bg-gradient-to-r from-orange-600 to-orange-500 text-white rounded-lg hover:from-orange-700 hover:to-orange-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2 transition-all"
+                                >
+                                    {resetting ? (
+                                        <>
+                                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                            <span>Resetting...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FiShield className="w-4 h-4" />
+                                            <span>Reset Password</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Database Backup/Restore Component
+const DatabaseBackupRestore: React.FC = () => {
+    const [downloading, setDownloading] = useState(false);
+    const [importing, setImporting] = useState(false);
+
+    const handleDownloadDatabase = async () => {
+        if (downloading) return;
+        
+        const confirmed = window.confirm(
+            'Download a copy of your database?\n\nThis will save your entire database to a file that you can import later.'
+        );
+        
+        if (!confirmed) return;
+
+        setDownloading(true);
+        try {
+            const result = await new Promise<{ success: boolean; path?: string; error?: string }>((resolve) => {
+                window.electron.ipcRenderer.once('super-admin-download-database-reply', (response: any) => {
+                    resolve(response);
+                });
+                window.electron.ipcRenderer.sendMessage('super-admin-download-database', []);
+            });
+
+            if (result.success) {
+                alert(`Database downloaded successfully!\n\nSaved to: ${result.path}`);
+            } else {
+                if (result.error !== 'Save cancelled') {
+                    alert(`Download failed: ${result.error || 'Unknown error'}`);
+                }
+            }
+        } catch (error: any) {
+            console.error('Error downloading database:', error);
+            alert(`Download failed: ${error.message || 'Unknown error'}`);
+        } finally {
+            setDownloading(false);
+        }
+    };
+
+    const handleImportDatabase = async () => {
+        if (importing) return;
+        
+        const confirmed = window.confirm(
+            '⚠️ WARNING: Import Database?\n\n' +
+            'This will REPLACE your current database with the imported file.\n' +
+            'All current data will be LOST!\n\n' +
+            'A timestamped backup will be created automatically before importing.\n\n' +
+            'Are you absolutely sure you want to continue?'
+        );
+        
+        if (!confirmed) return;
+
+        setImporting(true);
+        try {
+            const result = await new Promise<{ 
+                success: boolean; 
+                error?: string;
+                summary?: {
+                    users: number;
+                    medicines: number;
+                    customers: number;
+                    sales: number;
+                    purchases: number;
+                    payments: number;
+                };
+            }>((resolve) => {
+                window.electron.ipcRenderer.once('super-admin-import-database-reply', (response: any) => {
+                    resolve(response);
+                });
+                window.electron.ipcRenderer.sendMessage('super-admin-import-database', []);
+            });
+
+            if (result.success) {
+                let message = 'Database imported successfully!\n\n';
+                if (result.summary) {
+                    message += `Imported:\n`;
+                    message += `- Users: ${result.summary.users}\n`;
+                    message += `- Medicines: ${result.summary.medicines}\n`;
+                    message += `- Customers: ${result.summary.customers}\n`;
+                    message += `- Sales: ${result.summary.sales}\n`;
+                    message += `- Purchases: ${result.summary.purchases}\n`;
+                    message += `- Payments: ${result.summary.payments}\n\n`;
+                }
+                message += 'The application will now reload to apply changes.';
+                
+                alert(message);
+                // Reload the application
+                window.location.reload();
+            } else {
+                if (result.error !== 'Import cancelled') {
+                    alert(`Import failed: ${result.error || 'Unknown error'}`);
+                }
+            }
+        } catch (error: any) {
+            console.error('Error importing database:', error);
+            alert(`Import failed: ${error.message || 'Unknown error'}`);
+        } finally {
+            setImporting(false);
+        }
+    };
+
+    return (
+        <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+            <div className="px-4 py-3 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                    <FiDatabase className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                    <h3 className="text-sm font-bold text-gray-900 dark:text-white">Database Download & Import</h3>
+                </div>
+            </div>
+            
+            <div className="p-4 space-y-4">
+                {/* Action Buttons */}
+                <div className="grid grid-cols-2 gap-3">
+                    <button
+                        type="button"
+                        onClick={handleDownloadDatabase}
+                        disabled={downloading}
+                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-colors text-sm font-medium ${
+                            importing
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-emerald-600 hover:bg-emerald-700'
+                        } text-white`}
+                    >
+                        {downloading ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Downloading...</span>
+                            </>
+                        ) : (
+                            <>
+                                <FiDownload className="w-4 h-4" />
+                                <span>Download Database</span>
+                            </>
+                        )}
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={handleImportDatabase}
+                        disabled={importing}
+                        className={`flex items-center justify-center gap-2 px-4 py-3 rounded-lg transition-colors text-sm font-medium ${
+                            downloading
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-orange-600 hover:bg-orange-700'
+                        } text-white`}
+                    >
+                        {importing ? (
+                            <>
+                                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                <span>Importing...</span>
+                            </>
+                        ) : (
+                            <>
+                                <FiUpload className="w-4 h-4" />
+                                <span>Import Database</span>
+                            </>
+                        )}
+                    </button>
+                </div>
+
+                {/* Help Text */}
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                    <p className="text-xs text-blue-900 dark:text-blue-100 leading-relaxed">
+                        <strong>Download:</strong> Saves a complete copy of your database to a file.
+                        <br />
+                        <strong>Import:</strong> Replaces your current database with a previously downloaded file. A backup is created automatically before importing.
+                    </p>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 const Settings: React.FC = () => {
     const location = useLocation();
@@ -260,13 +879,17 @@ const Settings: React.FC = () => {
 
         for (const id of selectedItemIds) {
             await new Promise<void>((resolve) => {
-                window.electron.ipcRenderer.sendMessage('sale-delete', [id]);
+                window.electron.ipcRenderer.sendMessage('sale-delete', [id, user?.role]);
                 window.electron.ipcRenderer.once('sale-delete-reply', (...args: unknown[]) => {
                     const result = args[0] as any;
                     if (result.success) {
                         successCount++;
                     } else {
                         errorCount++;
+                        // Show specific error message for permission issues
+                        if (result.error && result.error.includes('only delete sales from today')) {
+                            console.error(`Sale #${id}: ${result.error}`);
+                        }
                     }
                     resolve();
                 });
@@ -275,12 +898,12 @@ const Settings: React.FC = () => {
 
         setDeleting(false);
         if (successCount > 0) {
-            alert(`Successfully deleted ${successCount} sale(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
+            alert(`Successfully deleted ${successCount} sale(s)${errorCount > 0 ? `, ${errorCount} failed (check console for details)` : ''}`);
             setShowDeleteSaleModal(false);
             setSelectedItemIds([]);
             loadSales();
         } else {
-            alert('Failed to delete sales');
+            alert('Failed to delete sales. You may only delete today\'s sales.');
         }
     };
 
@@ -294,13 +917,17 @@ const Settings: React.FC = () => {
 
         for (const id of selectedItemIds) {
             await new Promise<void>((resolve) => {
-                window.electron.ipcRenderer.sendMessage('purchase-delete', [id]);
+                window.electron.ipcRenderer.sendMessage('purchase-delete', [id, user?.role]);
                 window.electron.ipcRenderer.once('purchase-delete-reply', (...args: unknown[]) => {
                     const result = args[0] as any;
                     if (result.success) {
                         successCount++;
                     } else {
                         errorCount++;
+                        // Show specific error message for permission issues
+                        if (result.error && result.error.includes('only delete purchases from today')) {
+                            console.error(`Purchase #${id}: ${result.error}`);
+                        }
                     }
                     resolve();
                 });
@@ -309,12 +936,12 @@ const Settings: React.FC = () => {
 
         setDeleting(false);
         if (successCount > 0) {
-            alert(`Successfully deleted ${successCount} purchase(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
+            alert(`Successfully deleted ${successCount} purchase(s)${errorCount > 0 ? `, ${errorCount} failed (check console for details)` : ''}`);
             setShowDeletePurchaseModal(false);
             setSelectedItemIds([]);
             loadPurchases();
         } else {
-            alert('Failed to delete purchases');
+            alert('Failed to delete purchases. You may only delete today\'s purchases.');
         }
     };
 
@@ -394,7 +1021,7 @@ const Settings: React.FC = () => {
         { id: 'profile' as SettingsSection, label: 'Profile', icon: FiUser },
         { id: 'pharmacy' as SettingsSection, label: 'Pharmacy', icon: FiHome },
         // { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
-        { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
+        { id: 'security' as SettingsSection, label: 'Users & Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
         { id: 'data-management' as SettingsSection, label: 'Data Management', icon: FiTrash2 },
     ].filter(section => {
@@ -1043,7 +1670,74 @@ const Settings: React.FC = () => {
             case 'security':
                 return (
                     <div className="space-y-6 animate-fadeIn">
-                        {/* Security Card */}
+                        {/* User Management Section - Only for Admins */}
+                        {user?.role === 'admin' && (
+                            <>
+                                <div className="mb-4">
+                                    <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                        <FiUser className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                                        User Management
+                                    </h2>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                        Manage user accounts and reset passwords
+                                    </p>
+                                </div>
+
+                                {/* Admin Password Reset Card */}
+                                <div className="bg-gradient-to-br from-white via-white to-orange-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-orange-900/10 rounded-lg border border-orange-200/50 dark:border-orange-800/30 shadow-md transition-all">
+                                    {/* Header */}
+                                    <div className="px-4 py-2 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-orange-200/50 dark:border-orange-800/30">
+                                        <div className="flex items-center gap-2">
+                                            <div className="p-1.5 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600">
+                                                <FiShield className="w-4 h-4 text-white" />
+                                            </div>
+                                            <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                                Reset Cashier Password
+                                            </h3>
+                                        </div>
+                                    </div>
+                                    {/* Content */}
+                                    <div className="p-6">
+                                        <AdminPasswordReset adminUserId={user?.id} />
+                                    </div>
+                                </div>
+
+                                {/* Divider */}
+                                <div className="border-t border-gray-200 dark:border-gray-700 my-8"></div>
+                            </>
+                        )}
+
+                        {/* Security Section */}
+                        <div className="mb-4">
+                            <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                <FiShield className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                                Security
+                            </h2>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                Protect your account with password and authentication controls
+                            </p>
+                        </div>
+
+                        {/* Password Change Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-emerald-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-b border-emerald-200/50 dark:border-emerald-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                                        <FiLock className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Change Your Password
+                                    </h3>
+                                </div>
+                            </div>
+                            {/* Content */}
+                            <div className="p-6">
+                                <PasswordChangeForm userId={user?.id} />
+                            </div>
+                        </div>
+
+                        {/* Security Settings Card */}
                         <div className="bg-gradient-to-br from-white via-white to-amber-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-amber-900/10 rounded-lg border border-amber-200/50 dark:border-amber-800/30 shadow-md transition-all">
                             {/* Header */}
                             <div className="px-4 py-2 bg-gradient-to-r from-amber-50 to-amber-100/50 dark:from-amber-900/20 dark:to-amber-800/10 border-b border-amber-200/50 dark:border-amber-800/30">
@@ -1110,6 +1804,9 @@ const Settings: React.FC = () => {
                                 </div>
                             </div>
                         </div>
+
+                        {/* Database Backup/Restore Section */}
+                        <DatabaseBackupRestore />
 
                         {/* Delete Cards Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1469,8 +2166,8 @@ const Settings: React.FC = () => {
                 }; */
             case 'security':
                 return {
-                    title: 'Security Settings',
-                    subtitle: 'Protect your account with authentication controls',
+                    title: 'Users & Security Settings',
+                    subtitle: 'Manage users and protect accounts with authentication controls',
                 };
             case 'appearance':
                 return {

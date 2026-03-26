@@ -97,17 +97,7 @@ export class AuthController {
       }
     });
 
-    // Handle get all users (for testing/debugging)
-    ipcMain.on('auth-get-all-users', async (event: IpcMainEvent) => {
-      try {
-        const users = await this.dbService.query('SELECT id, name, email, created_at FROM users');
-        console.log(`📋 Total users in database: ${users.length}`);
-        event.reply('auth-get-all-users-reply', users);
-      } catch (error) {
-        console.error('Get all users error:', error);
-        event.reply('auth-get-all-users-reply', []);
-      }
-    });
+    // Removed duplicate handler - see auth-get-all-users handler below
 
     ipcMain.on('auth-update-profile', async (event: IpcMainEvent, args: any[]) => {
       try {
@@ -145,6 +135,33 @@ export class AuthController {
       } catch (error) {
         console.error('Change password error:', error);
         event.reply('auth-change-password-reply', { success: false, error: 'Failed to change password' });
+      }
+    });
+
+    // Handle admin reset password
+    ipcMain.on('auth-admin-reset-password', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const adminUserId = args[0] as number;
+        const targetUserId = args[1] as number;
+        const newPassword = args[2] as string;
+        const result = await this.authService.adminResetPassword(adminUserId, targetUserId, newPassword);
+        event.reply('auth-admin-reset-password-reply', result);
+      } catch (error) {
+        console.error('Admin reset password error:', error);
+        event.reply('auth-admin-reset-password-reply', { success: false, error: 'Failed to reset password' });
+      }
+    });
+
+    // Handle get all users (for admin)
+    ipcMain.on('auth-get-all-users', async (event: IpcMainEvent) => {
+      try {
+        console.log('📋 Fetching all users for admin...');
+        const users = await this.authService.getAllUsers();
+        console.log(`✅ Found ${users.length} users:`, users.map(u => ({ id: u.id, name: u.name, role: u.role })));
+        event.reply('auth-get-all-users-reply', { success: true, users });
+      } catch (error) {
+        console.error('❌ Get all users error:', error);
+        event.reply('auth-get-all-users-reply', { success: false, error: 'Failed to get users' });
       }
     });
   }

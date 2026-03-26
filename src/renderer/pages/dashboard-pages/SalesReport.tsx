@@ -18,6 +18,15 @@ export default function SalesReport() {
     return `${d.getFullYear()}-${mm}-${dd}`;
   }, []);
 
+  // View mode: 'daily' or 'monthly'
+  const [viewMode, setViewMode] = useState<'daily' | 'monthly'>('daily');
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}`;
+  });
+
   const [fromDate, setFromDate] = useState<string>(today);
   const [toDate, setToDate] = useState<string>(today);
 
@@ -28,6 +37,23 @@ export default function SalesReport() {
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
     return `${d.getFullYear()}-${mm}-${dd}`;
+  }, []);
+
+  // Calculate min month for cashier (1 month ago)
+  const minMonth = useMemo(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}`;
+  }, []);
+
+  // Calculate current month for max limit
+  const currentMonth = useMemo(() => {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${yyyy}-${mm}`;
   }, []);
 
   const [reportRows, setReportRows] = useState<FlatSaleRow[]>([]);
@@ -69,7 +95,20 @@ export default function SalesReport() {
       // Simulate a small delay for the animation effect if the fetch is too fast
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const res = await getSalesFlatRowsByRange(fromDate, toDate);
+      let from = fromDate;
+      let to = toDate;
+
+      // If monthly view, calculate first and last day of selected month
+      if (viewMode === 'monthly') {
+        const [year, month] = selectedMonth.split('-');
+        const firstDay = new Date(parseInt(year), parseInt(month) - 1, 1);
+        const lastDay = new Date(parseInt(year), parseInt(month), 0);
+        
+        from = `${year}-${month}-01`;
+        to = `${year}-${month}-${String(lastDay.getDate()).padStart(2, '0')}`;
+      }
+
+      const res = await getSalesFlatRowsByRange(from, to);
       if (res.success && res.data) {
         setReportRows(res.data);
         setPage(1); // Reset to first page on new fetch
@@ -83,7 +122,7 @@ export default function SalesReport() {
     } finally {
       setLoading(false);
     }
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, viewMode, selectedMonth]);
 
   // Initial fetch
   useEffect(() => {
@@ -325,31 +364,80 @@ export default function SalesReport() {
 
             {/* Content */}
             <div className="p-3 flex flex-col sm:flex-row gap-3 items-end">
+              {/* View Mode Toggle */}
               <div className="w-full sm:w-auto">
                 <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
-                  From Date
+                  View Mode
                 </label>
-                <input
-                  type="date"
-                  value={fromDate}
-                  min={isCashier ? minFromDate : undefined}
-                  max={today}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
-                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setViewMode('daily')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded transition-all ${
+                      viewMode === 'daily'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:border-emerald-400'
+                    }`}
+                  >
+                    Daily
+                  </button>
+                  <button
+                    onClick={() => setViewMode('monthly')}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded transition-all ${
+                      viewMode === 'monthly'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:border-emerald-400'
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                </div>
               </div>
-              <div className="w-full sm:w-auto">
-                <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
-                  To Date
-                </label>
-                <input
-                  type="date"
-                  value={toDate}
-                  max={today}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
-                />
-              </div>
+
+              {/* Conditional Inputs based on View Mode */}
+              {viewMode === 'daily' ? (
+                <>
+                  <div className="w-full sm:w-auto">
+                    <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
+                      From Date
+                    </label>
+                    <input
+                      type="date"
+                      value={fromDate}
+                      min={isCashier ? minFromDate : undefined}
+                      max={today}
+                      onChange={(e) => setFromDate(e.target.value)}
+                      className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
+                    />
+                  </div>
+                  <div className="w-full sm:w-auto">
+                    <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
+                      To Date
+                    </label>
+                    <input
+                      type="date"
+                      value={toDate}
+                      max={today}
+                      onChange={(e) => setToDate(e.target.value)}
+                      className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="w-full sm:w-auto">
+                  <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
+                    Select Month
+                  </label>
+                  <input
+                    type="month"
+                    value={selectedMonth}
+                    min={isCashier ? minMonth : undefined}
+                    max={currentMonth}
+                    onChange={(e) => setSelectedMonth(e.target.value)}
+                    className="w-full sm:w-48 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
+                  />
+                </div>
+              )}
+
               <button
                 onClick={fetchReport}
                 disabled={loading}

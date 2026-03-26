@@ -596,7 +596,8 @@ export class MedicineController {
     ipcMain.on('sale-delete', async (event: IpcMainEvent, args: any[]) => {
       try {
         const saleId = args[0] as number;
-        await this.salesService.deleteSale(saleId);
+        const userRole = args[1] as string | undefined; // Get user role from frontend
+        await this.salesService.deleteSale(saleId, userRole);
         event.reply('sale-delete-reply', { success: true });
       } catch (error) {
         console.error('Delete sale error:', error);

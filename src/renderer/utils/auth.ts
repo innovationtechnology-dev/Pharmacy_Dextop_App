@@ -189,3 +189,16 @@ export const changePassword = async (userId: number, currentPassword: string, ne
   });
 };
 
+/**
+ * Admin reset password (admin can reset any user's password without knowing current password)
+ * Sets password_change_required flag to force user to change password on next login
+ */
+export const adminResetPassword = async (adminUserId: number, targetUserId: number, newPassword: string): Promise<{ success: boolean; error?: string }> => {
+  return new Promise((resolve) => {
+    window.electron.ipcRenderer.once('auth-admin-reset-password-reply', (response: any) => {
+      resolve(response);
+    });
+    window.electron.ipcRenderer.sendMessage('auth-admin-reset-password', [adminUserId, targetUserId, newPassword] as any);
+  });
+};
+

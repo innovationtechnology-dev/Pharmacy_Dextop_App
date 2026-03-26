@@ -615,11 +615,30 @@ export class PurchaseService {
   /**
    * Delete a purchase and its items.
    */
-  public async deletePurchase(purchaseId: number): Promise<void> {
+  /**
+   * Delete a purchase and its items.
+   * @param purchaseId - The ID of the purchase to delete
+   * @param userRole - The role of the user attempting deletion (for permission check)
+   */
+  public async deletePurchase(purchaseId: number, userRole?: string): Promise<void> {
     // Check if purchase exists
-    const purchase = await this.dbService.queryOne('SELECT id FROM purchases WHERE id = ?', [purchaseId]);
+    const purchase = await this.dbService.queryOne('SELECT id, created_at FROM purchases WHERE id = ?', [purchaseId]);
     if (!purchase) {
       throw new Error(`Purchase with id ${purchaseId} not found`);
+    }
+
+    // Cashier permission check: only allow deletion of today's purchases
+    if (userRole === 'cashier') {
+      const purchaseDate = new Date(purchase.created_at);
+      const today = new Date();
+      
+      // Reset time to compare only dates
+      purchaseDate.setHours(0, 0, 0, 0);
+      today.setHours(0, 0, 0, 0);
+      
+      if (purchaseDate.getTime() !== today.getTime()) {
+        throw new Error('Cashiers can only delete purchases from today. Please contact an administrator for older records.');
+      }
     }
 
     await this.dbService.execute('BEGIN TRANSACTION');

@@ -17,8 +17,8 @@ import { CustomerController } from './controllers/customer.controller';
 import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
-
 import { GRNController } from './controllers/grn.controller';
+import { initializeDatabaseManagement } from './database-management';
 
 export class Backend {
   private databaseController!: DatabaseController;
@@ -59,6 +59,9 @@ export class Backend {
       this.licenseController = new LicenseController();
       this.superAdminController = new SuperAdminController();
       this.grnController = new GRNController();
+      
+      // Initialize database management module
+      initializeDatabaseManagement();
 
       // Initialize all tables SEQUENTIALLY to avoid SQLite concurrency issues
       console.log('Initializing database tables...');
