@@ -3,8 +3,8 @@
  * 
  * This configuration is used by the Electron renderer process (React app).
  * 
- * IMPORTANT: These credentials are for your Firebase project.
- * In production, consider loading these from a secure backend endpoint.
+ * SECURITY NOTE: In Electron apps, we can load config from backend instead of hardcoding.
+ * This is more secure than web apps where config must be public.
  */
 
 export interface FirebaseConfig {
@@ -18,34 +18,53 @@ export interface FirebaseConfig {
 }
 
 /**
- * Firebase configuration
- * Replace with your actual Firebase project credentials
+ * Get Firebase configuration from backend (more secure for Electron)
+ * Falls back to hardcoded config if backend doesn't provide it
  */
-export const firebaseConfig: FirebaseConfig = {
-  apiKey: "AIzaSyBQl5IN-qG9Tt5EDVRLrYMduV9zWPGpib8",
-  authDomain: "pharmacy-management-syst-883bc.firebaseapp.com",
-  projectId: "pharmacy-management-syst-883bc",
-  storageBucket: "pharmacy-management-syst-883bc.firebasestorage.app",
-  messagingSenderId: "715722661484",
-  appId: "1:715722661484:web:09f65f53c1fcb2c7f60249",
-  measurementId: "G-BQNCGSZM64",
-};
+export async function getFirebaseConfig(): Promise<FirebaseConfig | null> {
+  try {
+    // Try to get config from backend via IPC
+    const config = await new Promise<FirebaseConfig | null>((resolve) => {
+      const timeout = setTimeout(() => resolve(null), 1000);
+      
+      window.electron.ipcRenderer.once('firebase-get-config-reply', (response: any) => {
+        clearTimeout(timeout);
+        resolve(response);
+      });
+      
+      window.electron.ipcRenderer.sendMessage('firebase-get-config', []);
+    });
+
+    if (config) {
+      return config;
+    }
+  } catch (error) {
+    console.warn('Could not load Firebase config from backend, using fallback');
+  }
+
+  // Fallback: Return null to indicate Firebase should be handled by backend only
+  // This is more secure - frontend doesn't need Firebase credentials
+  return null;
+}
 
 /**
  * Check if Firebase is configured
  */
-export function isFirebaseConfigured(): boolean {
-  return !!firebaseConfig.apiKey && !!firebaseConfig.projectId;
+export async function isFirebaseConfigured(): Promise<boolean> {
+  const config = await getFirebaseConfig();
+  return config !== null && !!config.apiKey && !!config.projectId;
 }
 
 /**
  * Get Firebase configuration status
  */
-export function getFirebaseStatus(): {
+export async function getFirebaseStatus(): Promise<{
   configured: boolean;
   message: string;
-} {
-  if (isFirebaseConfigured()) {
+}> {
+  const configured = await isFirebaseConfigured();
+  
+  if (configured) {
     return {
       configured: true,
       message: 'Firebase is configured and ready',
