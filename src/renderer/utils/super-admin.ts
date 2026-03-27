@@ -7,6 +7,7 @@ export interface SuperAdminLoginResponse {
   success: boolean;
   token?: string;
   error?: string;
+  authMethod?: 'firebase' | 'local'; // Track which auth method was used
 }
 
 export interface User {
@@ -82,10 +83,25 @@ export const superAdminLogin = async (
   email: string,
   password: string
 ): Promise<SuperAdminLoginResponse> => {
+  console.log('🔐 [Frontend] Attempting super admin login...');
+  
   return new Promise((resolve) => {
     window.electron.ipcRenderer.once('super-admin-login-reply', (response: any) => {
       if (response.success && response.token) {
+        console.log('✅ [Frontend] Super admin login successful!');
+        
+        // Show which authentication method was used
+        if (response.authMethod === 'firebase') {
+          console.log('🎉 Authenticated via Firebase (Cloud)');
+        } else if (response.authMethod === 'local') {
+          console.log('🔒 Authenticated via Local Database (Offline/Fallback)');
+        } else {
+          console.log('✅ Authentication successful');
+        }
+        
         setSuperAdminToken(response.token);
+      } else {
+        console.log('❌ [Frontend] Super admin login failed:', response.error);
       }
       resolve(response);
     });

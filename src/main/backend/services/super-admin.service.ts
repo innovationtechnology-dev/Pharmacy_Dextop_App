@@ -3,11 +3,14 @@ import fs from 'fs';
 import path from 'path';
 import { getDatabaseService } from './database.service';
 import { databaseConfig } from '../config/database.config';
+import { getFirebaseAuthService } from './firebase-auth.service';
+import { isFirebaseConfigured } from '../config/firebase.config';
 
 export interface SuperAdminLoginResult {
   success: boolean;
   token?: string;
   error?: string;
+  authMethod?: 'firebase' | 'local'; // Track which auth method was used
 }
 
 export interface User {
@@ -46,8 +49,9 @@ export interface GeneratedLicense {
 
 export class SuperAdminService {
   private dbService = getDatabaseService();
+  private firebaseAuthService = getFirebaseAuthService();
   private readonly SUPER_ADMIN_EMAIL = 'superadmin@pharmacy.com';
-  private readonly SUPER_ADMIN_PASSWORD = 'superadmin@123'; // Default super admin password
+  private readonly SUPER_ADMIN_PASSWORD = 'superadmin@123'; // Default super admin password (fallback)
 
   // Default seeded users for core roles
   private readonly DEFAULT_ADMIN_EMAIL = 'admin@pharmacy.com';
@@ -151,10 +155,11 @@ export class SuperAdminService {
   }
 
   /**
-   * Login as super admin
+   * Login as super admin with Firebase or local authentication
    */
   public async login(email: string, password: string): Promise<SuperAdminLoginResult> {
     try {
+      // Check if this is the super admin email
       if (email !== this.SUPER_ADMIN_EMAIL) {
         return {
           success: false,
@@ -162,6 +167,32 @@ export class SuperAdminService {
         };
       }
 
+      // Try Firebase authentication first (if configured)
+      if (isFirebaseConfigured() && this.firebaseAuthService.isAvailable()) {
+        console.log('🔐 Attempting Firebase authentication for super admin...');
+        
+        const firebaseResult = await this.firebaseAuthService.authenticateWithFirebase(
+          email,
+          password
+        );
+
+        if (firebaseResult.success) {
+          console.log('✅ Firebase authentication successful');
+          const token = this.generateToken();
+          return {
+            success: true,
+            token,
+            authMethod: 'firebase',
+          };
+        } else {
+          console.log('❌ Firebase authentication failed:', firebaseResult.error);
+          // Don't return error yet - try local authentication as fallback
+        }
+      }
+
+      // Fallback to local database authentication
+      console.log('🔐 Using local authentication fallback...');
+      
       const user = (await this.dbService.queryOne(
         `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
       )) as User | null;
@@ -181,12 +212,15 @@ export class SuperAdminService {
         };
       }
 
+      console.log('✅ Local authentication successful');
       const token = this.generateToken();
       return {
         success: true,
         token,
+        authMethod: 'local',
       };
     } catch (error) {
+      console.error('Super admin login error:', error);
       return {
         success: false,
         error: 'Login failed',

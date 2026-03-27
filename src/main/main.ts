@@ -8,6 +8,16 @@
  * When running `npm run build` or `npm run build:main`, this file is compiled to
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
+
+// Load environment variables from .env file FIRST (before anything else)
+import dotenv from 'dotenv';
+dotenv.config();
+
+// Log Firebase configuration status (for debugging)
+console.log('🔧 Environment Variables Loaded:');
+console.log('   FIREBASE_PROJECT_ID:', process.env.FIREBASE_PROJECT_ID ? '✅ Set' : '❌ Not set');
+console.log('   FIREBASE_API_KEY:', process.env.FIREBASE_API_KEY ? '✅ Set' : '❌ Not set');
+
 import path from 'path';
 import { app, BrowserWindow, shell, session, screen } from 'electron';
 import { autoUpdater } from 'electron-updater';
