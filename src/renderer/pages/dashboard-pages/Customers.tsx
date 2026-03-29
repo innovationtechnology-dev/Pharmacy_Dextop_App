@@ -1,5 +1,3 @@
-'use client';
-
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   FiPlus,
@@ -20,6 +18,7 @@ import {
   FiRefreshCw,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 
 interface Customer {
   id?: number;
@@ -48,6 +47,9 @@ const Customers: React.FC = () => {
   });
   const [showSuccess, setShowSuccess] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [customerToDeleteId, setCustomerToDeleteId] = useState<number | null>(null);
 
   const { setHeader } = useDashboardHeader();
 
@@ -97,11 +99,15 @@ const Customers: React.FC = () => {
     });
   }, []);
 
-  const handleDelete = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this customer?')) {
-      return;
-    }
+  const handleDelete = (id: number) => {
+    setCustomerToDeleteId(id);
+    setShowDeleteConfirm(true);
+  };
 
+  const confirmDelete = async () => {
+    if (customerToDeleteId === null) return;
+    const id = customerToDeleteId;
+    setCustomerToDeleteId(null);
     try {
       window.electron.ipcRenderer.once('customer-delete-reply', (response: any) => {
         if (response.success) {
@@ -110,13 +116,13 @@ const Customers: React.FC = () => {
             resetForm();
           }
         } else {
-          alert('Error deleting customer: ' + (response.error || 'Unknown error'));
+          setErrorMessage('Error deleting customer: ' + (response.error || 'Unknown error'));
         }
       });
       window.electron.ipcRenderer.sendMessage('customer-delete', [id]);
     } catch (error) {
       console.error('Error deleting customer:', error);
-      alert('Error deleting customer. Please try again.');
+      setErrorMessage('Error deleting customer. Please try again.');
     }
   };
 
@@ -124,14 +130,16 @@ const Customers: React.FC = () => {
     e.preventDefault();
 
     if (!formData.name.trim()) {
-      alert('Customer name is required');
+      setErrorMessage('Customer name is required.');
       return;
     }
 
     if (!formData.phone?.trim()) {
-      alert('Phone number is required');
+      setErrorMessage('Phone number is required.');
       return;
     }
+
+    setErrorMessage(null);
 
     setProcessing(true);
 
@@ -156,7 +164,7 @@ const Customers: React.FC = () => {
             loadCustomers();
             setTimeout(() => setShowSuccess(false), 2000);
           } else {
-            alert('Error updating customer: ' + (response.error || 'Unknown error'));
+            setErrorMessage('Error updating customer: ' + (response.error || 'Unknown error'));
           }
         });
         // Ensure all fields are strings
@@ -182,7 +190,7 @@ const Customers: React.FC = () => {
             loadCustomers();
             setTimeout(() => setShowSuccess(false), 2000);
           } else {
-            alert('Error creating customer: ' + (response.error || 'Unknown error'));
+            setErrorMessage('Error creating customer: ' + (response.error || 'Unknown error'));
           }
         });
         // Ensure all fields are strings
@@ -199,7 +207,7 @@ const Customers: React.FC = () => {
     } catch (error) {
       console.error('Error saving customer:', error);
       setProcessing(false);
-      alert('Error saving customer. Please try again.');
+      setErrorMessage('Error saving customer. Please try again.');
     }
   };
 
@@ -353,6 +361,15 @@ const Customers: React.FC = () => {
 
             {/* Form Content */}
             <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 space-y-3">
+              {errorMessage && (
+                <div className="flex items-start gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded-md text-xs text-red-700 dark:text-red-300">
+                  <FiAlertCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                  <span>{errorMessage}</span>
+                  <button type="button" onClick={() => setErrorMessage(null)} className="ml-auto">
+                    <FiX className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
               <div>
                 <label
                   htmlFor="customer-name"
@@ -660,6 +677,17 @@ const Customers: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={showDeleteConfirm}
+        onClose={() => { setShowDeleteConfirm(false); setCustomerToDeleteId(null); }}
+        onConfirm={confirmDelete}
+        title="Delete Customer"
+        message="Are you sure you want to delete this customer? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+      />
     </div>
   );
 };

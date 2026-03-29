@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
   FiPlus,
@@ -17,6 +17,7 @@ import {
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
+import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
@@ -30,6 +31,9 @@ interface Medicine {
   totalAvailablePills: number;
   sellablePills: number;
   averageSellablePricePerPill?: number | null;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel: number;
 }
 
 type BackendMedicine = {
@@ -41,6 +45,9 @@ type BackendMedicine = {
   totalAvailablePills?: number;
   sellablePills?: number;
   averageSellablePricePerPill?: number | null;
+  manufacturer?: string;
+  brandName?: string;
+  minimumStockLevel?: number;
 };
 
 type IpcResponse<T> = {
@@ -54,6 +61,9 @@ type MedicineFormState = {
   pillQuantity: string;
   barcode: string;
   status: MedicineStatus;
+  manufacturer: string;
+  brandName: string;
+  minimumStockLevel: string;
 };
 
 const STATUS_LIBRARY: MedicineStatus[] = ['active', 'inactive', 'discontinued'];
@@ -64,6 +74,9 @@ const emptyMedicineForm: MedicineFormState = {
   pillQuantity: '',
   barcode: '',
   status: DEFAULT_STATUS,
+  manufacturer: '',
+  brandName: '',
+  minimumStockLevel: '',
 };
 
 const formatNumericId = (id?: number) => {
@@ -83,6 +96,9 @@ const mapBackendMedicine = (record: BackendMedicine): Medicine => {
     totalAvailablePills: record.totalAvailablePills ?? 0,
     sellablePills: record.sellablePills ?? 0,
     averageSellablePricePerPill: record.averageSellablePricePerPill ?? null,
+    manufacturer: record.manufacturer ?? undefined,
+    brandName: record.brandName ?? undefined,
+    minimumStockLevel: record.minimumStockLevel ?? 0,
   };
 };
 
@@ -97,6 +113,7 @@ export default function MedicinesPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [editingMedicineId, setEditingMedicineId] = useState<number | null>(null);
   const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
+  const barcodeInputRef = useRef<HTMLInputElement>(null);
 
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,6 +121,16 @@ export default function MedicinesPage() {
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: number; name: string } | null>(null);
+  /** Another medicine already matches this barcode (uses same IPC lookup as POS / scanners). */
+  const [barcodeDuplicate, setBarcodeDuplicate] = useState<{
+    id: number;
+    name: string;
+  } | null>(null);
+  const barcodeLookupRequestId = useRef(0);
+  const globalBarcodeBufferRef = useRef('');
+  const globalBarcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   // Get currency symbol
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
@@ -136,6 +163,10 @@ export default function MedicinesPage() {
 
   useEffect(() => {
     loadMedicines();
+    // Focus barcode input on mount
+    setTimeout(() => {
+      barcodeInputRef.current?.focus();
+    }, 100);
   }, [loadMedicines]);
 
   const handleNewMedicineChange = (
@@ -176,11 +207,21 @@ export default function MedicinesPage() {
       return;
     }
 
+    if (barcodeDuplicate) {
+      setFormError(
+        `This barcode already belongs to "${barcodeDuplicate.name}" (${formatNumericId(barcodeDuplicate.id)}). Edit that medicine or use a different barcode.`
+      );
+      return;
+    }
+
     const payload = {
       name: newMedicine.name.trim(),
       pillQuantity,
       barcode: newMedicine.barcode.trim(),
       status: newMedicine.status,
+      manufacturer: newMedicine.manufacturer.trim() || undefined,
+      brandName: newMedicine.brandName.trim() || undefined,
+      minimumStockLevel: parseInt(newMedicine.minimumStockLevel, 10) || 0,
     };
 
     setIsSubmitting(true);
@@ -206,6 +247,7 @@ export default function MedicinesPage() {
           setNewMedicine(emptyMedicineForm);
           setEditingMedicineId(null);
           loadMedicines();
+          barcodeInputRef.current?.focus();
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-update', [editingMedicineId, payload]);
@@ -229,6 +271,7 @@ export default function MedicinesPage() {
           setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           loadMedicines();
+          barcodeInputRef.current?.focus();
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-create', [payload]);
@@ -299,6 +342,9 @@ export default function MedicinesPage() {
       pillQuantity: medicine.pillQuantity.toString(),
       barcode: medicine.barcode || '',
       status: medicine.status,
+      manufacturer: medicine.manufacturer || '',
+      brandName: medicine.brandName || '',
+      minimumStockLevel: medicine.minimumStockLevel > 0 ? medicine.minimumStockLevel.toString() : '',
     });
     setEditingMedicineId(medicine.id);
     setEditingMedicine(medicine);
@@ -310,6 +356,9 @@ export default function MedicinesPage() {
     setEditingMedicine(null);
     setFormError(null);
     setFormSuccess(null);
+    setBarcodeDuplicate(null);
+    barcodeLookupRequestId.current += 1;
+    barcodeInputRef.current?.focus();
   }, []);
 
   // Check if editing medicine has been used in transactions
@@ -317,6 +366,177 @@ export default function MedicinesPage() {
     if (!editingMedicine) return false;
     return editingMedicine.totalAvailablePills > 0 || editingMedicine.sellablePills > 0;
   }, [editingMedicine]);
+
+  // F2 — focus barcode field (same idea as Selling/Purchasing Product F2)
+  useEffect(() => {
+    const onF2 = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return;
+      if (isEditingMedicineUsed) return;
+      event.preventDefault();
+      barcodeInputRef.current?.focus();
+      barcodeInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onF2, true);
+    return () => window.removeEventListener('keydown', onF2, true);
+  }, [isEditingMedicineUsed]);
+
+  // Global wedge scanner → New Medicine barcode (capture phase). Typing stays normal inside [data-wedge-typing].
+  useEffect(() => {
+    if (isEditingMedicineUsed) {
+      globalBarcodeBufferRef.current = '';
+      if (globalBarcodeTimerRef.current) {
+        clearTimeout(globalBarcodeTimerRef.current);
+        globalBarcodeTimerRef.current = null;
+      }
+      return;
+    }
+
+    const MIN_LEN = 4;
+    const SCAN_END_MS = 200;
+
+    const isWedgeTypingField = (el: EventTarget | null) =>
+      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < MIN_LEN) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      setNewMedicine((prev) => ({ ...prev, barcode: normalized }));
+      requestAnimationFrame(() => {
+        barcodeInputRef.current?.focus();
+      });
+    };
+
+    const handleGlobalKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.id === 'medicine-barcode' || target?.id === 'medicine-search') {
+        return;
+      }
+
+      if (isWedgeTypingField(target)) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable =
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        target?.isContentEditable;
+
+      // Don't intercept typing in editable fields
+      if (isEditable) {
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
+        } else {
+          globalBarcodeBufferRef.current = '';
+        }
+        return;
+      }
+
+      // Only capture single printable characters (not special keys)
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        globalBarcodeBufferRef.current += event.key;
+        if (globalBarcodeTimerRef.current) {
+          clearTimeout(globalBarcodeTimerRef.current);
+        }
+        globalBarcodeTimerRef.current = setTimeout(() => {
+          if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
+          } else {
+            globalBarcodeBufferRef.current = '';
+          }
+        }, SCAN_END_MS);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
+      if (globalBarcodeTimerRef.current) {
+        clearTimeout(globalBarcodeTimerRef.current);
+        globalBarcodeTimerRef.current = null;
+      }
+      globalBarcodeBufferRef.current = '';
+    };
+  }, [isEditingMedicineUsed]);
+
+  // Live duplicate check: scanners send long GS1-style strings; backend resolves like selling/purchasing.
+  useEffect(() => {
+    if (isEditingMedicineUsed) {
+      setBarcodeDuplicate(null);
+      return;
+    }
+
+    const normalized = normalizeScannedBarcode(newMedicine.barcode);
+    if (!normalized || normalized.length < 4) {
+      setBarcodeDuplicate(null);
+      barcodeLookupRequestId.current += 1;
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        if (!window?.electron) return;
+
+        const requestId = ++barcodeLookupRequestId.current;
+
+        try {
+          const response = (await window.electron.ipcRenderer.invoke(
+            'medicine-get-by-barcode',
+            normalized
+          )) as IpcResponse<BackendMedicine>;
+
+          if (requestId !== barcodeLookupRequestId.current) return;
+
+          if (!response.success) {
+            setBarcodeDuplicate(null);
+            return;
+          }
+
+          const data = response.data;
+          const existingId = data?.id;
+
+          if (!existingId) {
+            setBarcodeDuplicate(null);
+            return;
+          }
+
+          const isOtherMedicine =
+            editingMedicineId == null || existingId !== editingMedicineId;
+
+          if (isOtherMedicine) {
+            setBarcodeDuplicate({
+              id: existingId,
+              name: data?.name ?? 'Unknown medicine',
+            });
+          } else {
+            setBarcodeDuplicate(null);
+          }
+        } catch {
+          if (requestId !== barcodeLookupRequestId.current) return;
+          setBarcodeDuplicate(null);
+        }
+      })();
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [newMedicine.barcode, editingMedicineId, isEditingMedicineUsed]);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
     try {
@@ -514,54 +734,72 @@ export default function MedicinesPage() {
 
               <div>
                 <label
-                  htmlFor="medicine-name"
+                  htmlFor="medicine-barcode"
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
-                  Medicine Name <span className="text-red-500">*</span>
+                  Barcode (F2) <span className="text-red-500">*</span>
                   {isEditingMedicineUsed && (
-                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
+                    <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
                   )}
                 </label>
                 <input
-                  id="medicine-name"
+                  id="medicine-barcode"
                   type="text"
-                  value={newMedicine.name}
-                  onChange={(e) => handleNewMedicineChange('name', e.target.value)}
+                  ref={barcodeInputRef}
+                  value={newMedicine.barcode}
+                  onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
                   disabled={isEditingMedicineUsed}
                   className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                     isEditingMedicineUsed
                       ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                      : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
+                      : barcodeDuplicate
+                        ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-400 dark:border-amber-600'
+                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                   }`}
+                  placeholder="Scan or type (F2 focuses here)"
                   required
-                  placeholder="Enter medicine name"
                 />
+                {barcodeDuplicate && (
+                  <div className="mt-2 p-3 bg-amber-50 dark:bg-amber-900/25 text-amber-900 dark:text-amber-100 text-xs rounded-md border border-amber-200 dark:border-amber-800 flex items-start gap-2">
+                    <FiAlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <div className="font-semibold">Medicine already exists</div>
+                      <p className="mt-1 text-amber-800/90 dark:text-amber-200/90">
+                        This barcode matches{' '}
+                        <span className="font-medium">{barcodeDuplicate.name}</span>{' '}
+                        ({formatNumericId(barcodeDuplicate.id)}). You cannot add a duplicate —
+                        edit the existing medicine or scan a different code.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
+              <div data-wedge-typing="true" className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label
-                    htmlFor="medicine-barcode"
+                    htmlFor="medicine-name"
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
-                    Barcode <span className="text-red-500">*</span>
+                    Medicine Name <span className="text-red-500">*</span>
                     {isEditingMedicineUsed && (
-                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
+                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
                     )}
                   </label>
                   <input
-                    id="medicine-barcode"
+                    id="medicine-name"
                     type="text"
-                    value={newMedicine.barcode}
-                    onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
+                    value={newMedicine.name}
+                    onChange={(e) => handleNewMedicineChange('name', e.target.value)}
                     disabled={isEditingMedicineUsed}
                     className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                       isEditingMedicineUsed
                         ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                         : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                     }`}
-                    placeholder="Scan or enter"
                     required
+                    placeholder="Enter medicine name"
                   />
                 </div>
                 <div>
@@ -610,21 +848,76 @@ export default function MedicinesPage() {
                 </select>
               </div>
 
-              <div className="flex gap-2 pt-2">
-                {editingMedicineId && (
-                  <button
-                    type="button"
-                    onClick={resetForm}
-                    className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-red-600 to-red-500 text-white rounded-md hover:from-red-700 hover:to-red-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label
+                    htmlFor="medicine-manufacturer"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
-                    <FiX className="w-4 h-4" />
-                    Cancel
-                  </button>
-                )}
+                    Manufacturer
+                  </label>
+                  <input
+                    id="medicine-manufacturer"
+                    type="text"
+                    value={newMedicine.manufacturer}
+                    onChange={(e) => handleNewMedicineChange('manufacturer', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    placeholder="e.g. Pfizer"
+                  />
+                </div>
+                <div>
+                  <label
+                    htmlFor="medicine-brand-name"
+                    className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                  >
+                    Brand Name
+                  </label>
+                  <input
+                    id="medicine-brand-name"
+                    type="text"
+                    value={newMedicine.brandName}
+                    onChange={(e) => handleNewMedicineChange('brandName', e.target.value)}
+                    className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                    placeholder="e.g. Lipitor"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="medicine-min-stock"
+                  className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
+                >
+                  Min. Stock Level (Pills)
+                </label>
+                <input
+                  id="medicine-min-stock"
+                  type="number"
+                  min="0"
+                  value={newMedicine.minimumStockLevel}
+                  onChange={(e) => handleNewMedicineChange('minimumStockLevel', e.target.value)}
+                  className="w-full px-4 py-3 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all"
+                  placeholder="0 = no alert"
+                />
+                <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                  Alert triggers when sellable stock falls below this number.
+                </p>
+              </div>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm"
+                >
+                  <FiRefreshCw className="w-4 h-4" />
+                  {editingMedicineId ? 'Cancel' : 'Clear'}
+                </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isSubmitting || !!barcodeDuplicate}
+                  className="flex-[2] flex items-center justify-center gap-2 px-4 py-4 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white rounded-md hover:from-emerald-700 hover:to-emerald-600 transition-all duration-200 shadow-sm hover:shadow-md font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <FiSave className="w-4 h-4" />
                   {isSubmitting
@@ -643,7 +936,10 @@ export default function MedicinesPage() {
           <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
             {/* Search Header */}
             <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-green-100/50 dark:from-green-900/20 dark:to-green-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
-              <div className="flex items-center gap-2">
+              <div
+                data-wedge-typing="true"
+                className="flex items-center gap-2"
+              >
                 <label
                   htmlFor="medicine-search"
                   className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap"
@@ -729,10 +1025,10 @@ export default function MedicinesPage() {
               ) : (
                 <div className="divide-y divide-gray-100 dark:divide-gray-700">
                   {/* Table Header */}
-                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                  <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-b-2 border-gray-200 dark:border-gray-600 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
                     <div className="col-span-1">#</div>
-                    <div className="col-span-2">Barcode</div>
                     <div className="col-span-3">Medicine</div>
+                    <div className="col-span-2">Barcode</div>
                     <div className="col-span-1 text-center">Pills/Pack</div>
                     <div className="col-span-2 text-center">Stock</div>
                     <div className="col-span-2 text-center">Status</div>
@@ -752,20 +1048,20 @@ export default function MedicinesPage() {
                       <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                         {index + 1}
                       </div>
-                      <div className="col-span-2">
-                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
-                          {medicine.barcode || '—'}
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                          {formatNumericId(medicine.id)}
-                        </div>
-                      </div>
                       <div className="col-span-3">
                         <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
                           {medicine.name}
                         </div>
                         <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
                           Avg: {medicine.averageSellablePricePerPill ? `${getCurrencySymbol()}${medicine.averageSellablePricePerPill.toFixed(2)}` : '—'}
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
+                          {medicine.barcode || '—'}
+                        </div>
+                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+                          {formatNumericId(medicine.id)}
                         </div>
                       </div>
                       <div className="col-span-1 text-center">
@@ -783,6 +1079,7 @@ export default function MedicinesPage() {
                       </div>
                       <div className="col-span-2 text-center">
                         <select
+                          data-wedge-typing="true"
                           value={medicine.status}
                           onChange={(e) => {
                             e.stopPropagation();

@@ -56,10 +56,10 @@ const ToastItem: React.FC<ToastProps> = ({ toast, onClose }) => {
 
   return (
     <div
-      className={`${getStyles()} border-l-4 rounded-lg shadow-lg p-4 mb-3 flex items-center gap-3 animate-slide-in-right min-w-[300px] max-w-md`}
+      className={`${getStyles()} border-l-4 rounded-lg shadow-lg p-3 sm:p-4 mb-3 flex items-center gap-2 sm:gap-3 animate-slide-in-right w-[280px] sm:w-[320px] md:w-[360px] lg:w-[400px] xl:w-[440px] 2xl:w-[480px]`}
     >
       <div className="flex-shrink-0">{getIcon()}</div>
-      <div className="flex-1 text-sm font-medium">{toast.message}</div>
+      <div className="flex-1 text-xs sm:text-sm font-medium break-words">{toast.message}</div>
       <button
         onClick={() => onClose(toast.id)}
         className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
@@ -79,7 +79,7 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onClose 
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-4 right-4 z-[10000] flex flex-col items-end">
+    <div className="fixed top-2 sm:top-4 right-2 sm:right-4 z-[10000] flex flex-col items-end max-w-[calc(100vw-1rem)] sm:max-w-none">
       {toasts.map((toast) => (
         <ToastItem key={toast.id} toast={toast} onClose={onClose} />
       ))}

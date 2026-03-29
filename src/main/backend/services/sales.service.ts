@@ -1,7 +1,8 @@
 import { getDatabaseService } from './database.service';
 import { SaleReturnService } from './sale-return.service';
 
-const SELLABLE_THRESHOLD_EXPRESSION = `date('now', '+30 days')`;
+// Expired batches are NOT eligible to sell.
+const UNEXPIRED_THRESHOLD_EXPRESSION = `date('now')`;
 
 export interface SaleItemInput {
   medicineId: number;
@@ -23,10 +24,14 @@ export interface Sale {
   subtotal: number;
   discountTotal: number;
   taxTotal: number;
+  additionalDiscount?: number;
+  additionalDiscountAmount?: number;
   total: number;
   customerName?: string;
   customerPhone?: string;
   saleType?: string;
+  prescriptionNumber?: string;
+  doctorName?: string;
   createdAt?: string;
 }
 
@@ -43,6 +48,8 @@ export class SalesService {
     customerName?: string;
     customerPhone?: string;
     saleType?: string;
+    additionalDiscount?: number;
+    additionalDiscountAmount?: number;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -52,6 +59,33 @@ export class SalesService {
     taxAmount: number;
     total: number;
   }>> {
+    // If both dates are empty, return all records
+    if (!fromDate && !toDate) {
+      const sql = `
+        SELECT 
+          s.id AS saleId,
+          s.created_at AS createdAt,
+          s.customer_name AS customerName,
+          s.customer_phone AS customerPhone,
+          s.sale_type AS saleType,
+          s.additional_discount AS additionalDiscount,
+          s.additional_discount_amount AS additionalDiscountAmount,
+          si.medicine_id AS medicineId,
+          si.medicine_name AS medicineName,
+          si.pills,
+          si.unit_price AS unitPrice,
+          si.subtotal,
+          si.discount_amount AS discountAmount,
+          si.tax_amount AS taxAmount,
+          si.total
+        FROM sale_items si
+        INNER JOIN sales s ON s.id = si.sale_id
+        ORDER BY s.created_at DESC, s.id DESC, si.id ASC
+      `;
+      const rows = await this.dbService.query(sql, []);
+      return rows as any;
+    }
+    
     const fromDateOnly = fromDate;
     const toDateOnly = toDate;
     const sql = `
@@ -61,6 +95,8 @@ export class SalesService {
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
         s.sale_type AS saleType,
+        s.additional_discount AS additionalDiscount,
+        s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -109,6 +145,8 @@ export class SalesService {
     customerName?: string;
     customerPhone?: string;
     saleType?: string;
+    additionalDiscount?: number;
+    additionalDiscountAmount?: number;
     medicineId: number;
     medicineName: string;
     pills: number;
@@ -125,6 +163,8 @@ export class SalesService {
         s.customer_name AS customerName,
         s.customer_phone AS customerPhone,
         s.sale_type AS saleType,
+        s.additional_discount AS additionalDiscount,
+        s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
         si.pills,
@@ -180,6 +220,21 @@ export class SalesService {
       )
     `);
 
+    // Safe migration: add new columns to sales table if they don't exist
+    const salesInfoCheck = await this.dbService.query(`PRAGMA table_info(sales)`);
+    if (!salesInfoCheck.some((col: any) => col.name === 'prescription_number')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN prescription_number TEXT`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'doctor_name')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN doctor_name TEXT`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'additional_discount')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN additional_discount REAL NOT NULL DEFAULT 0`);
+    }
+    if (!salesInfoCheck.some((col: any) => col.name === 'additional_discount_amount')) {
+      await this.dbService.execute(`ALTER TABLE sales ADD COLUMN additional_discount_amount REAL NOT NULL DEFAULT 0`);
+    }
+
     const saleItemsInfoCheck = await this.dbService.query(`PRAGMA table_info(sale_items)`);
     if (!saleItemsInfoCheck.some((col: any) => col.name === 'cost_price')) {
       await this.dbService.execute(`ALTER TABLE sale_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0`);
@@ -190,6 +245,9 @@ export class SalesService {
     `);
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_items_medicine_id ON sale_items(medicine_id)
+    `);
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)
     `);
   }
 
@@ -248,9 +306,9 @@ export class SalesService {
       SELECT id, available_pills
       FROM purchase_items
       WHERE medicine_id = ?
-        AND expiry_date >= ${SELLABLE_THRESHOLD_EXPRESSION}
+        AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
         AND available_pills > 0
-      ORDER BY expiry_date ASC, id ASC
+      ORDER BY date(expiry_date) ASC, id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
   }
@@ -259,7 +317,7 @@ export class SalesService {
     const batches = await this.getSellableInventory(medicineId);
     const totalAvailable = batches.reduce((sum, batch) => sum + batch.available_pills, 0);
     if (totalAvailable < requiredPills) {
-      throw new Error('Insufficient stock or medicine not eligible for sale (expires in < 30 days).');
+      throw new Error('Insufficient stock (or medicine is expired).');
     }
   }
 
@@ -285,7 +343,7 @@ export class SalesService {
   /**
    * Create a new sale and deduct inventory from eligible batches.
    */
-  public async createSale(payload: Omit<Sale, 'id' | 'items' | 'createdAt' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'total'> & {
+  public async createSale(payload: Omit<Sale, 'id' | 'items' | 'createdAt' | 'subtotal' | 'discountTotal' | 'taxTotal' | 'additionalDiscountAmount' | 'total'> & {
     items: SaleItemInput[];
   }): Promise<number> {
     if (!payload.items || payload.items.length === 0) {
@@ -297,7 +355,12 @@ export class SalesService {
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    const total = subtotal - discountTotal + taxTotal;
+    const baseTotal = subtotal - discountTotal + taxTotal;
+    
+    // Apply additional discount for Family/Relatives or Charity
+    const additionalDiscount = payload.additionalDiscount || 0;
+    const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+    const total = baseTotal - additionalDiscountAmount;
 
     for (const item of computedItems) {
       await this.ensureInventoryAvailable(item.medicineId, item.pills);
@@ -306,28 +369,44 @@ export class SalesService {
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       const insertSaleSql = `
-        INSERT INTO sales (subtotal, discount_total, tax_total, total, customer_name, customer_phone, sale_type, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+        INSERT INTO sales (subtotal, discount_total, tax_total, additional_discount, additional_discount_amount, total, customer_name, customer_phone, sale_type, prescription_number, doctor_name, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
       `;
       const saleResult = await this.dbService.execute(insertSaleSql, [
         subtotal,
         discountTotal,
         taxTotal,
+        additionalDiscount,
+        additionalDiscountAmount,
         total,
         payload.customerName || null,
         payload.customerPhone || null,
         payload.saleType || 'Regular',
+        (payload as any).prescriptionNumber || null,
+        (payload as any).doctorName || null,
       ]);
       const saleId = (saleResult as any).lastID;
 
+      // Batch fetch all cost prices at once to avoid N+1 query problem
+      const medicineIds = computedItems.map(item => item.medicineId);
+      const uniqueMedicineIds = [...new Set(medicineIds)];
+      const placeholders = uniqueMedicineIds.map(() => '?').join(',');
+      
+      const costResults = await this.dbService.query(`
+        SELECT 
+          medicine_id,
+          AVG(price_per_pill) as avg_cost 
+        FROM purchase_items 
+        WHERE medicine_id IN (${placeholders})
+          AND available_pills > 0
+          AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+        GROUP BY medicine_id
+      `, uniqueMedicineIds);
+
+      const costMap = new Map(costResults.map((r: any) => [r.medicine_id, r.avg_cost || 0]));
+
       for (const item of computedItems) {
-        // Fetch cost price (average of available batches)
-        const costResult = await this.dbService.queryOne(`
-          SELECT AVG(price_per_pill) as avg_cost 
-          FROM purchase_items 
-          WHERE medicine_id = ? AND available_pills > 0
-        `, [item.medicineId]);
-        const costPrice = costResult?.avg_cost || 0;
+        const costPrice = costMap.get(item.medicineId) || 0;
         const costSubtotal = costPrice * item.pills;
 
         const insertItemSql = `
@@ -364,37 +443,74 @@ export class SalesService {
 
   /**
    * Get all sales records with line items.
+   * Optimized: Uses single JOIN query instead of N+1 queries
    */
   public async getAllSales(): Promise<Sale[]> {
-    const sales = await this.dbService.query('SELECT * FROM sales ORDER BY created_at DESC');
-    const salesWithItems: Sale[] = [];
+    // Single query with JOIN - much faster than N+1 queries
+    const rows = await this.dbService.query(`
+      SELECT 
+        s.id,
+        s.subtotal,
+        s.discount_total,
+        s.tax_total,
+        s.additional_discount,
+        s.additional_discount_amount,
+        s.total,
+        s.customer_name,
+        s.customer_phone,
+        s.sale_type,
+        s.created_at,
+        si.id as item_id,
+        si.medicine_id,
+        si.medicine_name,
+        si.pills,
+        si.unit_price,
+        si.subtotal as item_subtotal,
+        si.discount_amount,
+        si.tax_amount,
+        si.total as item_total
+      FROM sales s
+      LEFT JOIN sale_items si ON s.id = si.sale_id
+      ORDER BY s.created_at DESC, si.id ASC
+    `);
 
-    for (const sale of sales) {
-      const items = await this.dbService.query('SELECT * FROM sale_items WHERE sale_id = ?', [sale.id]);
-      salesWithItems.push({
-        id: sale.id,
-        subtotal: sale.subtotal,
-        discountTotal: sale.discount_total,
-        taxTotal: sale.tax_total,
-        total: sale.total,
-        customerName: sale.customer_name || undefined,
-        customerPhone: sale.customer_phone || undefined,
-        saleType: sale.sale_type || 'Regular',
-        createdAt: sale.created_at,
-        items: items.map((item: any) => ({
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          pills: item.pills,
-          unitPrice: item.unit_price,
-          subtotal: item.subtotal,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          total: item.total,
-        })),
-      });
+    // Group items by sale
+    const salesMap = new Map<number, Sale>();
+    
+    for (const row of rows) {
+      if (!salesMap.has(row.id)) {
+        salesMap.set(row.id, {
+          id: row.id,
+          subtotal: row.subtotal,
+          discountTotal: row.discount_total,
+          taxTotal: row.tax_total,
+          additionalDiscount: row.additional_discount,
+          additionalDiscountAmount: row.additional_discount_amount,
+          total: row.total,
+          customerName: row.customer_name || undefined,
+          customerPhone: row.customer_phone || undefined,
+          saleType: row.sale_type || 'Regular',
+          createdAt: row.created_at,
+          items: [],
+        });
+      }
+      
+      // Add item if it exists (LEFT JOIN may have null items)
+      if (row.item_id) {
+        salesMap.get(row.id)!.items.push({
+          medicineId: row.medicine_id,
+          medicineName: row.medicine_name,
+          pills: row.pills,
+          unitPrice: row.unit_price,
+          subtotal: row.item_subtotal,
+          discountAmount: row.discount_amount,
+          taxAmount: row.tax_amount,
+          total: row.item_total,
+        });
+      }
     }
 
-    return salesWithItems;
+    return Array.from(salesMap.values());
   }
 
   /**
@@ -441,6 +557,8 @@ export class SalesService {
       subtotal: sale.subtotal,
       discountTotal: sale.discount_total,
       taxTotal: sale.tax_total,
+      additionalDiscount: sale.additional_discount,
+      additionalDiscountAmount: sale.additional_discount_amount,
       total: sale.total,
       customerName: sale.customer_name || undefined,
       customerPhone: sale.customer_phone || undefined,
@@ -588,14 +706,19 @@ export class SalesService {
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    const total = subtotal - discountTotal + taxTotal;
+    
+    // Calculate additional discount
+    const baseTotal = subtotal - discountTotal + taxTotal;
+    const additionalDiscount = payload.additionalDiscount || 0;
+    const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+    const total = baseTotal - additionalDiscountAmount;
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
       // Update sale record
       const updateSaleSql = `
         UPDATE sales 
-        SET subtotal = ?, discount_total = ?, tax_total = ?, total = ?, 
+        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?, 
             customer_name = ?, customer_phone = ?, sale_type = ?
         WHERE id = ?
       `;
@@ -603,6 +726,8 @@ export class SalesService {
         subtotal,
         discountTotal,
         taxTotal,
+        additionalDiscount,
+        additionalDiscountAmount,
         total,
         payload.customerName || null,
         payload.customerPhone || null,
@@ -754,8 +879,8 @@ export class SalesService {
         COALESCE(SUM(total), 0) as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN total ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN total ELSE 0 END), 0) as charity_total
+        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN additional_discount_amount ELSE 0 END), 0) as family_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
         AND datetime(created_at) <= datetime(?)

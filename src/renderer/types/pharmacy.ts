@@ -8,6 +8,7 @@ export interface PharmacySettings {
   currency: string;
   lowStockThreshold: number;
   expiredMedicinesAlert: boolean;
+  lowStockAlertsEnabled: boolean;
   tagline: string;
   website: string;
   taxId: string;
@@ -22,9 +23,10 @@ export const defaultPharmacySettings: PharmacySettings = {
   phone: '',
   email: '',
   taxRate: 0,
-  currency: 'USD',
+  currency: 'PKR',
   lowStockThreshold: 10,
   expiredMedicinesAlert: true,
+  lowStockAlertsEnabled: true,
   tagline: '',
   website: '',
   taxId: '',

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { login } from '../../utils/auth';
+import { useTheme } from '../../contexts/ThemeContext';
+import { login, changePassword, setPasswordChangeRequired } from '../../utils/auth';
 import { superAdminLogin } from '../../utils/super-admin';
 import pharmacist_1 from '../../public/images/pharmacist-1.jpg';
 
@@ -9,6 +10,7 @@ interface LoginProps {
 }
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const navigate = useNavigate();
+  const { theme } = useTheme();
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -21,6 +23,19 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
+
+  // Password change modal state
+  const [showPasswordChangeModal, setShowPasswordChangeModal] = useState(false);
+  const [passwordChangeData, setPasswordChangeData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  });
+  const [passwordChangeError, setPasswordChangeError] = useState('');
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [loggedInUserId, setLoggedInUserId] = useState<number | null>(null);
+  const [showModalNewPassword, setShowModalNewPassword] = useState(false);
+  const [showModalConfirmPassword, setShowModalConfirmPassword] = useState(false);
 
   useEffect(() => {
     const savedEmail = localStorage.getItem('rememberedEmail');
@@ -45,6 +60,45 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
+  };
+
+  const handlePasswordChange = async () => {
+    setPasswordChangeError('');
+
+    if (!passwordChangeData.newPassword || !passwordChangeData.confirmPassword) {
+      setPasswordChangeError('Please fill in all fields.');
+      return;
+    }
+    if (passwordChangeData.newPassword.length < 6) {
+      setPasswordChangeError('New password must be at least 6 characters.');
+      return;
+    }
+    if (passwordChangeData.newPassword !== passwordChangeData.confirmPassword) {
+      setPasswordChangeError('Passwords do not match.');
+      return;
+    }
+
+    if (!loggedInUserId) return;
+
+    setPasswordChangeLoading(true);
+    try {
+      const result = await changePassword(
+        loggedInUserId,
+        passwordChangeData.currentPassword,
+        passwordChangeData.newPassword
+      );
+      if (result.success) {
+        setShowPasswordChangeModal(false);
+        sessionStorage.setItem('shouldShowWelcome', 'true');
+        navigate('/main-menu');
+      } else {
+        setPasswordChangeError(result.error || 'Failed to change password.');
+      }
+    } catch {
+      setPasswordChangeError('An error occurred. Please try again.');
+    } finally {
+      setPasswordChangeLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -73,6 +127,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           } else {
             localStorage.removeItem('rememberedEmail');
           }
+          // Show welcome notification on next page
+          sessionStorage.setItem('shouldShowWelcome', 'true');
           // Navigate to super admin dashboard
           navigate('/super-admin/dashboard');
           return;
@@ -95,6 +151,21 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           localStorage.removeItem('rememberedEmail');
         }
 
+        // Check if password change is required
+        if (result.passwordChangeRequired) {
+          setLoggedInUserId(result.user?.id ?? null);
+          setPasswordChangeData({
+            currentPassword: formData.password,
+            newPassword: '',
+            confirmPassword: '',
+          });
+          setShowPasswordChangeModal(true);
+          return;
+        }
+
+        // Show welcome notification on next page
+        sessionStorage.setItem('shouldShowWelcome', 'true');
+
         // Navigate to main menu after successful login
         navigate('/main-menu');
       } else {
@@ -112,7 +183,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     }
   };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = React.useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
       ...prev,
@@ -125,12 +196,17 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         [name]: undefined,
       }));
     }
-  };
+  }, [errors]);
 
     return (
-    <div className="h-screen bg-gradient-to-br from-emerald-50 via-white to-teal-50 flex items-center justify-center p-2 overflow-hidden">
+    <>
+    <div className={`h-screen flex items-center justify-center p-2 overflow-hidden transition-colors duration-300 ${
+      theme === 'dark' ? 'bg-gray-950' : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
+    }`}>
       {/* Main Container */}
-      <div className="w-full max-w-6xl bg-white shadow-xl rounded-2xl overflow-hidden max-h-[95vh]">
+      <div className={`w-full max-w-6xl shadow-2xl rounded-2xl overflow-hidden max-h-[95vh] border transition-colors duration-300 ${
+        theme === 'dark' ? 'bg-gray-900 border-gray-700' : 'bg-white border-transparent'
+      }`}>
         <div className="flex flex-col lg:flex-row h-full">
           {/* Left Side - Form Section */}
           <div className="w-full lg:w-1/2 flex items-center justify-center p-6 sm:p-8 lg:p-12 xl:p-16 overflow-y-auto">
@@ -158,10 +234,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     Pharmacy Management System
                   </h1>
                 </div>
-                <h2 className="text-xl sm:text-2xl lg:text-3xl font-bold text-gray-900 mb-0.5">
+                <h2 className={`text-xl sm:text-2xl lg:text-3xl font-bold mb-0.5 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                   Welcome Back
                 </h2>
-                <p className="text-[10px] sm:text-xs text-gray-500">
+                <p className={`text-[10px] sm:text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
                   Sign in to your Pharmacy Management System
                 </p>
               </div>
@@ -190,7 +266,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div>
                   <label
                     htmlFor="email"
-                    className="block text-sm font-semibold text-gray-700 mb-2"
+                    className={`block text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}
                   >
                     Email Address
                   </label>
@@ -200,8 +276,12 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     name="email"
                     value={formData.email}
                     onChange={handleChange}
-                    placeholder="admin@pharmacy.com"
-                    className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 text-base text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all duration-200 hover:border-gray-300"
+                    placeholder="Enter your email (e.g., example@pharmacy.com)"
+                    className={`w-full border-2 rounded-xl px-4 py-3 text-base outline-none transition-all duration-200 ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
                   />
                   {errors.email && (
                     <p className="text-red-600 text-sm mt-2 flex items-center gap-1">
@@ -225,7 +305,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                 <div>
                   <label
                     htmlFor="password"
-                    className="block text-sm font-semibold text-gray-700 mb-2"
+                    className={`block text-sm font-semibold mb-2 ${theme === 'dark' ? 'text-gray-200' : 'text-gray-700'}`}
                   >
                     Password
                   </label>
@@ -237,7 +317,11 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       value={formData.password}
                       onChange={handleChange}
                       placeholder="Enter your password"
-                      className="w-full border-2 border-gray-200 rounded-xl px-4 py-3 pr-12 text-base text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all duration-200 hover:border-gray-300"
+                      className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-base outline-none transition-all duration-200 ${
+                        theme === 'dark'
+                          ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                          : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                      }`}
                     />
                     <button
                       type="button"
@@ -309,7 +393,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                       onChange={(e) => setRememberMe(e.target.checked)}
                       className="h-4 w-4 border-gray-300 rounded text-emerald-600 focus:ring-emerald-500 focus:ring-2 cursor-pointer"
                     />
-                    <span className="ml-2 text-sm text-gray-700 group-hover:text-gray-900 transition-colors">
+                    <span className={`ml-2 text-sm transition-colors ${theme === 'dark' ? 'text-gray-300 group-hover:text-white' : 'text-gray-700 group-hover:text-gray-900'}`}>
                       Remember me
                     </span>
                   </label>
@@ -392,26 +476,29 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
           </div>
 
           {/* Right Side - Image Section */}
-          <div className="hidden lg:flex w-full lg:w-1/2 bg-gradient-to-br from-gray-50 via-white to-gray-50 items-center justify-center p-2 xl:p-4 relative overflow-hidden">
+          <div className={`hidden lg:flex w-full lg:w-1/2 items-center justify-center relative overflow-hidden transition-colors duration-300 ${
+            theme === 'dark'
+              ? 'bg-gradient-to-br from-gray-900 via-gray-800 to-slate-900'
+              : 'bg-gradient-to-br from-emerald-50 via-white to-teal-50'
+          }`}>
             {/* Decorative Background Elements */}
             <div className="absolute inset-0 overflow-hidden">
-              <div className="absolute top-0 right-0 w-96 h-96 bg-gray-100/40 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
-              <div className="absolute bottom-0 left-0 w-96 h-96 bg-gray-100/40 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+              <div className={`absolute top-0 right-0 w-96 h-96 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 ${theme === 'dark' ? 'bg-emerald-900/30' : 'bg-gray-100/40'}`}></div>
+              <div className={`absolute bottom-0 left-0 w-96 h-96 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2 ${theme === 'dark' ? 'bg-slate-700/30' : 'bg-gray-100/40'}`}></div>
             </div>
 
             {/* Image Container */}
-            <div className="relative z-10 w-full h-full flex items-center justify-center">
-              <div className="relative w-full max-w-lg h-full rounded-2xl overflow-hidden shadow-2xl transform hover:scale-[1.02] transition-transform duration-300">
-                <img
-                  src={pharmacist_1}
-                  alt="Professional pharmacist managing pharmacy operations"
-                  className="w-full h-full object-cover object-center"
-                />
-                {/* Overlay Gradient */}
-                <div className="absolute inset-0 bg-gradient-to-b from-emerald-900/60 via-emerald-800/20 to-transparent"></div>
-                
-                {/* Content Overlay - positioned at top */}
-                <div className="absolute top-0 left-0 right-0 p-8 text-white">
+            <div className="relative z-10 w-full h-full">
+              <img
+                src={pharmacist_1}
+                alt="Professional pharmacist managing pharmacy operations"
+                className="w-full h-full object-cover object-top"
+              />
+              {/* Overlay Gradient */}
+              <div className="absolute inset-0 bg-gradient-to-b from-emerald-900/60 via-emerald-800/20 to-transparent"></div>
+              
+              {/* Content Overlay - positioned at top */}
+              <div className="absolute top-0 left-0 right-0 p-8 text-white">
                   <div className="mb-4">
                     <h3 className="text-2xl xl:text-3xl font-bold mb-2 drop-shadow-lg">
                       Pharmacy Management System
@@ -471,12 +558,159 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
                     </div>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
         </div>
       </div>
     </div>
+      {/* Password Change Required Modal */}
+      {showPasswordChangeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className={`w-full max-w-md mx-4 p-8 rounded-2xl shadow-2xl border ${
+            theme === 'dark'
+              ? 'bg-gray-900 border-gray-700'
+              : 'bg-white border-gray-200'
+          }`}>
+            <div className="text-center mb-6">
+              <div className="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl mb-4 shadow-lg">
+                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h3 className={`text-xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                Password Change Required
+              </h3>
+              <p className={`text-sm mt-1 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-500'}`}>
+                Your administrator requires you to change your password before continuing.
+              </p>
+            </div>
+
+            {passwordChangeError && (
+              <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded-xl mb-4 text-sm">
+                {passwordChangeError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className={`block text-sm font-semibold mb-1.5 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                  New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showModalNewPassword ? 'text' : 'password'}
+                    value={passwordChangeData.newPassword}
+                    onChange={(e) => setPasswordChangeData(prev => ({ ...prev, newPassword: e.target.value }))}
+                    placeholder="Enter new password"
+                    className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-sm outline-none transition-all ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowModalNewPassword(!showModalNewPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded p-1"
+                    aria-label={showModalNewPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showModalNewPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className={`block text-sm font-semibold mb-1.5 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showModalConfirmPassword ? 'text' : 'password'}
+                    value={passwordChangeData.confirmPassword}
+                    onChange={(e) => setPasswordChangeData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                    placeholder="Re-enter new password"
+                    className={`w-full border-2 rounded-xl px-4 py-3 pr-12 text-sm outline-none transition-all ${
+                      theme === 'dark'
+                        ? 'bg-gray-800 border-gray-600 text-white placeholder-gray-500 focus:border-emerald-500 hover:border-gray-500'
+                        : 'bg-white border-gray-200 text-gray-900 placeholder-gray-400 focus:border-emerald-500 hover:border-gray-300'
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowModalConfirmPassword(!showModalConfirmPassword)}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500 rounded p-1"
+                    aria-label={showModalConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showModalConfirmPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePasswordChange}
+              disabled={passwordChangeLoading}
+              className="w-full mt-6 bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-700 hover:to-emerald-800 text-white py-3 rounded-xl font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {passwordChangeLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Changing Password...
+                </>
+              ) : (
+                'Change Password & Continue'
+              )}
+            </button>
+            <button
+              onClick={async () => {
+                if (loggedInUserId) {
+                  setPasswordChangeLoading(true);
+                  try {
+                    await setPasswordChangeRequired(loggedInUserId, false);
+                  } catch (error) {
+                    console.error('Failed to clear password change required flag:', error);
+                  } finally {
+                    setPasswordChangeLoading(false);
+                  }
+                }
+                setShowPasswordChangeModal(false);
+                setPasswordChangeData({ currentPassword: '', newPassword: '', confirmPassword: '' });
+                setPasswordChangeError('');
+                setLoggedInUserId(null);
+                sessionStorage.removeItem('passwordChangeRequired');
+                localStorage.removeItem('auth_user');
+                localStorage.removeItem('auth_token');
+              }}
+              disabled={passwordChangeLoading}
+              className={`w-full mt-3 py-3 rounded-xl font-semibold transition-all flex items-center justify-center gap-2 ${
+                theme === 'dark'
+                  ? 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white border border-gray-700'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 hover:text-gray-900 border border-gray-200'
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Cancel & Log Out
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

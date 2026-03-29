@@ -34,6 +34,8 @@ export interface ThermalReceiptOptions {
   customerPhone: string;
   currentBillIndex: number;
   returnedQuantities: Map<number, number>;
+  saleType?: string;
+  additionalDiscount?: number;
   /** Amount received from customer (cash tendered). If omitted, receipt shows total as received and change 0. */
   amountGiven?: number;
 }
@@ -41,6 +43,8 @@ export interface ThermalReceiptOptions {
 export interface BuildReceiptOpts {
   /** When false, omits the auto-print script (e.g. for in-app preview). Default true. */
   includePrintScript?: boolean;
+  /** Show medicine barcode lines on the receipt (preview only). Default true. */
+  showBarcode?: boolean;
 }
 
 /**
@@ -51,14 +55,14 @@ export const buildThermalReceiptHtml = (
   options: ThermalReceiptOptions,
   opts: BuildReceiptOpts = {}
 ): string => {
-  const { includePrintScript = true } = opts;
-  const { cart, pharmacyInfo, customerName, customerPhone, currentBillIndex, returnedQuantities, amountGiven } =
+  const { includePrintScript = true, showBarcode = true } = opts;
+  const { cart, pharmacyInfo, customerName, customerPhone, currentBillIndex, returnedQuantities, saleType, additionalDiscount, amountGiven } =
     options;
 
   if (!cart.length) return '';
 
   const profile = pharmacyInfo;
-  const currencyCode = profile.currency || 'USD';
+  const currencyCode = profile.currency || 'PKR';
   const symbol = getSymbol(currencyCode);
 
   // Logo: use when non-empty (data URL from Settings → Pharmacy upload, or URL)
@@ -84,10 +88,16 @@ export const buildThermalReceiptHtml = (
     const returned = returnedQuantities.get(item.medicine.id) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
-    return sum + (itemSubtotal * item.tax) / 100;
+    const itemDiscount = (itemSubtotal * item.discount) / 100;
+    const discountedAmount = itemSubtotal - itemDiscount;
+    return sum + (discountedAmount * item.tax) / 100;
   }, 0);
 
-  const grandTotal = subtotal - discountTotal + taxTotal;
+  const baseTotal = subtotal - discountTotal + taxTotal;
+  const additionalDiscountAmount = (saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount 
+    ? (baseTotal * additionalDiscount) / 100 
+    : 0;
+  const grandTotal = baseTotal - additionalDiscountAmount;
   const cashReceived = amountGiven != null && amountGiven >= 0 ? amountGiven : grandTotal;
   const changeReturned = Math.max(0, cashReceived - grandTotal);
   const printInvoiceNumber = `INV-${Date.now().toString().slice(-6)}`;
@@ -104,8 +114,9 @@ export const buildThermalReceiptHtml = (
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;
-      const itemTax = (itemSubtotal * item.tax) / 100;
-      const finalPrice = itemSubtotal - itemDiscount + itemTax;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      const itemTax = (discountedAmount * item.tax) / 100;
+      const finalPrice = discountedAmount + itemTax;
       const hasReturn = currentBillIndex >= 0 && returned > 0;
 
       return `
@@ -113,13 +124,17 @@ export const buildThermalReceiptHtml = (
           <td class="col-num">${index + 1}</td>
           <td class="col-name">
             <span class="med-name">${item.medicine.name}</span>
-            ${item.medicine.barcode ? `<span class="med-barcode">${item.medicine.barcode}</span>` : ''}
-            ${hasReturn ? `<span class="med-return">↩ Returned: ${returned}</span>` : ''}
+            ${
+              showBarcode && item.medicine.barcode
+                ? `<span class="med-barcode">${item.medicine.barcode}</span>`
+                : ''
+            }
+            ${hasReturn ? `<span class="med-return">&#8629; Returned: ${returned}</span>` : ''}
           </td>
           <td class="col-qty">${netPills}</td>
-          <td class="col-rate">${symbol}${item.unitPrice.toFixed(2)}</td>
-          <td class="col-disc">${item.discount > 0 ? item.discount + '%' : '—'}</td>
-          <td class="col-amt">${symbol}${finalPrice.toFixed(2)}</td>
+          <td class="col-disc">${item.discount > 0 ? item.discount + '%' : '&mdash;'}</td>
+          <td class="col-tax">${item.tax > 0 ? item.tax + '%' : '&mdash;'}</td>
+          <td class="col-amt">${finalPrice.toFixed(2)}</td>
         </tr>`;
     })
     .join('');
@@ -130,17 +145,25 @@ export const buildThermalReceiptHtml = (
   <meta charset="UTF-8" />
   <title>${printInvoiceNumber}</title>
   <style>
-    /* Match receipt-preview.html exactly for print */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Force reliable colors for thermal printing */
+    * {
+      color: #000 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      background-color: #fff !important;
+    }
 
     @page { size: 80mm auto; margin: 0; }
     html, body {
       width: 302px; /* 80mm ≈ 302px at 96dpi */
       max-width: 80mm;
       background: #fff;
-      color: #0a0a0a;
+      color: #000;
       font-family: 'Courier New', Courier, monospace;
-      font-size: 9pt;
+      font-size: 9.5pt;
+      font-weight: 600;
       line-height: 1.35;
     }
 
@@ -148,187 +171,275 @@ export const buildThermalReceiptHtml = (
       width: 302px;
       max-width: 80mm;
       background: #fff;
-      color: #0a0a0a;
+      color: #000;
       font-family: 'Courier New', Courier, monospace;
-      font-size: 9pt;
+      font-size: 9.5pt;
+      font-weight: 600;
       line-height: 1.35;
       padding: 22px 15px 30px;
     }
 
-    .rule-solid { border: none; border-top: 1.5px solid #0a0a0a; margin: 10px 0; }
-    .rule-dash  { border: none; border-top: 1px dashed #777;     margin: 8px 0; }
-    .rule-eq    { border: none; border-top: 2px double #0a0a0a;  margin: 10px 0; }
+    .rule-solid { border: none; border-top: 1.5px solid #000; margin: 10px 0; }
+    .rule-dash  { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+    .rule-eq    { border: none; border-top: 2.5px double #000; margin: 10px 0; }
 
+    /* ── HEADER ── */
     .hdr { text-align: center; }
+
+    /* Logo: large bold circle — white bg, thick black border, black letter (thermal-safe) */
     .logo-wrap {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 42px;
-      height: 42px;
+      width: 62px;
+      height: 62px;
       border-radius: 50%;
-      background: #0a0a0a;
-      color: #fff;
-      font-size: 18px;
-      font-weight: 700;
-      margin-bottom: 6px;
-      overflow: hidden;
+      background: #fff !important;
+      color: #000 !important;
+      /* double-ring effect using only border + outline — no box-shadow fill */
+      border: 3.5px solid #000;
+      outline: 2px solid #000;
+      outline-offset: 3px;
+      font-size: 28px;
+      font-weight: 900;
+      font-family: 'Courier New', Courier, monospace;
+      margin-bottom: 10px;
+      overflow: visible;
     }
-    .logo-wrap img { width: 100%; height: 100%; object-fit: cover; }
+    .logo-wrap .logo-initial {
+      color: #000 !important;
+      background: transparent !important;
+      font-size: 28px;
+      font-weight: 900;
+      line-height: 1;
+    }
+    .logo-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+
+    /* Pharmacy name */
     .pharmacy-name {
-      font-weight: 700;
-      letter-spacing: 1.5px;
+      font-weight: 800;
+      letter-spacing: 2px;
       text-transform: uppercase;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       max-width: 100%;
       display: block;
+      color: #000;
+      margin-top: 2px;
     }
-    .pharmacy-name.pharmacy-name-short { font-size: 14pt; }
-    .pharmacy-name.pharmacy-name-long { font-size: 9pt; }
+    .pharmacy-name.pharmacy-name-short { font-size: 13.5pt; }
+    .pharmacy-name.pharmacy-name-long  { font-size: 9pt; }
+
+    /* Decorative rule under pharmacy name */
+    .name-rule {
+      display: block;
+      width: 60%;
+      margin: 5px auto 0;
+      border: none;
+      border-top: 2px solid #000;
+    }
+
     .tagline {
       font-size: 7.5pt;
-      color: #555;
-      margin-top: 2px;
+      color: #000;
+      margin-top: 4px;
       font-style: italic;
+      font-weight: 600;
     }
     .contact-line {
       font-size: 7.5pt;
-      color: #444;
-      margin-top: 4px;
-      line-height: 1.6;
-      text-align: left;
+      color: #000;
+      margin-top: 5px;
+      line-height: 1.65;
+      text-align: center;
       display: block;
       width: 100%;
+      font-weight: 600;
     }
 
+    /* ── META GRID ── */
     .meta-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 3px 6px;
       font-size: 8pt;
     }
-    .meta-grid .label { color: #666; }
-    .meta-grid .value { font-weight: 600; text-align: right; }
-    .inv-num { font-size: 9pt; font-weight: 700; }
+    .meta-grid .label { color: #000; font-weight: 700; }
+    .meta-grid .value { font-weight: 600; text-align: right; color: #000; }
+    .inv-num { font-size: 9pt; font-weight: 800; letter-spacing: 0.5px; }
 
+    /* ── CUSTOMER LINE ── */
     .cust-line {
       font-size: 8.5pt;
       display: flex;
       justify-content: space-between;
     }
-    .cust-line .cust-label { color: #666; }
-    .cust-line .cust-val   { font-weight: 600; max-width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cust-line .cust-label { color: #000; font-weight: 700; }
+    .cust-line .cust-val   { font-weight: 600; max-width: 200px; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #000; }
 
-    table { width: 100%; border-collapse: collapse; }
+    /* ── TABLE ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      border: 2px solid #000;
+      margin-top: 2px;
+    }
     thead tr {
-      border-top: 1.5px solid #0a0a0a;
-      border-bottom: 1.5px solid #0a0a0a;
+      background: #fff !important;
     }
     th {
-      font-size: 7.5pt;
-      font-weight: 700;
-      padding: 5px 2px;
+      font-size: 7.8pt;
+      font-weight: 900;
+      padding: 6px 3px;
       text-transform: uppercase;
-      letter-spacing: 0.3px;
+      letter-spacing: 0.5px;
+      color: #000 !important;
+      background: #fff !important;
+      border: 1.5px solid #000;
+      text-align: center;
+      white-space: nowrap;
+      /* underline to visually separate from body rows */
+      border-bottom: 2.5px solid #000;
     }
     td {
-      font-size: 8pt;
-      padding: 6px 2px;
+      font-size: 8.5pt;
+      padding: 6px 3px;
       vertical-align: top;
-      border-bottom: 0.5px dashed #ccc;
+      border: 1px solid #000;
+      color: #000;
     }
-    tbody tr:last-child td { border-bottom: none; }
+    /* No alternating background — thermal printers can't print fills */
 
-    .col-num  { width: 6%;  text-align: center; }
-    .col-name { width: 36%; }
-    .col-qty  { width: 10%; text-align: center; }
-    .col-rate { width: 16%; text-align: right; }
-    .col-disc { width: 12%; text-align: center; }
-    .col-amt  { width: 20%; text-align: right; font-weight: 600; }
+    .col-num  { width: 7%;  text-align: center; }
+    .col-name { width: 39%; word-break: break-word; }
+    .col-qty  { width: 11%; text-align: center; }
+    .col-disc { width: 11%; text-align: center; }
+    .col-tax  { width: 11%; text-align: center; }
+    .col-amt  { width: 21%; text-align: right; font-weight: 700; }
 
-    .med-name    { display: block; font-weight: 700; font-size: 8pt; }
-    .med-barcode { display: block; font-size: 6.5pt; color: #888; letter-spacing: 0.5px; margin-top: 1px; }
-    .med-return  { display: block; font-size: 7pt; color: #b91c1c; margin-top: 1px; }
-    .row-returned td { opacity: 0.75; }
+    .med-name    { display: block; font-weight: 800; font-size: 8.8pt; color: #000; }
+    .med-barcode { display: block; font-size: 7pt; color: #000; letter-spacing: 0.5px; margin-top: 1px; font-weight: 600; }
+    .med-return  { display: block; font-size: 7pt; color: #000; margin-top: 1px; font-weight: 600; }
+    .row-returned td { opacity: 0.65; }
 
+    /* ── TOTALS ── */
     .totals { margin-top: 2px; }
     .tot-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      font-size: 8.5pt;
-      padding: 2px 0;
+      font-size: 9pt;
+      padding: 3px 0;
     }
-    .tot-row .tot-label { color: #444; }
-    .tot-row .tot-val   { font-weight: 600; min-width: 68px; text-align: right; }
-    .tot-row.savings .tot-label { color: #166534; }
-    .tot-row.savings .tot-val   { color: #166534; }
-    .tot-row.tax-row .tot-val   { color: #92400e; }
+    .tot-row .tot-label { color: #000; font-weight: 600; }
+    .tot-row .tot-val   { font-weight: 700; min-width: 68px; text-align: right; color: #000; }
+    .tot-row.savings .tot-label,
+    .tot-row.savings .tot-val { font-weight: 600; }
+    .tot-row.tax-row .tot-val  { font-weight: 600; }
 
+    /* Grand total — thick bordered box, no background fill (thermal-safe) */
+    .grand-band {
+      background: #fff !important;
+      border: 2.5px solid #000;
+      padding: 7px 8px;
+      margin-top: 6px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .grand-label {
+      font-size: 10pt;
+      font-weight: 900;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #000 !important;
+    }
+    .grand-val {
+      font-size: 13pt;
+      font-weight: 900;
+      color: #000 !important;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── PAYMENT ROWS ── */
     .payment-row {
       display: flex;
       justify-content: space-between;
       font-size: 8.5pt;
       margin-top: 4px;
     }
-    .payment-row .payment-label { color: #444; }
-    .payment-row .payment-val   { font-weight: 600; min-width: 68px; text-align: right; }
+    .payment-row .payment-label { color: #000; font-weight: 600; }
+    .payment-row .payment-val   { font-weight: 700; min-width: 68px; text-align: right; color: #000; }
 
-    .grand-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      padding: 5px 0 2px;
-      border-top: 1.5px solid #0a0a0a;
-    }
-    .grand-label { font-size: 11pt; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
-    .grand-val   { font-size: 13pt; font-weight: 700; }
+    /* Change due — slightly emphasised */
+    .payment-row.change-row .payment-label,
+    .payment-row.change-row .payment-val { font-weight: 800; font-size: 9pt; }
 
     .items-summary {
       font-size: 7.5pt;
-      color: #888;
+      color: #000;
       text-align: right;
       margin-top: 2px;
+      font-weight: 600;
     }
 
+    /* ── THANK YOU ── */
     .thank-you {
       font-size: 11pt;
-      font-weight: 700;
+      font-weight: 900;
       text-transform: uppercase;
-      letter-spacing: 3px;
+      letter-spacing: 4px;
       text-align: center;
-      margin: 10px 0 12px;
+      margin: 12px 0;
+      color: #000;
     }
+
+    /* ── FOOTER ── */
     .footer {
       margin-top: 2px;
       padding-top: 10px;
-      border-top: 1px dashed #ccc;
+      border-top: 1.5px dashed #000;
     }
     .footer .note {
       font-size: 7pt;
-      line-height: 1.45;
-      color: #555;
+      line-height: 1.5;
+      color: #000;
       font-style: italic;
-      padding: 8px 10px;
-      background: #f5f5f5;
-      border: 1px solid #e8e8e8;
+      font-weight: 600;
+      padding: 7px 10px;
+      border: 1.5px solid #000;
       border-radius: 3px;
       text-align: center;
     }
     .footer .powered {
       font-size: 6pt;
-      color: #888;
+      color: #000;
       margin-top: 10px;
       letter-spacing: 0.8px;
       text-align: center;
       text-transform: uppercase;
+      font-weight: 600;
     }
 
     @media print {
       html, body { background: #fff; }
       .slip { padding: 16px 12px 24px; }
+      .logo-wrap {
+        border: 3.5px solid #000;
+        outline: 2px solid #000;
+        outline-offset: 3px;
+        background: #fff !important;
+      }
+      .logo-wrap .logo-initial { color: #000 !important; }
+      .grand-band { border: 2.5px solid #000; background: #fff !important; }
+      .grand-label, .grand-val { color: #000 !important; }
     }
   </style>
 </head>
@@ -340,10 +451,11 @@ export const buildThermalReceiptHtml = (
         ${
           hasLogo
             ? `<img src="${safeLogoUrl}" alt="logo" decoding="async" style="display:block;width:100%;height:100%;object-fit:cover;" />`
-            : `${profile.pharmacyName?.[0]?.toUpperCase() || 'P'}`
+            : `<span class="logo-initial">${profile.pharmacyName?.[0]?.toUpperCase() || 'P'}</span>`
         }
       </div>
       <div class="pharmacy-name ${(profile.pharmacyName || '').length > 25 ? 'pharmacy-name-long' : 'pharmacy-name-short'}">${profile.pharmacyName || 'Your Pharmacy'}</div>
+      <hr class="name-rule" />
       ${profile.tagline ? `<div class="tagline">${profile.tagline}</div>` : ''}
       <div class="contact-line">
         ${profile.address || ''}
@@ -380,8 +492,8 @@ export const buildThermalReceiptHtml = (
           <th class="col-num">#</th>
           <th class="col-name">Medicine</th>
           <th class="col-qty">Qty</th>
-          <th class="col-rate">Rate</th>
-          <th class="col-disc">Disc%</th>
+          <th class="col-disc">Dis%</th>
+          <th class="col-tax">Tax%</th>
           <th class="col-amt">Amount</th>
         </tr>
       </thead>
@@ -403,7 +515,7 @@ export const buildThermalReceiptHtml = (
         discountTotal > 0
           ? `<div class="tot-row savings">
               <span class="tot-label">Discount (saved)</span>
-              <span class="tot-val">- ${symbol}${discountTotal.toFixed(2)}</span>
+              <span class="tot-val">&minus; ${symbol}${discountTotal.toFixed(2)}</span>
             </div>`
           : ''
       }
@@ -415,33 +527,42 @@ export const buildThermalReceiptHtml = (
             </div>`
           : ''
       }
+      ${
+        additionalDiscountAmount > 0
+          ? `<div class="tot-row savings">
+              <span class="tot-label">Extra Discount (${additionalDiscount}%)</span>
+              <span class="tot-val">&minus; ${symbol}${additionalDiscountAmount.toFixed(2)}</span>
+            </div>`
+          : ''
+      }
     </div>
 
     <hr class="rule-eq" />
 
-    <div class="grand-row">
+    <!-- Grand total — inverted black band for maximum impact -->
+    <div class="grand-band">
       <span class="grand-label">Total</span>
       <span class="grand-val">${symbol}${grandTotal.toFixed(2)}</span>
     </div>
 
-    <div class="payment-row">
-      <span class="payment-label">Cash received</span>
+    <div class="payment-row" style="margin-top:8px;">
+      <span class="payment-label">Cash Received</span>
       <span class="payment-val">${symbol}${cashReceived.toFixed(2)}</span>
     </div>
-    <div class="payment-row">
+    <div class="payment-row change-row">
       <span class="payment-label">Change</span>
       <span class="payment-val">${symbol}${changeReturned.toFixed(2)}</span>
     </div>
 
     <hr class="rule-solid" />
 
-    <div class="thank-you">Thank You!</div>
+    <div class="thank-you">&#10022; Thank You &#10022;</div>
 
     <div class="footer">
       <div class="note">
         ${profile.invoiceNotes || 'Medicines once sold will not be returned without a valid reason and original bill.'}
       </div>
-      <div class="powered">Printed by innovation technology 03405939713</div>
+      <div class="powered">Printed by Innovation Technology &bull; 03405939713</div>
     </div>
 
   </div>

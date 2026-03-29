@@ -120,6 +120,33 @@ export class AuthController {
         event.reply('auth-update-profile-reply', { success: false, error: 'Failed to update profile' });
       }
     });
+
+    // Handle set password change required
+    ipcMain.on('auth-set-password-change-required', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const userId = args[0] as number;
+        const required = args[1] as boolean;
+        const result = await this.authService.setPasswordChangeRequired(userId, required);
+        event.reply('auth-set-password-change-required-reply', result);
+      } catch (error) {
+        console.error('Set password change required error:', error);
+        event.reply('auth-set-password-change-required-reply', { success: false, error: 'Failed to update setting' });
+      }
+    });
+
+    // Handle change password
+    ipcMain.on('auth-change-password', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const userId = args[0] as number;
+        const currentPassword = args[1] as string;
+        const newPassword = args[2] as string;
+        const result = await this.authService.changePassword(userId, currentPassword, newPassword);
+        event.reply('auth-change-password-reply', result);
+      } catch (error) {
+        console.error('Change password error:', error);
+        event.reply('auth-change-password-reply', { success: false, error: 'Failed to change password' });
+      }
+    });
   }
 }
 

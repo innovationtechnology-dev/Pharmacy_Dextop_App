@@ -30,6 +30,7 @@ export type Channels =
   | 'purchase-delete' | 'purchase-delete-reply'
   | 'purchase-update' | 'purchase-update-reply'
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
+  | 'purchase-record-supplier-refund' | 'purchase-record-supplier-refund-reply'
   | 'payment-get-all' | 'payment-get-all-reply'
   | 'payment-get-summary' | 'payment-get-summary-reply'
   | 'payment-get-supplier-accounts' | 'payment-get-supplier-accounts-reply'
@@ -40,6 +41,8 @@ export type Channels =
   | 'payment-export-csv' | 'payment-export-csv-reply'
   | 'asynchronous-sql-command' | 'asynchronous-sql-reply'
   | 'ipc-show-userDataPaths'
+  | 'system-reset-all-data' | 'system-reset-all-data-reply'
+  | 'get-table-counts' | 'get-table-counts-reply'
   | (string & {});
 
 contextBridge.exposeInMainWorld('electron', {
@@ -58,6 +61,10 @@ contextBridge.exposeInMainWorld('electron', {
     },
     once(channel: Channels, func: (...args: unknown[]) => void) {
       ipcRenderer.once(channel, (_event, ...args) => func(...args));
+    },
+    /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
+    invoke(channel: Channels, ...args: unknown[]) {
+      return ipcRenderer.invoke(channel, ...args);
     },
   },
 });

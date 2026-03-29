@@ -1,6 +1,3 @@
-/* eslint-disable react/button-has-type */
-'use client';
-
 import React, {
   useCallback,
   useEffect,
@@ -14,13 +11,18 @@ import {
   FiChevronDown,
   FiHelpCircle,
   FiLogOut,
+  FiUser,
+  FiSun,
+  FiSettings,
 } from 'react-icons/fi';
 import { getAuthUser, getAuthToken, logout as authLogout } from '../utils/auth';
 import {
   DashboardHeaderConfig,
   DashboardHeaderContextValue,
   ExpiringAlert,
+  LowStockAlert,
 } from './dashboard-pages/useDashboardHeader';
+import { getStoredPharmacySettings } from '../types/pharmacy';
 import Breadcrumbs from '../components/navigation/Breadcrumbs';
 import Loader from '../components/Loader';
 import LicenseOverlay from '../components/license/LicenseOverlay';
@@ -39,6 +41,7 @@ const Dashboard_Layout: React.FC = () => {
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const [pageTitle, setPageTitle] = useState('Dashboard');
   const [expiringAlerts, setExpiringAlerts] = useState<ExpiringAlert[]>([]);
+  const [lowStockAlerts, setLowStockAlerts] = useState<LowStockAlert[]>([]);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const notificationMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -98,7 +101,7 @@ const Dashboard_Layout: React.FC = () => {
 
     // Route Guarding
     const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
-    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel', '/sale-return', '/alerts'];
+    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel'];
     
     if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
       navigate('/main-menu');
@@ -106,6 +109,22 @@ const Dashboard_Layout: React.FC = () => {
       navigate('/main-menu');
     }
   }, [navigate, location.pathname]);
+
+  // Listen for profile updates
+  useEffect(() => {
+    const handleProfileUpdate = (event: CustomEvent) => {
+      const updatedUser = event.detail || getAuthUser();
+      if (updatedUser) {
+        setUser(updatedUser);
+      }
+    };
+
+    window.addEventListener('user-profile-updated', handleProfileUpdate as EventListener);
+    
+    return () => {
+      window.removeEventListener('user-profile-updated', handleProfileUpdate as EventListener);
+    };
+  }, []);
 
   const handleLogout = () => {
     authLogout();
@@ -132,11 +151,37 @@ const Dashboard_Layout: React.FC = () => {
     ]);
   }, []);
 
+  const fetchLowStockAlerts = useCallback(() => {
+    if (!window?.electron) return;
+    const settings = getStoredPharmacySettings();
+    if (!settings.lowStockAlertsEnabled) {
+      setLowStockAlerts([]);
+      return;
+    }
+    window.electron.ipcRenderer.once(
+      'medicine-get-low-stock-reply',
+      (response: any) => {
+        if (response?.success) {
+          setLowStockAlerts(response.data || []);
+        } else {
+          console.error('Unable to load low-stock alerts', response?.error);
+        }
+      }
+    );
+    window.electron.ipcRenderer.sendMessage('medicine-get-low-stock', []);
+  }, []);
+
   useEffect(() => {
     fetchExpiringAlerts();
     const interval = setInterval(fetchExpiringAlerts, 60000);
     return () => clearInterval(interval);
   }, [fetchExpiringAlerts]);
+
+  useEffect(() => {
+    fetchLowStockAlerts();
+    const interval = setInterval(fetchLowStockAlerts, 60000);
+    return () => clearInterval(interval);
+  }, [fetchLowStockAlerts]);
 
   const setHeaderConfig = useCallback<DashboardHeaderContextValue['setHeader']>(
     (config) => {
@@ -156,11 +201,16 @@ const Dashboard_Layout: React.FC = () => {
       expiringAlerts,
       refreshExpiringAlerts: fetchExpiringAlerts,
       alertThresholdDays: ALERT_THRESHOLD_DAYS,
+      lowStockAlerts,
+      refreshLowStockAlerts: fetchLowStockAlerts,
+      lowStockAlertsEnabled: getStoredPharmacySettings().lowStockAlertsEnabled,
     }),
-    [setHeaderConfig, expiringAlerts, fetchExpiringAlerts]
+    [setHeaderConfig, expiringAlerts, fetchExpiringAlerts, lowStockAlerts, fetchLowStockAlerts]
   );
 
   const expiringAlertCount = expiringAlerts.length;
+  const lowStockAlertCount = lowStockAlerts.length;
+  const totalAlertCount = expiringAlertCount + lowStockAlertCount;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -190,10 +240,10 @@ const Dashboard_Layout: React.FC = () => {
 
   return (
     <LicenseOverlay>
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100">
+      <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100">
         {/* Scrollable Main Content */}
         <main
-          className={`min-h-screen ${location.pathname.includes('/selling-panel') ||
+          className={`h-screen ${location.pathname.includes('/selling-panel') ||
             location.pathname.includes('/purchasing-panel') ||
             location.pathname.includes('/suppliers') ||
             location.pathname.includes('/customers') ||
@@ -209,8 +259,8 @@ const Dashboard_Layout: React.FC = () => {
             location.pathname.includes('/dashboard')
 
 
-            ? 'overflow-hidden'
-            : 'overflow-auto'
+            ? 'overflow-hidden flex flex-col'
+            : 'overflow-auto flex flex-col'
             }`}
         >
           <div
@@ -231,8 +281,8 @@ const Dashboard_Layout: React.FC = () => {
                 location.pathname.includes('/sale-return') ||
                 location.pathname.includes('/financial-summary') ||
                 location.pathname.includes('/dashboard')
-                ? 'p-0'
-                : 'p-6 md:p-8'
+                ? 'p-0 flex-1 flex flex-col min-h-0 overflow-hidden h-full'
+                : 'p-6 md:p-8 flex-1'
             }
           >
             { }
@@ -475,7 +525,7 @@ const Dashboard_Layout: React.FC = () => {
                       location.pathname.includes('/dashboard')
                       ? 'gap-2'
                       : ''
-                      }`}
+                      } mr-3 md:mr-5`}
                   >
                     {/* Current role badge */}
                     <div className="hidden xs:flex items-center px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-900/30 border border-emerald-200 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 text-[11px] font-medium mr-1">
@@ -491,7 +541,7 @@ const Dashboard_Layout: React.FC = () => {
                       </span>
                     </div>
 
-                    {user?.role !== 'admin' && (
+                    {(
                       <div className="relative" ref={notificationMenuRef}>
                       <button
                         type="button"
@@ -511,7 +561,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/dashboard')
                           ? 'p-2.5 rounded-lg'
                           : 'p-3 rounded-xl'
-                          } bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-700/50 border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-lg hover:border-emerald-300 dark:hover:border-emerald-600 transition-all duration-200 group`}
+                          } bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all duration-200 group`}
                         onClick={() => setNotificationsOpen((prev) => !prev)}
                         aria-label="View alerts"
                       >
@@ -534,63 +584,88 @@ const Dashboard_Layout: React.FC = () => {
                             : 'w-5 h-5'
                             } text-gray-600 dark:text-gray-300 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors`}
                         />
-                        {expiringAlertCount > 0 && (
+                        {totalAlertCount > 0 && (
                           <span className="absolute -top-1 -right-1 min-w-[20px] h-5 px-1.5 bg-gradient-to-r from-red-500 to-red-600 text-white text-[10px] font-bold rounded-full border-2 border-white dark:border-gray-800 flex items-center justify-center shadow-lg animate-pulse">
-                            {Math.min(expiringAlertCount, 9)}
-                            {expiringAlertCount > 9 ? '+' : ''}
+                            {Math.min(totalAlertCount, 9)}
+                            {totalAlertCount > 9 ? '+' : ''}
                           </span>
                         )}
                       </button>
                       {notificationsOpen && (
-                        <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-2xl z-50 overflow-hidden backdrop-blur-xl">
-                          <div className="px-4 py-3.5 bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/30 dark:to-emerald-800/20 border-b border-emerald-200/50 dark:border-emerald-700/50">
-                            <p className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                              <FiBell className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                        <div className="absolute right-0 mt-1 w-80 bg-white dark:bg-[#1a2130] rounded-lg shadow-2xl border border-gray-200 dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
+                          {/* Header section */}
+                          <div className="px-4 py-2.5 bg-white dark:bg-[#1a2130]">
+                            <p className="text-[13px] font-bold text-gray-800 dark:text-white flex items-center gap-2">
+                              <FiBell className="w-3.5 h-3.5 text-emerald-500 dark:text-blue-400" />
                               Alerts & Notifications
                             </p>
-                            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-                              {expiringAlertCount > 0
-                                ? `You have ${expiringAlertCount} medicine${expiringAlertCount > 1 ? 's' : ''
-                                } expiring within ${ALERT_THRESHOLD_DAYS} days.`
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-bold">
+                              {totalAlertCount > 0
+                                ? `${totalAlertCount} active alert${totalAlertCount > 1 ? 's' : ''} require attention.`
                                 : 'All medicines are healthy for now.'}
                             </p>
                           </div>
-                          {expiringAlertCount > 0 ? (
-                            <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700">
-                              {expiringAlerts.slice(0, 4).map((alert) => (
-                                <button
-                                  key={alert.id}
-                                  onClick={() => {
-                                    navigate('/alerts');
-                                    setNotificationsOpen(false);
-                                  }}
-                                  className="w-full text-left px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-                                >
-                                  <p className="text-sm font-semibold text-gray-900 dark:text-white">
-                                    {alert.name}
-                                  </p>
-                                  <p className="text-xs text-gray-500 dark:text-gray-400 flex justify-between">
-                                    <span>{alert.barcode || '—'}</span>
-                                    <span>
-                                      {Math.max(alert.daysUntilExpiry, 0)} days
-                                      left
-                                    </span>
-                                  </p>
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400 text-center">
-                              No expiring medicines detected.
-                            </div>
-                          )}
-                          <div className="border-t border-gray-100 dark:border-gray-700 px-4 py-2 bg-gray-50 dark:bg-gray-700">
+
+                          {/* Body section with subtler background */}
+                          <div className="bg-gray-50 dark:bg-[#151b27] border-y border-gray-100 dark:border-[#242d3d]">
+                            {totalAlertCount > 0 ? (
+                              <div className="max-h-64 overflow-y-auto divide-y divide-gray-100 dark:divide-[#242d3d]">
+                                {expiringAlerts.slice(0, 3).map((alert) => (
+                                  <button
+                                    key={`exp-${alert.id}`}
+                                    onClick={() => {
+                                      navigate('/alerts');
+                                      setNotificationsOpen(false);
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 hover:bg-white dark:hover:bg-[#2d3a4f] transition-colors group"
+                                  >
+                                    <p className="text-[11px] font-bold text-gray-700 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-blue-400">
+                                      {alert.name}
+                                    </p>
+                                    <div className="text-[8px] text-gray-400 dark:text-gray-500 mt-0.5 flex justify-between font-black">
+                                      <span className="text-amber-500">⏰ Expiring</span>
+                                      <span className="text-orange-600 dark:text-orange-500/60">
+                                        {Math.max(alert.daysUntilExpiry, 0)} days left
+                                      </span>
+                                    </div>
+                                  </button>
+                                ))}
+                                {lowStockAlerts.slice(0, 3).map((alert) => (
+                                  <button
+                                    key={`ls-${alert.id}`}
+                                    onClick={() => {
+                                      navigate('/alerts');
+                                      setNotificationsOpen(false);
+                                    }}
+                                    className="w-full text-left px-4 py-2.5 hover:bg-white dark:hover:bg-[#2d3a4f] transition-colors group"
+                                  >
+                                    <p className="text-[11px] font-bold text-gray-700 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-blue-400">
+                                      {alert.name}
+                                    </p>
+                                    <div className="text-[8px] text-gray-400 dark:text-gray-500 mt-0.5 flex justify-between font-black">
+                                      <span className="text-red-500">📦 Low Stock</span>
+                                      <span className="text-red-600 dark:text-red-400">
+                                        {alert.sellablePills} / {alert.minimumStockLevel} pills
+                                      </span>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="px-4 py-6 text-[12px] text-gray-400 dark:text-gray-500 text-center font-bold">
+                                No alerts detected.
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Footer section */}
+                          <div className="px-5 py-3 bg-white dark:bg-[#1a2130]">
                             <Link
                               to="/alerts"
-                              className="text-sm font-semibold text-emerald-600 hover:text-emerald-700"
-                              onClick={() => setNotificationsOpen(false)}
+                              className="text-[11px] font-bold text-emerald-600 dark:text-[#3b82f6] hover:text-emerald-700 dark:hover:text-blue-400 transition-colors"
+                              onClick={() => setNotificationsOpen((prev) => !prev)}
                             >
-                              View alerts center
+                              View Alerts Center
                             </Link>
                           </div>
                         </div>
@@ -620,7 +695,7 @@ const Dashboard_Layout: React.FC = () => {
 
                           ? 'gap-1.5 p-1.5 rounded-lg'
                           : 'gap-3 p-2 rounded-xl'
-                          } bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-700/50 border border-gray-200 dark:border-gray-700 hover:shadow-lg hover:border-emerald-300 dark:hover:border-emerald-600 transition-all duration-200 group`}
+                          } bg-transparent border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-all duration-200 group`}
                       >
                         <div className="relative">
                           <img
@@ -640,9 +715,9 @@ const Dashboard_Layout: React.FC = () => {
                               location.pathname.includes('/financial-summary') ||
                               location.pathname.includes('/purchases') ||
                               location.pathname.includes('/dashboard')
-                              ? 'w-7 h-7 rounded-lg'
-                              : 'w-10 h-10 rounded-xl'
-                              } border-2 border-emerald-200 dark:border-emerald-700 shadow-md ring-2 ring-emerald-100 dark:ring-emerald-900/50 group-hover:ring-emerald-300 dark:group-hover:ring-emerald-700 transition-all`}
+                              ? 'w-7 h-7 rounded-full'
+                              : 'w-10 h-10 rounded-full'
+                              } dark:border-emerald-700 shadow-md ring-2 ring-emerald-100 dark:ring-emerald-900/50 group-hover:ring-emerald-300 dark:group-hover:ring-emerald-700 transition-all`}
                           />
                           <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-emerald-500 border-2 border-white dark:border-gray-800 rounded-full shadow-sm" />
                         </div>
@@ -662,12 +737,12 @@ const Dashboard_Layout: React.FC = () => {
                           !location.pathname.includes('/dashboard') && (
                             <div className="hidden sm:block text-left">
                               <div className="font-semibold text-gray-800 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                                {user?.name || 'Alex James'}
+                                {user?.name?.split(' ')[0] || 'Alex'}
                               </div>
-                              <div className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
+                              {/* <div className="text-xs text-gray-400 dark:text-gray-500 flex items-center gap-1">
                                 <span className="w-1 h-1 rounded-full bg-emerald-500" />
                                 {user?.role === 'admin' ? 'Administrator' : 'Cashier'}
-                              </div>
+                              </div> */}
                             </div>
                           )}
                         {(location.pathname.includes('/selling-panel') ||
@@ -686,14 +761,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/dashboard')) && (
                             <div className="hidden sm:block text-left">
                               <div className="text-xs font-semibold text-gray-800 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
-                                {user?.name || 'Alex James'}
-                              </div>
-                              <div className="mt-0.5 inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                                {user?.role === 'admin'
-                                  ? 'Admin'
-                                  : user?.role === 'cashier'
-                                  ? 'Cashier'
-                                  : 'User'}
+                                {user?.name?.split(' ')[0] || 'Alex'}
                               </div>
                             </div>
                           )}
@@ -718,47 +786,74 @@ const Dashboard_Layout: React.FC = () => {
                         />
                       </button>
                       {profileMenuOpen && (
-                        <div className="absolute right-0 mt-3 w-64 rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl overflow-hidden z-50 backdrop-blur-xl">
-                          <div className="px-4 py-4 bg-gradient-to-br from-emerald-600 via-emerald-500 to-emerald-600 text-white relative overflow-hidden">
-                            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,_rgba(255,255,255,0.2),_transparent_50%)]" />
-                            <div className="relative">
-                              <div className="text-xs font-medium opacity-90 mb-1">
-                                Signed in as
+                        <div className="absolute right-0 mt-1 w-60 bg-white dark:bg-[#1a2130] rounded-lg shadow-2xl border border-gray-200 dark:border-[#242d3d] z-50 overflow-hidden transform origin-top-right transition-all animate-in fade-in zoom-in-95">
+                          {/* Profile Header */}
+                          <div className="px-5 py-4 bg-white dark:bg-[#1a2130]">
+                            <div className="flex items-center gap-3">
+                              <div className="relative">
+                                <img
+                                  src={user?.profilePicture || user?.avatar || `https://i.pravatar.cc/80?img=32`}
+                                  alt="avatar"
+                                  className="w-10 h-10 rounded-full border-2 border-emerald-500/20 dark:border-blue-500/30 object-cover"
+                                />
+                                <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 border-2 border-white dark:border-[#1e293b] rounded-full" />
                               </div>
-                              <div className="text-sm font-bold truncate flex items-center gap-2">
-                                <span className="flex-1 truncate">
-                                  {user?.email || 'admin@pharmacy.com'}
-                                </span>
-                                <div className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-[11px] font-bold text-gray-800 dark:text-white truncate">
+                                  {user?.name || 'Wali Cashier'}
+                                </div>
+                                <div className="text-[7.5px] font-bold text-emerald-600 dark:text-blue-400 uppercase tracking-widest mt-0.5">
+                                  {user?.role === 'admin' ? 'Administrator' : 'Cashier'}
+                                </div>
                               </div>
                             </div>
                           </div>
-                          <div className="py-2">
+
+                          {/* Email/Info section with subtler background */}
+                          <div className="px-4 py-1.5 bg-gray-50 dark:bg-[#151b27] border-y border-gray-100 dark:border-[#242d3d]">
+                            <div className="text-[8px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-tight">Signed in as</div>
+                            <div className="text-[9px] font-bold text-gray-600 dark:text-gray-300 truncate mt-0.5">
+                              {user?.email || 'admin@pharmacy.com'}
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="p-1.5 bg-white dark:bg-[#1a2130] space-y-1">
                             <button
                               type="button"
-                              className="w-full px-4 py-3 flex items-center gap-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-lime-50 dark:hover:bg-gray-700 transition-colors"
+                              onClick={() => {
+                                setProfileMenuOpen(false);
+                                navigate('/settings', { state: { section: 'profile' } });
+                              }}
+                              className="w-full h-8 flex items-center px-3 gap-3 rounded-lg hover:bg-emerald-500/5 text-gray-600 dark:text-gray-300 text-[10px] font-semibold transition-all group"
                             >
-                              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-lime-100 dark:bg-lime-900/30 text-lime-700 dark:text-lime-400">
-                                <FiHelpCircle className="w-4 h-4" />
-                              </span>
-                              <div className="text-left">
-                                <div className="font-medium">Support</div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400">
-                                  Contact pharmacy helpdesk
-                                </div>
-                              </div>
+                              <FiUser className="w-3 h-3 text-emerald-500/60 dark:text-gray-400 group-hover:text-emerald-500 transition-colors" />
+                              Profile
                             </button>
-                          </div>
-                          <div className="border-t border-gray-100 dark:border-gray-700">
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProfileMenuOpen(false);
+                                navigate('/settings', { state: { section: 'appearance' } });
+                              }}
+                              className="w-full h-8 flex items-center px-3 gap-3 rounded-lg hover:bg-emerald-500/5 text-gray-600 dark:text-gray-300 text-[10px] font-semibold transition-all group"
+                            >
+                              <FiSun className="w-3 h-3 text-emerald-500/60 dark:text-gray-400 group-hover:text-emerald-500 transition-colors" />
+                              Theme
+                            </button>
+
+                            <div className="h-px bg-gray-100 dark:bg-[#242d3d] my-1 mx-2" />
+
                             <button
                               type="button"
                               onClick={() => {
                                 setProfileMenuOpen(false);
                                 handleLogout();
                               }}
-                              className="w-full px-4 py-3 text-sm font-semibold text-white bg-gradient-to-r from-rose-500 to-amber-500 hover:from-rose-600 hover:to-amber-500 transition-colors flex items-center justify-center gap-2"
+                              className="w-full h-8 flex items-center justify-center gap-2 rounded-lg bg-red-500/5 hover:bg-red-500/10 text-red-500 text-[10px] font-semibold transition-all border border-red-500/10 group hover:border-red-500/20"
                             >
-                              <FiLogOut className="w-4 h-4" />
+                              <FiLogOut className="w-2.5 h-2.5 group-hover:-translate-x-0.5 transition-transform" />
                               Logout
                             </button>
                           </div>
@@ -771,7 +866,9 @@ const Dashboard_Layout: React.FC = () => {
             )}
 
             {/* Scrollable Content */}
-            <Outlet context={outletContextValue} />
+            <div className="flex-1 overflow-hidden min-h-0">
+              <Outlet context={outletContextValue} />
+            </div>
           </div>
         </main>
       </div>

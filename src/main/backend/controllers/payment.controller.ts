@@ -130,8 +130,9 @@ export class PaymentController {
                 const filters = args[0] || {};
                 const settings = args[1] || {};
                 const payments = await this.paymentService.getPaymentRecords(filters, false);
+                const currencySymbol = getCurrencySymbol(settings.currency || 'PKR');
                 
-                const header = ['Date', 'Purchase ID', 'Supplier', 'Amount', 'Method', 'Reference', 'Notes'];
+                const header = ['Serial No', 'Date', 'PO #', 'Supplier', 'Company', 'Amount', 'Method', 'Reference', 'Notes'];
                 const esc = (v: any) => {
                     const s = v === null || v === undefined ? '' : String(v);
                     return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -140,27 +141,64 @@ export class PaymentController {
                 const companyInfo = [
                     [settings.pharmacyName || 'Pharmacy Name'],
                     [settings.address || ''],
-                    [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''}`],
+                    [`Phone: ${settings.phone || ''} | Email: ${settings.email || ''} | ${settings.website && `Website: ${settings.website}`}`],
+                    [settings.taxId ? `Tax ID: ${settings.taxId}` : ''],
                     [''],
                     ['PAYMENT RECORDS REPORT'],
+                    filters.fromDate && filters.toDate ? [`Period: ${filters.fromDate} to ${filters.toDate}`] : [],
                     [`Generated on: ${new Date().toLocaleString()}`],
                     ['']
-                ].map(row => row.map(esc).join(',')).join('\n');
+                ].filter(row => row.length > 0).map(row => row.map(esc).join(',')).join('\n');
+
+                // Calculate totals
+                const totalAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
+                
+                // Group by payment method
+                const paymentsByMethod = payments.reduce((acc: any, p: any) => {
+                    const method = p.paymentMethod || 'other';
+                    if (!acc[method]) acc[method] = 0;
+                    acc[method] += p.amount;
+                    return acc;
+                }, {});
 
                 const csvData = [
                     header.join(','),
-                    ...payments.map((p: any) => [
+                    ...payments.map((p: any, index: number) => [
+                        index + 1,
                         new Date(p.paymentDate).toLocaleDateString(),
                         `PO-${p.purchaseId}`,
                         p.supplierName,
-                        p.amount.toFixed(2),
+                        p.companyName || '',
+                        `${currencySymbol}${p.amount.toFixed(2)}`,
                         p.paymentMethod,
                         p.referenceNumber || '',
                         p.notes || ''
                     ].map(esc).join(','))
                 ].join('\n');
 
-                const finalCsv = companyInfo + '\n' + csvData;
+                // Footer with totals
+                const methodsBreakdown = Object.entries(paymentsByMethod).map(([method, amount]: [string, any]) => {
+                    const methodLabel = method === 'cash' ? 'Cash' :
+                                      method === 'bank_transfer' || method === 'bank_deposit' ? 'Bank Transfer' :
+                                      method === 'check' || method === 'cheque' ? 'Check' :
+                                      method === 'online' || method === 'card' ? 'Online' : method;
+                    return [methodLabel, `${currencySymbol}${amount.toFixed(2)}`];
+                });
+
+                const footer = [
+                    [''],
+                    ['Summary'],
+                    ['Total Records', payments.length],
+                    ['Total Amount', `${currencySymbol}${totalAmount.toFixed(2)}`],
+                    [''],
+                    ['Payment Methods Breakdown'],
+                    ...methodsBreakdown,
+                    [''],
+                    ['Remark: Computer Generated Report'],
+                    ['E. & O.E.']
+                ].map(row => row.map(esc).join(',')).join('\n');
+
+                const finalCsv = companyInfo + '\n' + csvData + '\n' + footer;
 
                 const { dialog } = require('electron');
                 const { promises: fs } = require('fs');
@@ -188,67 +226,147 @@ export class PaymentController {
             try {
                 const filters = args[0] || {};
                 const settings = args[1] || {};
+                const preview = args[2] || false;
                 const payments = await this.paymentService.getPaymentRecords(filters, false);
                 const totalAmount = payments.reduce((sum: number, p: any) => sum + p.amount, 0);
 
-                const currencySymbol = getCurrencySymbol(settings.currency || 'USD');
+                const currencySymbol = getCurrencySymbol(settings.currency || 'PKR');
 
-                const html = `
-                    <html>
-                    <head>
-                        <style>
-                            body { font-family: Arial, sans-serif; margin: 40px; }
-                            .header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #333; padding-bottom: 20px; }
-                            .pharmacy-name { font-size: 24px; font-bold; color: #10b981; }
-                            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-                            th { background-color: #f3f4f6; padding: 12px; text-align: left; border-bottom: 2px solid #d1d5db; }
-                            td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
-                            .total-row { font-weight: bold; background-color: #f9fafb; }
-                            .footer { margin-top: 30px; font-size: 12px; color: #666; text-align: center; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="header">
-                            <div class="pharmacy-name">${settings.pharmacyName || 'Pharmacy Name'}</div>
-                            <div>${settings.address || ''}</div>
-                            <div>Phone: ${settings.phone || ''} | Email: ${settings.email || ''}</div>
-                            <h2>PAYMENT RECORDS REPORT</h2>
-                            <div>Period: ${filters.fromDate || 'All'} to ${filters.toDate || 'Present'}</div>
-                        </div>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>PO #</th>
-                                    <th>Supplier</th>
-                                    <th>Method</th>
-                                    <th>Reference</th>
-                                    <th style="text-align: right;">Amount</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${payments.map((p: any) => `
+                // Group payments by method for summary
+                const paymentsByMethod = payments.reduce((acc: any, p: any) => {
+                    const method = p.paymentMethod || 'other';
+                    if (!acc[method]) acc[method] = 0;
+                    acc[method] += p.amount;
+                    return acc;
+                }, {});
+
+                // Import professional template utilities
+                const { getProfessionalPDFStyles, generatePDFHeader, wrapPDFContent } = require('../utils/pdf-template');
+
+                const styles = getProfessionalPDFStyles();
+                const header = generatePDFHeader({
+                    title: 'PAY No.',
+                    documentType: 'PAYMENT',
+                    period: { from: filters.fromDate, to: filters.toDate },
+                    currency: settings.currency || 'PKR',
+                    settings: {
+                        pharmacyName: settings.pharmacyName,
+                        address: settings.address,
+                        phone: settings.phone,
+                        email: settings.email,
+                        website: settings.website,
+                        taxId: settings.taxId,
+                        logoUrl: settings.logoUrl,
+                    }
+                });
+
+                const tableContent = `
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">Item</th>
+                                <th style="width: 100px;">Date</th>
+                                <th style="width: 80px;">PO #</th>
+                                <th>Supplier</th>
+                                <th style="width: 120px;">Method</th>
+                                <th style="width: 150px;">Reference</th>
+                                <th>Notes</th>
+                                <th class="text-right" style="width: 100px;">Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${payments.map((p: any, index: number) => {
+                                const methodClass = p.paymentMethod === 'cash' ? 'badge-success' :
+                                                  p.paymentMethod === 'bank_transfer' || p.paymentMethod === 'bank_deposit' ? 'badge-info' :
+                                                  p.paymentMethod === 'check' || p.paymentMethod === 'cheque' ? 'badge-warning' :
+                                                  p.paymentMethod === 'online' || p.paymentMethod === 'card' ? 'badge-purple' : 'badge-gray';
+                                
+                                const methodLabel = p.paymentMethod === 'cash' ? 'Cash' :
+                                                  p.paymentMethod === 'bank_transfer' || p.paymentMethod === 'bank_deposit' ? 'Bank Transfer' :
+                                                  p.paymentMethod === 'check' || p.paymentMethod === 'cheque' ? 'Check' :
+                                                  p.paymentMethod === 'online' || p.paymentMethod === 'card' ? 'Online' : p.paymentMethod;
+                                
+                                return `
                                     <tr>
+                                        <td>${index + 1}</td>
                                         <td>${new Date(p.paymentDate).toLocaleDateString()}</td>
                                         <td>PO-${p.purchaseId}</td>
-                                        <td>${p.supplierName}</td>
-                                        <td>${p.paymentMethod}</td>
-                                        <td>${p.referenceNumber || '-'}</td>
-                                        <td style="text-align: right;">${p.amount.toFixed(2)}</td>
+                                        <td>
+                                            <div style="">${p.supplierName}</div>
+                                            ${p.companyName ? `<div style="font-size: 8pt; color: #666;">${p.companyName}</div>` : ''}
+                                        </td>
+                                        <td>
+                                            <span class="badge ${methodClass}">${methodLabel}</span>
+                                        </td>
+                                        <td style="font-size: 8pt;">
+                                            ${p.referenceNumber || '—'}
+                                        </td>
+                                        <td>${p.notes || ''}  </td>
+                                        <td class="text-right" style="font-weight: bold;">${currencySymbol}${p.amount.toFixed(2)}</td>
                                     </tr>
-                                `).join('')}
-                                <tr class="total-row">
-                                    <td colspan="5" style="text-align: right;">TOTAL:</td>
-                                    <td style="text-align: right;">${currencySymbol}${totalAmount.toFixed(2)}</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                        <div class="footer">
-                            Generated on ${new Date().toLocaleString()}
-                        </div>
-                    </body>
-                    </html>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
                 `;
+
+                const methodsBreakdown = Object.entries(paymentsByMethod).map(([method, amount]: [string, any]) => {
+                    const methodLabel = method === 'cash' ? 'Cash' :
+                                      method === 'bank_transfer' || method === 'bank_deposit' ? 'Bank Transfer' :
+                                      method === 'check' || method === 'cheque' ? 'Check' :
+                                      method === 'online' || method === 'card' ? 'Online' : method;
+                    return `${methodLabel}: ${currencySymbol}${amount.toFixed(2)}`;
+                }).join('<br/>');
+
+                const footer = `
+                    <div class="footer">
+                        <div class="footer-content">
+                            <div class="footer-left">
+                                <div class="remark">
+                                    <strong>${settings.currency || 'PKR'}</strong> - Total Payment Value of <strong>${currencySymbol}${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong> Only
+                                </div>
+                                <div class="remark">
+                                    <strong>Payment Methods Breakdown:</strong><br/>
+                                    ${methodsBreakdown}
+                                </div>
+                                <div class="remark">
+                                    <strong>Remark:</strong> Computer Generated Report
+                                </div>
+                                <div style="margin-top: 10px; font-size: 8pt; font-weight: bold; border: 1px solid #000; padding: 3px 6px; display: inline-block;">
+                                    E. & O.E.
+                                </div>
+                                
+                                <div class="signature-section">
+                                    <div class="signature-line"></div>
+                                    <div class="signature-label">Company Chop & Signature</div>
+                                    <div style="font-size: 8pt; margin-top: 3px; color: #666;">Name</div>
+                                    <div style="font-size: 8pt; color: #666;">Date</div>
+                                </div>
+                            </div>
+
+                            <div class="footer-right">
+                                <div class="totals-table">
+                                    <div class="totals-row">
+                                        <span class="totals-label">Total Records:</span>
+                                        <span class="totals-value">${payments.length}</span>
+                                    </div>
+                                    <div class="totals-row grand">
+                                        <span class="totals-label">Total Amount:</span>
+                                        <span class="totals-value">${currencySymbol}${totalAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const html = wrapPDFContent(styles, header, tableContent, footer);
+
+                // If preview mode, return HTML content
+                if (preview) {
+                    event.reply('payment-export-pdf-reply', { success: true, data: { htmlContent: html } });
+                    return;
+                }
 
                 const { BrowserWindow, dialog } = require('electron');
                 const { promises: fs } = require('fs');
@@ -257,10 +375,10 @@ export class PaymentController {
                 const pdfBuffer = await win.webContents.printToPDF({ marginsType: 0, pageSize: 'A4', printBackground: true });
                 
                 const ts = new Date();
-                const defaultName = `payments_export_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
+                const defaultName = `payment_report_${ts.getFullYear()}${String(ts.getMonth() + 1).padStart(2, '0')}${String(ts.getDate()).padStart(2, '0')}.pdf`;
                 
                 const { canceled, filePath } = await dialog.showSaveDialog({
-                    title: 'Save Payments PDF',
+                    title: 'Save Payment Report PDF',
                     defaultPath: defaultName,
                     filters: [{ name: 'PDF', extensions: ['pdf'] }]
                 });

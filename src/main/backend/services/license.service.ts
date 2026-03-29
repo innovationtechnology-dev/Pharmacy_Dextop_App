@@ -119,11 +119,42 @@ export class LicenseService {
   /**
    * Generate a new 14-char license key, persist it in generated_licenses,
    * and return the full record so the caller can push it to the cloud.
+   * 
+   * Rate limit: Maximum 3 licenses per hour
    */
   public async generateLicenseKey(
     details: GenerateLicenseKeyInput
   ): Promise<GenerateLicenseKeyResult> {
     try {
+      // Rate limiting: Check how many licenses were generated in the last hour
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recentCount = await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM generated_licenses WHERE generated_at >= ?`,
+        [oneHourAgo]
+      );
+      
+      const count = (recentCount as any)?.count || 0;
+      if (count >= 3) {
+        // Find the oldest license in the last hour to calculate when limit resets
+        const oldestRecent = await this.dbService.queryOne(
+          `SELECT generated_at FROM generated_licenses WHERE generated_at >= ? ORDER BY generated_at ASC LIMIT 1`,
+          [oneHourAgo]
+        );
+        
+        let resetMessage = '';
+        if (oldestRecent && (oldestRecent as any).generated_at) {
+          const oldestTime = new Date((oldestRecent as any).generated_at);
+          const resetTime = new Date(oldestTime.getTime() + 60 * 60 * 1000);
+          const minutesLeft = Math.ceil((resetTime.getTime() - Date.now()) / (60 * 1000));
+          resetMessage = ` Try again in ${minutesLeft} minute${minutesLeft !== 1 ? 's' : ''}.`;
+        }
+        
+        return { 
+          success: false, 
+          error: `Rate limit exceeded. Maximum 3 licenses can be generated per hour.${resetMessage}` 
+        };
+      }
+
       // Guarantee uniqueness within the local table
       let code = LicenseService.generateShortCode(14);
       let attempts = 0;
@@ -137,12 +168,10 @@ export class LicenseService {
         attempts += 1;
       }
 
-      const generatedAt = new Date().toISOString();
-
       await this.dbService.execute(
         `INSERT INTO generated_licenses
           (code, pharmacy_name, doctor_name, email, phone, address, city, country, generated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`,
         [
           code,
           details.pharmacyName ?? null,
@@ -152,11 +181,11 @@ export class LicenseService {
           details.address ?? null,
           details.city ?? null,
           details.country ?? null,
-          generatedAt,
         ]
       );
 
-      console.log(`✅ License key generated: ${code}`);
+      const remaining = 3 - (count + 1);
+      console.log(`✅ License key generated: ${code} (${count + 1}/3 in last hour, ${remaining} remaining)`);
 
       return {
         success: true,
@@ -168,11 +197,46 @@ export class LicenseService {
         address: details.address,
         city: details.city,
         country: details.country,
-        generatedAt,
       };
     } catch (error) {
       console.error('❌ generateLicenseKey error:', error);
       return { success: false, error: 'Failed to generate license key.' };
+    }
+  }
+
+  /**
+   * Get remaining license generation quota for the current hour
+   */
+  public async getRemainingLicenseQuota(): Promise<{ remaining: number; resetInMinutes: number }> {
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const recentCount = await this.dbService.queryOne(
+        `SELECT COUNT(*) as count FROM generated_licenses WHERE generated_at >= ?`,
+        [oneHourAgo]
+      );
+      
+      const count = (recentCount as any)?.count || 0;
+      const remaining = Math.max(0, 3 - count);
+      
+      // Calculate reset time
+      let resetInMinutes = 60;
+      if (count > 0) {
+        const oldestRecent = await this.dbService.queryOne(
+          `SELECT generated_at FROM generated_licenses WHERE generated_at >= ? ORDER BY generated_at ASC LIMIT 1`,
+          [oneHourAgo]
+        );
+        
+        if (oldestRecent && (oldestRecent as any).generated_at) {
+          const oldestTime = new Date((oldestRecent as any).generated_at);
+          const resetTime = new Date(oldestTime.getTime() + 60 * 60 * 1000);
+          resetInMinutes = Math.ceil((resetTime.getTime() - Date.now()) / (60 * 1000));
+        }
+      }
+      
+      return { remaining, resetInMinutes };
+    } catch (error) {
+      console.error('Error getting license quota:', error);
+      return { remaining: 3, resetInMinutes: 60 };
     }
   }
 
@@ -188,7 +252,7 @@ export class LicenseService {
    *
    * - Normalises: strips non-alphanumeric chars, uppercases.
    * - Looks up generated_licenses WHERE code=? AND is_used=0.
-   * - If found: validUntil = today + 6 months (from activation date).
+   * - If found: validUntil = today + 1 year (from activation date).
    * - Marks key as used so it cannot be reused.
    * - No network call required.
    */
@@ -231,18 +295,18 @@ export class LicenseService {
         return { success: false, error: 'Invalid license key. Please check and try again.' };
       }
 
-      // validUntil = today + 6 months (from activation date, not generation date)
+      // validUntil = today + 1 year (from activation date, not generation date)
       const now = new Date();
       const validUntil = new Date(now);
-      validUntil.setMonth(validUntil.getMonth() + 6);
+      validUntil.setMonth(validUntil.getMonth() + 12);
 
       // Upsert the single system-wide license record (userId stored for audit only)
       const license = await this.upsertSystemLicense(userId, normalized, validUntil.toISOString());
 
       // Mark the key as used
       await this.dbService.execute(
-        `UPDATE generated_licenses SET is_used = 1, used_at = ? WHERE code = ?`,
-        [now.toISOString(), normalized]
+        `UPDATE generated_licenses SET is_used = 1, used_at = datetime('now', 'localtime') WHERE code = ?`,
+        [normalized]
       );
 
       console.log(`✅ System license activated until ${validUntil.toISOString()}`);
@@ -327,7 +391,7 @@ export class LicenseService {
         (expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)
       );
       const isExpired = daysUntilExpiry < 0;
-      const isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 7;
+      const isExpiringSoon = daysUntilExpiry >= 0 && daysUntilExpiry <= 20;
       const isActiveInDb =
         (license.is_active as unknown) === 1 || license.is_active === true;
 

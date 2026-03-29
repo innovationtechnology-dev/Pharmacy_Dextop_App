@@ -316,37 +316,53 @@ export class SaleReturnService {
    */
   public async getAllSaleReturns(): Promise<SaleReturn[]> {
     const saleReturns = await this.dbService.query('SELECT * FROM sale_returns ORDER BY created_at DESC');
-    const saleReturnsWithItems: SaleReturn[] = [];
-
-    for (const saleReturn of saleReturns) {
-      const items = await this.dbService.query('SELECT * FROM sale_return_items WHERE sale_return_id = ?', [saleReturn.id]);
-      saleReturnsWithItems.push({
-        id: saleReturn.id,
-        saleId: saleReturn.sale_id,
-        subtotal: saleReturn.subtotal,
-        discountTotal: saleReturn.discount_total,
-        taxTotal: saleReturn.tax_total,
-        total: saleReturn.total,
-        customerName: saleReturn.customer_name || undefined,
-        customerPhone: saleReturn.customer_phone || undefined,
-        reason: saleReturn.reason || undefined,
-        notes: saleReturn.notes || undefined,
-        createdAt: saleReturn.created_at,
-        items: items.map((item: any) => ({
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          pills: item.pills,
-          unitPrice: item.unit_price,
-          subtotal: item.subtotal,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          total: item.total,
-          reason: item.reason || undefined,
-        })),
-      });
+    
+    if (saleReturns.length === 0) {
+      return [];
     }
 
-    return saleReturnsWithItems;
+    // Fetch all items in one query using IN clause
+    const saleReturnIds = saleReturns.map((sr: any) => sr.id);
+    const placeholders = saleReturnIds.map(() => '?').join(',');
+    const allItems = await this.dbService.query(
+      `SELECT * FROM sale_return_items WHERE sale_return_id IN (${placeholders})`,
+      saleReturnIds
+    );
+
+    // Group items by sale_return_id
+    const itemsMap = new Map<number, any[]>();
+    allItems.forEach((item: any) => {
+      if (!itemsMap.has(item.sale_return_id)) {
+        itemsMap.set(item.sale_return_id, []);
+      }
+      itemsMap.get(item.sale_return_id)!.push(item);
+    });
+
+    // Build result with items
+    return saleReturns.map((saleReturn: any) => ({
+      id: saleReturn.id,
+      saleId: saleReturn.sale_id,
+      subtotal: saleReturn.subtotal,
+      discountTotal: saleReturn.discount_total,
+      taxTotal: saleReturn.tax_total,
+      total: saleReturn.total,
+      customerName: saleReturn.customer_name || undefined,
+      customerPhone: saleReturn.customer_phone || undefined,
+      reason: saleReturn.reason || undefined,
+      notes: saleReturn.notes || undefined,
+      createdAt: saleReturn.created_at,
+      items: (itemsMap.get(saleReturn.id) || []).map((item: any) => ({
+        medicineId: item.medicine_id,
+        medicineName: item.medicine_name,
+        pills: item.pills,
+        unitPrice: item.unit_price,
+        subtotal: item.subtotal,
+        discountAmount: item.discount_amount,
+        taxAmount: item.tax_amount,
+        total: item.total,
+        reason: item.reason || undefined,
+      })),
+    }));
   }
 
   /**
@@ -388,37 +404,53 @@ export class SaleReturnService {
    */
   public async getSaleReturnsBySaleId(saleId: number): Promise<SaleReturn[]> {
     const saleReturns = await this.dbService.query('SELECT * FROM sale_returns WHERE sale_id = ? ORDER BY created_at DESC', [saleId]);
-    const saleReturnsWithItems: SaleReturn[] = [];
-
-    for (const saleReturn of saleReturns) {
-      const items = await this.dbService.query('SELECT * FROM sale_return_items WHERE sale_return_id = ?', [saleReturn.id]);
-      saleReturnsWithItems.push({
-        id: saleReturn.id,
-        saleId: saleReturn.sale_id,
-        subtotal: saleReturn.subtotal,
-        discountTotal: saleReturn.discount_total,
-        taxTotal: saleReturn.tax_total,
-        total: saleReturn.total,
-        customerName: saleReturn.customer_name || undefined,
-        customerPhone: saleReturn.customer_phone || undefined,
-        reason: saleReturn.reason || undefined,
-        notes: saleReturn.notes || undefined,
-        createdAt: saleReturn.created_at,
-        items: items.map((item: any) => ({
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          pills: item.pills,
-          unitPrice: item.unit_price,
-          subtotal: item.subtotal,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          total: item.total,
-          reason: item.reason || undefined,
-        })),
-      });
+    
+    if (saleReturns.length === 0) {
+      return [];
     }
 
-    return saleReturnsWithItems;
+    // Fetch all items in one query using IN clause
+    const saleReturnIds = saleReturns.map((sr: any) => sr.id);
+    const placeholders = saleReturnIds.map(() => '?').join(',');
+    const allItems = await this.dbService.query(
+      `SELECT * FROM sale_return_items WHERE sale_return_id IN (${placeholders})`,
+      saleReturnIds
+    );
+
+    // Group items by sale_return_id
+    const itemsMap = new Map<number, any[]>();
+    allItems.forEach((item: any) => {
+      if (!itemsMap.has(item.sale_return_id)) {
+        itemsMap.set(item.sale_return_id, []);
+      }
+      itemsMap.get(item.sale_return_id)!.push(item);
+    });
+
+    // Build result with items
+    return saleReturns.map((saleReturn: any) => ({
+      id: saleReturn.id,
+      saleId: saleReturn.sale_id,
+      subtotal: saleReturn.subtotal,
+      discountTotal: saleReturn.discount_total,
+      taxTotal: saleReturn.tax_total,
+      total: saleReturn.total,
+      customerName: saleReturn.customer_name || undefined,
+      customerPhone: saleReturn.customer_phone || undefined,
+      reason: saleReturn.reason || undefined,
+      notes: saleReturn.notes || undefined,
+      createdAt: saleReturn.created_at,
+      items: (itemsMap.get(saleReturn.id) || []).map((item: any) => ({
+        medicineId: item.medicine_id,
+        medicineName: item.medicine_name,
+        pills: item.pills,
+        unitPrice: item.unit_price,
+        subtotal: item.subtotal,
+        discountAmount: item.discount_amount,
+        taxAmount: item.tax_amount,
+        total: item.total,
+        reason: item.reason || undefined,
+      })),
+    }));
   }
 
   /**
@@ -434,37 +466,53 @@ export class SaleReturnService {
       ORDER BY created_at DESC
     `;
     const saleReturns = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
-    const saleReturnsWithItems: SaleReturn[] = [];
-
-    for (const saleReturn of saleReturns) {
-      const items = await this.dbService.query('SELECT * FROM sale_return_items WHERE sale_return_id = ?', [saleReturn.id]);
-      saleReturnsWithItems.push({
-        id: saleReturn.id,
-        saleId: saleReturn.sale_id,
-        subtotal: saleReturn.subtotal,
-        discountTotal: saleReturn.discount_total,
-        taxTotal: saleReturn.tax_total,
-        total: saleReturn.total,
-        customerName: saleReturn.customer_name || undefined,
-        customerPhone: saleReturn.customer_phone || undefined,
-        reason: saleReturn.reason || undefined,
-        notes: saleReturn.notes || undefined,
-        createdAt: saleReturn.created_at,
-        items: items.map((item: any) => ({
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          pills: item.pills,
-          unitPrice: item.unit_price,
-          subtotal: item.subtotal,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          total: item.total,
-          reason: item.reason || undefined,
-        })),
-      });
+    
+    if (saleReturns.length === 0) {
+      return [];
     }
 
-    return saleReturnsWithItems;
+    // Fetch all items in one query using IN clause
+    const saleReturnIds = saleReturns.map((sr: any) => sr.id);
+    const placeholders = saleReturnIds.map(() => '?').join(',');
+    const allItems = await this.dbService.query(
+      `SELECT * FROM sale_return_items WHERE sale_return_id IN (${placeholders})`,
+      saleReturnIds
+    );
+
+    // Group items by sale_return_id
+    const itemsMap = new Map<number, any[]>();
+    allItems.forEach((item: any) => {
+      if (!itemsMap.has(item.sale_return_id)) {
+        itemsMap.set(item.sale_return_id, []);
+      }
+      itemsMap.get(item.sale_return_id)!.push(item);
+    });
+
+    // Build result with items
+    return saleReturns.map((saleReturn: any) => ({
+      id: saleReturn.id,
+      saleId: saleReturn.sale_id,
+      subtotal: saleReturn.subtotal,
+      discountTotal: saleReturn.discount_total,
+      taxTotal: saleReturn.tax_total,
+      total: saleReturn.total,
+      customerName: saleReturn.customer_name || undefined,
+      customerPhone: saleReturn.customer_phone || undefined,
+      reason: saleReturn.reason || undefined,
+      notes: saleReturn.notes || undefined,
+      createdAt: saleReturn.created_at,
+      items: (itemsMap.get(saleReturn.id) || []).map((item: any) => ({
+        medicineId: item.medicine_id,
+        medicineName: item.medicine_name,
+        pills: item.pills,
+        unitPrice: item.unit_price,
+        subtotal: item.subtotal,
+        discountAmount: item.discount_amount,
+        taxAmount: item.tax_amount,
+        total: item.total,
+        reason: item.reason || undefined,
+      })),
+    }));
   }
 
   /**
@@ -522,6 +570,47 @@ export class SaleReturnService {
     total: number;
     reason?: string;
   }>> {
+    // If both dates are empty, return all records
+    if (!fromDate && !toDate) {
+      const sql = `
+        SELECT
+          sr.id AS saleReturnId,
+          sr.sale_id AS saleId,
+          sr.created_at AS createdAt,
+          sr.customer_name AS customerName,
+          sr.customer_phone AS customerPhone,
+          sri.medicine_id AS medicineId,
+          sri.medicine_name AS medicineName,
+          sri.pills,
+          sri.unit_price AS unitPrice,
+          sri.subtotal,
+          sri.discount_amount AS discountAmount,
+          sri.tax_amount AS taxAmount,
+          sri.total,
+          sri.reason
+        FROM sale_return_items sri
+        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        ORDER BY sr.created_at DESC, sr.id DESC, sri.id ASC
+      `;
+      const rows = await this.dbService.query(sql, []);
+      return rows.map((row: any) => ({
+        saleReturnId: row.saleReturnId,
+        saleId: row.saleId,
+        createdAt: row.createdAt,
+        customerName: row.customerName || undefined,
+        customerPhone: row.customerPhone || undefined,
+        medicineId: row.medicineId,
+        medicineName: row.medicineName,
+        pills: row.pills,
+        unitPrice: row.unitPrice,
+        subtotal: row.subtotal,
+        discountAmount: row.discountAmount,
+        taxAmount: row.taxAmount,
+        total: row.total,
+        reason: row.reason || undefined,
+      }));
+    }
+    
     const fromDateOnly = fromDate;
     const toDateOnly = toDate;
     const sql = `

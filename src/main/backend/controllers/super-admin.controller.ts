@@ -55,7 +55,8 @@ export class SuperAdminController {
         const name = args[0] as string;
         const email = args[1] as string;
         const password = args[2] as string;
-        const result = await this.superAdminService.createUser(name, email, password);
+        const role = args[3] as string || 'cashier';
+        const result = await this.superAdminService.createUser(name, email, password, role);
         event.reply('super-admin-create-user-reply', result);
       } catch (error) {
         console.error('Create user error:', error);
@@ -72,7 +73,8 @@ export class SuperAdminController {
         const userId = args[0] as number;
         const name = args[1] as string;
         const email = args[2] as string;
-        const result = await this.superAdminService.updateUser(userId, name, email);
+        const role = args[3] as string | undefined;
+        const result = await this.superAdminService.updateUser(userId, name, email, role);
         event.reply('super-admin-update-user-reply', result);
       } catch (error) {
         console.error('Update user error:', error);
@@ -201,6 +203,15 @@ export class SuperAdminController {
     // Handle download database
     ipcMain.on('super-admin-download-database', async (event: IpcMainEvent) => {
       try {
+        // Force WAL checkpoint before downloading to ensure all changes are in the main file
+        try {
+          await this.superAdminService.checkpointDatabase();
+          console.log('WAL checkpoint completed before download');
+        } catch (checkpointError) {
+          console.warn('WAL checkpoint warning:', checkpointError);
+          // Continue with download even if checkpoint fails
+        }
+
         const dbPath = this.superAdminService.getDatabasePath();
         const dbExists = fs.existsSync(dbPath);
 
@@ -284,6 +295,47 @@ export class SuperAdminController {
         event.reply('super-admin-import-database-reply', {
           success: false,
           error: 'Failed to import database',
+        });
+      }
+    });
+
+    // Handle get available backups
+    ipcMain.on('super-admin-get-backups', async (event: IpcMainEvent) => {
+      try {
+        const backups = this.superAdminService.getAvailableBackups();
+        event.reply('super-admin-get-backups-reply', backups);
+      } catch (error) {
+        console.error('Get backups error:', error);
+        event.reply('super-admin-get-backups-reply', []);
+      }
+    });
+
+    // Handle restore from backup
+    ipcMain.on('super-admin-restore-backup', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const backupPath = args[0] as string;
+        const result = await this.superAdminService.restoreFromBackup(backupPath);
+        event.reply('super-admin-restore-backup-reply', result);
+      } catch (error) {
+        console.error('Restore backup error:', error);
+        event.reply('super-admin-restore-backup-reply', {
+          success: false,
+          error: 'Failed to restore from backup',
+        });
+      }
+    });
+
+    // Handle cleanup old backups
+    ipcMain.on('super-admin-cleanup-backups', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const keepCount = (args[0] as number) || 10;
+        const result = this.superAdminService.cleanupOldBackups(keepCount);
+        event.reply('super-admin-cleanup-backups-reply', result);
+      } catch (error) {
+        console.error('Cleanup backups error:', error);
+        event.reply('super-admin-cleanup-backups-reply', {
+          success: false,
+          deletedCount: 0,
         });
       }
     });

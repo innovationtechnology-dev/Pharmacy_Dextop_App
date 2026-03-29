@@ -23,7 +23,9 @@ import {
   FiChevronRight,
   FiChevronDown,
   FiRotateCcw,
+  FiRefreshCw,
 } from 'react-icons/fi';
+import { FaPercent } from 'react-icons/fa';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
   PharmacySettings,
@@ -35,11 +37,25 @@ import { Link } from 'react-router-dom';
 import { getAuthUser } from '../../utils/auth';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { buildThermalReceiptHtml } from '../../utils/thermalReceipt';
+import { useToast, ToastContainer } from '../../components/common/Toast';
+import {
+  looksLikeBarcodeInput,
+  normalizeScannedBarcode,
+} from '../../../common/barcodeLookup';
 
 // Toggle this flag to switch between in-app preview and real printing.
 // true  => show thermal receipt inside the app (for design tweaking)
 // false => send to browser/Electron print dialog
 const RECEIPT_PREVIEW_MODE = false;
+
+// Constants
+const BARCODE_SCAN_TIMEOUT_MS = 200;
+const BARCODE_MIN_LENGTH = 4;
+const SALES_HISTORY_LIMIT = 20;
+const SEARCH_DEBOUNCE_MS = 300;
+const SUCCESS_MESSAGE_DURATION_MS = 2000;
+const DROPDOWN_BLUR_DELAY_MS = 200;
+const PRINT_FRAME_CLEANUP_MS = 500;
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -49,8 +65,14 @@ interface Medicine {
   name: string;
   pillQuantity: number;
   status: MedicineStatus;
+  manufacturer?: string;
+  brandName?: string;
   sellablePills?: number;
   totalAvailablePills?: number;
+  normalExpiryPills?: number;
+  nearExpiryPills?: number;
+  criticalExpiryPills?: number;
+  nextExpiryDate?: string | null;
   averageSellablePricePerPill?: number | null;
 }
 
@@ -77,13 +99,38 @@ interface CartItem {
 }
 
 
+/** Pills to add for a new line / each cart add — matches medicine "pills per packet" (pillQuantity). */
+const defaultSaleQuantity = (medicine: Medicine): number =>
+  Math.max(1, medicine.pillQuantity || 1);
+
+const BARCODE_PREVIEW_MAX = 12;
+
+/** Short barcode/label for UI (e.g. `010896110177...`). Full value stays in data/receipts. */
+const formatBarcodePreview = (barcode: string | undefined | null): string => {
+  if (barcode == null || String(barcode).trim() === '') return '—';
+  const t = String(barcode).trim();
+  if (t.length <= BARCODE_PREVIEW_MAX) return t;
+  return `${t.slice(0, BARCODE_PREVIEW_MAX)}...`;
+};
+
+const medicineCompanyLine = (m: {
+  manufacturer?: string;
+  brandName?: string;
+}): string => {
+  const a = m.manufacturer?.trim();
+  const b = m.brandName?.trim();
+  if (a && b) return `${a} · ${b}`;
+  return a || b || '—';
+};
+
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
   const subtotal = item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
-  const taxAmount = (subtotal * taxPercent) / 100; // Tax calculated on original subtotal
-  const finalPrice = subtotal - discountAmount + taxAmount;
+  const discountedAmount = subtotal - discountAmount;
+  const taxAmount = (discountedAmount * taxPercent) / 100; // Tax calculated on discounted amount
+  const finalPrice = discountedAmount + taxAmount;
 
   return {
     ...item,
@@ -98,9 +145,26 @@ const recalculateSaleItem = (item: CartItem): CartItem => {
 
 const SellingPanel: React.FC = () => {
   const { refreshExpiringAlerts } = useDashboardHeader();
+  const { toasts, removeToast, warning, error } = useToast();
+  const expiryWarningShownRef = useRef<Set<number>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  /** Draft qty while typing — committed on blur to avoid fighting the native number spinner / controlled state */
+  const [qtyInputDraft, setQtyInputDraft] = useState<Record<number, string>>({});
+  /** Draft discount while typing */
+  const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
+  /** Draft tax while typing */
+  const [taxInputDraft, setTaxInputDraft] = useState<Record<number, string>>({});
+
+  const clearQtyDraft = useCallback((medicineId: number) => {
+    setQtyInputDraft((prev) => {
+      if (!(medicineId in prev)) return prev;
+      const next = { ...prev };
+      delete next[medicineId];
+      return next;
+    });
+  }, []);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
@@ -112,6 +176,11 @@ const SellingPanel: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [saleType, setSaleType] = useState<string>('Regular');
+  const [additionalDiscount, setAdditionalDiscount] = useState<number>(0);
+  const [additionalDiscountDraft, setAdditionalDiscountDraft] = useState<string>('');
+  const [isEditingAdditionalDiscount, setIsEditingAdditionalDiscount] = useState(false);
+  const [prescriptionNumber, setPrescriptionNumber] = useState('');
+  const [doctorName, setDoctorName] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
@@ -212,15 +281,40 @@ const SellingPanel: React.FC = () => {
     }
   }, []);
 
-  const addToCart = useCallback((medicine: Medicine, quantityParam = 1) => {
+  const addToCart = useCallback((medicine: Medicine, quantityParam?: number) => {
     const available = medicine.sellablePills ?? 0;
     if (available <= 0) {
-      alert(`No sellable stock available for ${medicine.name}.`);
+      const totalAvailable = medicine.totalAvailablePills ?? 0;
+      if (totalAvailable > 0) {
+        error(
+          `Stock for "${medicine.name}" is expired, so it can't be sold.`
+        );
+      } else {
+        error(`No stock available for "${medicine.name}".`);
+      }
       return;
     }
-    let quantity = quantityParam;
+
+    // Expiry policy warnings (non-blocking toast, once per medicine per session)
+    if ((medicine.criticalExpiryPills ?? 0) > 0) {
+      if (!expiryWarningShownRef.current.has(medicine.id)) {
+        expiryWarningShownRef.current.add(medicine.id);
+        warning(
+          `"${medicine.name}" has critical expiry stock (≤7 days). Sale allowed — use FEFO.`
+        );
+      }
+    } else if ((medicine.nearExpiryPills ?? 0) > 0) {
+      if (!expiryWarningShownRef.current.has(medicine.id)) {
+        expiryWarningShownRef.current.add(medicine.id);
+        warning(
+          `"${medicine.name}" has near-expiry stock (≤30 days). Sale allowed — use FEFO.`
+        );
+      }
+    }
+
+    let quantity = quantityParam ?? defaultSaleQuantity(medicine);
     if (available < quantity) {
-      alert(`Only ${available} pills available for sale!`);
+      warning(`Only ${available} pills available for sale!`);
       quantity = available;
     }
 
@@ -232,7 +326,7 @@ const SellingPanel: React.FC = () => {
       if (existingItem) {
         const newQuantity = existingItem.pills + quantity;
         if (newQuantity > available) {
-          alert(`Only ${available} pills available for sale!`);
+          warning(`Only ${available} pills available for sale!`);
           return prevCart;
         }
         const updatedItem: CartItem = recalculateSaleItem({
@@ -272,7 +366,7 @@ const SellingPanel: React.FC = () => {
     // Clear search after adding
     setSearchTerm('');
     setShowSearchResults(false);
-  }, []);
+  }, [error, warning]);
 
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
@@ -289,7 +383,11 @@ const SellingPanel: React.FC = () => {
         (response: any) => {
           setIsSearching(false);
           if (response.success) {
-            setMedicines(response.data || []);
+            // Hide expired items from the selling panel search.
+            const filtered = (response.data || []).filter(
+              (medicine: Medicine) => (medicine.sellablePills ?? 0) > 0
+            );
+            setMedicines(filtered);
           }
         }
       );
@@ -302,47 +400,62 @@ const SellingPanel: React.FC = () => {
 
   const handleBarcodeScan = useCallback(
     async (barcode: string) => {
-      if (!barcode || barcode.trim().length === 0) return;
+      const normalized = normalizeScannedBarcode(barcode);
+      if (!normalized) return;
 
       try {
-        window.electron.ipcRenderer.once(
-          'medicine-get-by-barcode-reply',
-          (response: any) => {
-            if (response.success && response.data) {
-              const medicine = response.data as Medicine;
-              if ((medicine.sellablePills ?? 0) > 0) {
-                // Automatically add to cart when barcode is scanned
-                addToCart(medicine, 1);
-                setIsScanning(true);
-                // Clear barcode input and show success feedback
-                setBarcodeInput('');
-                // Close barcode scan modal after successful scan
-                setTimeout(() => {
-                  setIsScanning(false);
-                  setBarcodeScanMode(false);
-                }, 1000);
-              } else {
-                alert(
-                  `Medicine "${medicine.name}" is not eligible for sale (insufficient stock or near expiry).`
-                );
-                setBarcodeInput('');
-              }
-            } else {
-              // Show message if barcode not found
-              alert(`Medicine with barcode "${barcode}" not found!`);
-              setBarcodeInput('');
-            }
+        const response = (await window.electron.ipcRenderer.invoke(
+          'medicine-get-by-barcode',
+          normalized
+        )) as {
+          success: boolean;
+          data?: Medicine | null;
+          error?: string;
+        };
+
+        if (!response?.success) {
+          error(response?.error || 'Error looking up barcode. Please try again.');
+          setBarcodeInput('');
+          return;
+        }
+
+        if (response.data) {
+          const medicine = response.data as Medicine;
+          if ((medicine.sellablePills ?? 0) > 0) {
+            addToCart(medicine);
+            setIsScanning(true);
+            setBarcodeInput('');
+            setSearchTerm('');
+            setShowSearchResults(false);
+            setHighlightedIndex(-1);
+            setTimeout(() => {
+              setIsScanning(false);
+              setBarcodeScanMode(false);
+              searchInputRef.current?.focus();
+            }, 1000);
+          } else {
+            warning(
+              `Medicine "${medicine.name}" is not eligible for sale (expired or insufficient stock).`
+            );
+            setBarcodeInput('');
+            setSearchTerm('');
+            setShowSearchResults(false);
+            setHighlightedIndex(-1);
           }
-        );
-        window.electron.ipcRenderer.sendMessage('medicine-get-by-barcode', [
-          barcode.trim(),
-        ]);
-      } catch (error) {
-        console.error('Error scanning barcode:', error);
+        } else {
+          error(`Medicine with barcode "${normalized}" not found!`);
+          setBarcodeInput('');
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+      } catch (err) {
+        console.error('Error scanning barcode:', err);
+        error('Error looking up barcode. Please try again.');
         setBarcodeInput('');
       }
     },
-    [addToCart]
+    [addToCart, error, warning]
   );
 
   const updateCartItemField = useCallback(
@@ -355,11 +468,15 @@ const SellingPanel: React.FC = () => {
 
           let nextValue = value;
           if (field === 'pills') {
-            nextValue = Math.max(1, parseInt(value, 10) || 1);
-            const available = item.medicine.sellablePills ?? Infinity;
-            if (nextValue > available) {
-              alert(`Only ${available} pills available for sale!`);
-              return item;
+            if (value === '') {
+              nextValue = 0;
+            } else {
+              nextValue = Math.max(0, parseInt(value, 10) || 0);
+              const available = item.medicine.sellablePills ?? Infinity;
+              if (nextValue > available) {
+                warning(`Only ${available} pills available for sale!`);
+                return item;
+              }
             }
           }
           if (
@@ -367,7 +484,12 @@ const SellingPanel: React.FC = () => {
             field === 'discount' ||
             field === 'tax'
           ) {
-            nextValue = Math.max(0, parseFloat(value) || 0);
+            if (field === 'discount' || field === 'tax') {
+              // Round discount and tax to whole numbers
+              nextValue = value === '' ? 0 : Math.max(0, Math.round(parseFloat(value) || 0));
+            } else {
+              nextValue = value === '' ? 0 : Math.max(0, parseFloat(value) || 0);
+            }
           }
 
           const updatedItem: CartItem = recalculateSaleItem({
@@ -378,7 +500,7 @@ const SellingPanel: React.FC = () => {
         })
       );
     },
-    []
+    [warning]
   );
 
   // Scroll highlighted item into view and focus it
@@ -399,18 +521,18 @@ const SellingPanel: React.FC = () => {
     loadMedicines();
   }, [loadMedicines]);
 
-  // Load sales history
+  // Load sales history with pagination (last 25 only for better performance)
   const loadSalesHistory = useCallback(async () => {
     try {
       const response = await getSalesFlatRows();
       if (response.success && response.data) {
-        // Get recent sales (last 50)
+        // Get recent sales (last 25) - already sorted by date
         const recent = response.data
           .sort(
             (a, b) =>
               new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
           )
-          .slice(0, 50);
+          .slice(0, SALES_HISTORY_LIMIT);
         setSalesHistory(recent);
       }
     } catch (error) {
@@ -451,12 +573,17 @@ const SellingPanel: React.FC = () => {
   // Function to clear form for new bill
   const clearFormForNewBill = useCallback(() => {
     setSelectedSaleId(null);
+    setQtyInputDraft({});
     setCart([]);
     setReturnedQuantities(new Map());
     setCurrentSaleReturnTotal(0);
     setCustomerName('');
     setCustomerPhone('');
     setSaleType('Regular');
+    setAdditionalDiscount(0);
+    setAdditionalDiscountDraft('');
+    setPrescriptionNumber('');
+    setDoctorName('');
     setReceivedAmount('');
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -485,6 +612,8 @@ const SellingPanel: React.FC = () => {
           customerName: sale.customerName || '',
           customerPhone: sale.customerPhone || '-',
           saleType: sale.saleType || 'Regular',
+          additionalDiscount: sale.additionalDiscount || 0,
+          additionalDiscountAmount: sale.additionalDiscountAmount || 0,
           items: [],
           total: 0,
         };
@@ -492,7 +621,15 @@ const SellingPanel: React.FC = () => {
       acc[sale.saleId].items.push(sale);
       acc[sale.saleId].total += sale.total;
       return acc;
-    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; items: FlatSaleRow[]; total: number }>);
+    }, {} as Record<number, { saleId: number; createdAt: string; customerName: string; customerPhone: string; saleType?: string; additionalDiscount?: number; additionalDiscountAmount?: number; items: FlatSaleRow[]; total: number }>);
+
+    // Subtract additional discount from each sale's total
+    Object.values(groupedSales).forEach(sale => {
+      const discountAmount = sale.additionalDiscountAmount ?? 0;
+      if (discountAmount > 0) {
+        sale.total -= discountAmount;
+      }
+    });
 
     return Object.values(groupedSales).sort(
       (a, b) =>
@@ -524,7 +661,7 @@ const SellingPanel: React.FC = () => {
     if (salesHistoryList.length > 0) {
       loadReturnsForAllSales();
     }
-  }, [salesHistoryList.length]); // Only re-run when the number of sales changes
+  }, [salesHistoryList]); // Fixed: Use full salesHistoryList instead of just length
 
   // Reset to new bill when sales history is loaded and no bill is selected
   useEffect(() => {
@@ -602,7 +739,7 @@ const SellingPanel: React.FC = () => {
 
     // Check after initial load
     const timer = setTimeout(checkMedicines, 500);
-    return () => clearTimeout(timer);
+    return () => clearTimeout(timer); // Cleanup timeout
   }, []);
 
   const seedSampleMedicines = useCallback(async () => {
@@ -652,7 +789,7 @@ const SellingPanel: React.FC = () => {
         if (barcodeInput.trim().length > 0) {
           handleBarcodeScan(barcodeInput);
         }
-      }, 200);
+      }, BARCODE_SCAN_TIMEOUT_MS);
     }
 
     return () => {
@@ -662,14 +799,58 @@ const SellingPanel: React.FC = () => {
     };
   }, [barcodeInput, handleBarcodeScan, barcodeScanMode]);
 
-  // Global barcode scanner listener (works without opening scan modal)
+  // F2 — focus product search (label says F2; scanners often work without clicking the field)
   useEffect(() => {
-    const MIN_BARCODE_LENGTH = 4;
+    const onF2 = (event: KeyboardEvent) => {
+      if (event.key !== 'F2') return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    window.addEventListener('keydown', onF2, true);
+    return () => window.removeEventListener('keydown', onF2, true);
+  }, []);
+
+  // Global barcode scanner: capture phase so keys are not lost when focus is outside Product (F2).
+  // `data-wedge-typing` marks areas where normal keyboard typing must reach inputs (customer, cart, etc.).
+  useEffect(() => {
+    const SCAN_END_MS = BARCODE_SCAN_TIMEOUT_MS;
+
+    const isWedgeTypingField = (el: EventTarget | null) =>
+      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < BARCODE_MIN_LENGTH) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      setSearchTerm(normalized);
+      setShowSearchResults(true);
+      setHighlightedIndex(-1);
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus();
+      });
+      void handleBarcodeScan(normalized);
+    };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
       if (barcodeScanMode) return;
 
       const target = event.target as HTMLElement | null;
+      if (target?.id === 'product-search' || target?.id === 'barcode-input') {
+        return;
+      }
+
+      if (isWedgeTypingField(target)) {
+        return;
+      }
+
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
       const tag = target?.tagName?.toLowerCase();
       const isEditable =
         tag === 'input' ||
@@ -677,48 +858,44 @@ const SellingPanel: React.FC = () => {
         tag === 'select' ||
         target?.isContentEditable;
 
+      // Don't intercept typing in editable fields
       if (isEditable) {
         return;
       }
 
-      // Ignore modifier combinations
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-
       if (event.key === 'Enter') {
-        if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-          const barcodeValue = globalBarcodeBufferRef.current;
-          globalBarcodeBufferRef.current = '';
-          handleBarcodeScan(barcodeValue);
+        if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
         } else {
           globalBarcodeBufferRef.current = '';
         }
-        event.preventDefault();
         return;
       }
 
-      if (event.key.length === 1) {
+      // Only capture single printable characters (not special keys)
+      if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
         globalBarcodeBufferRef.current += event.key;
         if (globalBarcodeTimerRef.current) {
           clearTimeout(globalBarcodeTimerRef.current);
         }
         globalBarcodeTimerRef.current = setTimeout(() => {
-          if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-            const barcodeValue = globalBarcodeBufferRef.current;
-            globalBarcodeBufferRef.current = '';
-            handleBarcodeScan(barcodeValue);
+          if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
           } else {
             globalBarcodeBufferRef.current = '';
           }
-        }, 120);
+        }, SCAN_END_MS);
       }
     };
 
-    window.addEventListener('keydown', handleGlobalKeydown);
+    window.addEventListener('keydown', handleGlobalKeydown, true);
 
     return () => {
-      window.removeEventListener('keydown', handleGlobalKeydown);
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
       if (globalBarcodeTimerRef.current) {
         clearTimeout(globalBarcodeTimerRef.current);
       }
@@ -726,12 +903,33 @@ const SellingPanel: React.FC = () => {
     };
   }, [handleBarcodeScan, barcodeScanMode]);
 
+  // Debounce search to prevent firing on every keystroke
+  const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
+  
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { value } = e.target;
     setSearchTerm(value);
     setHighlightedIndex(-1); // Reset highlight when search changes
-    handleSearch(value);
+    
+    // Clear previous timeout
+    if (debouncedSearch.current) {
+      clearTimeout(debouncedSearch.current);
+    }
+    
+    // Set new timeout - only search after 300ms of no typing
+    debouncedSearch.current = setTimeout(() => {
+      handleSearch(value);
+    }, SEARCH_DEBOUNCE_MS);
   };
+
+  // Cleanup debounced search on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedSearch.current) {
+        clearTimeout(debouncedSearch.current);
+      }
+    };
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Tab' && showSearchResults && medicines.length > 0) {
@@ -757,6 +955,37 @@ const SellingPanel: React.FC = () => {
       return;
     }
 
+    // Enter: prefer explicit dropdown selection; else barcode (scanner types into this field)
+    if (e.key === 'Enter') {
+      if (showSearchResults && medicines.length > 0 && highlightedIndex >= 0) {
+        e.preventDefault();
+        const medicine = medicines[highlightedIndex];
+        if (medicine && (medicine.sellablePills ?? 0) > 0) {
+          addToCart(medicine);
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+        return;
+      }
+      if (looksLikeBarcodeInput(searchTerm)) {
+        e.preventDefault();
+        handleBarcodeScan(searchTerm);
+        return;
+      }
+      if (showSearchResults && medicines.length === 1) {
+        const medicine = medicines[0];
+        if (medicine && (medicine.sellablePills ?? 0) > 0) {
+          e.preventDefault();
+          addToCart(medicine);
+          setSearchTerm('');
+          setShowSearchResults(false);
+          setHighlightedIndex(-1);
+        }
+        return;
+      }
+    }
+
     if (!showSearchResults || medicines.length === 0) return;
 
     if (e.key === 'ArrowDown') {
@@ -767,15 +996,6 @@ const SellingPanel: React.FC = () => {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setHighlightedIndex((prev) => (prev > 0 ? prev - 1 : -1));
-    } else if (e.key === 'Enter' && highlightedIndex >= 0) {
-      e.preventDefault();
-      const medicine = medicines[highlightedIndex];
-      if (medicine && (medicine.sellablePills ?? 0) > 0) {
-        addToCart(medicine, 1);
-        setSearchTerm('');
-        setShowSearchResults(false);
-        setHighlightedIndex(-1);
-      }
     } else if (e.key === 'Escape') {
       setShowSearchResults(false);
       setHighlightedIndex(-1);
@@ -783,7 +1003,7 @@ const SellingPanel: React.FC = () => {
   };
 
   const addToCartWithFeedback = useCallback(
-    (medicine: Medicine, quantity = 1) => {
+    (medicine: Medicine, quantity?: number) => {
       addToCart(medicine, quantity);
       setShowSearchResults(false);
       setSearchTerm('');
@@ -795,21 +1015,24 @@ const SellingPanel: React.FC = () => {
   );
 
   const removeFromCart = (medicineId: number) => {
+    clearQtyDraft(medicineId);
     setCart((prevCart) =>
       prevCart.filter((item) => item.medicine.id !== medicineId)
     );
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
+    clearQtyDraft(medicineId);
     setCart((prevCart) => {
       return prevCart
         .map((item) => {
           if (item.medicine.id === medicineId) {
+            // sellablePills on the line is total sellable stock snapshot (not "remaining after cart")
             const available = item.medicine.sellablePills ?? Infinity;
             const newQuantity = item.pills + change;
             if (newQuantity <= 0) return null;
             if (newQuantity > available) {
-              alert(`Only ${available} pills available in stock!`);
+              warning(`Only ${available} pills available in stock!`);
               return item;
             }
             const updatedItem = recalculateSaleItem({
@@ -825,22 +1048,20 @@ const SellingPanel: React.FC = () => {
   };
 
   const setCartItemQuantity = (medicineId: number, quantity: number) => {
-    if (quantity <= 0) {
-      removeFromCart(medicineId);
-      return;
-    }
+    clearQtyDraft(medicineId);
+    const finalQuantity = isNaN(quantity) ? 0 : quantity;
 
     setCart((prevCart) => {
       return prevCart.map((item) => {
         if (item.medicine.id === medicineId) {
           const available = item.medicine.sellablePills ?? Infinity;
-          if (quantity > available) {
-            alert(`Only ${available} pills available in stock!`);
-            return item;
+          if (finalQuantity > available) {
+            warning(`Only ${available} pills available in stock!`);
+            return recalculateSaleItem({ ...item, pills: available });
           }
           const updatedItem = recalculateSaleItem({
             ...item,
-            pills: quantity,
+            pills: finalQuantity,
           });
           return updatedItem;
         }
@@ -874,6 +1095,9 @@ const SellingPanel: React.FC = () => {
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
+        additionalDiscount: (saleType === 'Family/Relatives' || saleType === 'Charity') ? additionalDiscount : 0,
+        prescriptionNumber: prescriptionNumber.trim() || undefined,
+        doctorName: doctorName.trim() || undefined,
       };
 
       // Check if we're updating an existing sale or creating a new one
@@ -889,7 +1113,7 @@ const SellingPanel: React.FC = () => {
           // Keep viewing the updated sale
           setTimeout(() => {
             setShowSuccess(false);
-          }, 2000);
+          }, SUCCESS_MESSAGE_DURATION_MS);
         } else {
           alert(`Error updating sale: ${result.error || 'Unknown error'}`);
         }
@@ -910,6 +1134,8 @@ const SellingPanel: React.FC = () => {
             setReturnedQuantities(new Map());
             setCustomerName('');
             setCustomerPhone('');
+            setAdditionalDiscount(0);
+            setAdditionalDiscountDraft('');
             setBarcodeInput('');
             setSelectedSaleId(null); // Clear selection after successful sale
             setCurrentBillIndex(-1); // Reset to new bill
@@ -924,7 +1150,7 @@ const SellingPanel: React.FC = () => {
               if (barcodeInputRef.current) {
                 barcodeInputRef.current.focus();
               }
-            }, 2000);
+            }, SUCCESS_MESSAGE_DURATION_MS);
           } else {
             alert(`Error processing sale: ${response.error || 'Unknown error'}`);
           }
@@ -946,10 +1172,34 @@ const SellingPanel: React.FC = () => {
     }
     // Always read latest from Settings so receipt reflects current pharmacy details
     const pharmacyInfo = getStoredPharmacySettings();
+    
+    // Calculate values locally to avoid dependency issues
+    const localSubtotal = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+    
+    const localDiscount = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+    
+    const localTax = cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      const itemDiscount = (itemSubtotal * item.discount) / 100;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      return sum + ((discountedAmount * item.tax) / 100);
+    }, 0);
+    
     const amountGivenForReceipt =
       currentBillIndex === -1 && receivedAmount && !Number.isNaN(Number(receivedAmount))
         ? Number(receivedAmount)
-        : subtotalValue - discountValue + taxValue;
+        : localSubtotal - localDiscount + localTax;
 
     const html = buildThermalReceiptHtml(
       {
@@ -980,9 +1230,13 @@ const SellingPanel: React.FC = () => {
         customerPhone,
         currentBillIndex,
         returnedQuantities,
+        saleType,
+        additionalDiscount,
         amountGiven: amountGivenForReceipt,
       },
-      { includePrintScript: !RECEIPT_PREVIEW_MODE }
+      // The HTML printer script + our iframe onload print can both fire.
+      // We only print from the iframe onload handler.
+      { includePrintScript: false, showBarcode: RECEIPT_PREVIEW_MODE }
     );
     if (!html) return;
     if (RECEIPT_PREVIEW_MODE) {
@@ -998,57 +1252,87 @@ const SellingPanel: React.FC = () => {
         document.body.removeChild(printFrame);
         return;
       }
-      frameDoc.open();
-      frameDoc.write(html);
-      frameDoc.close();
       printFrame.onload = () => {
         printFrame.contentWindow?.focus();
         printFrame.contentWindow?.print();
-        setTimeout(() => document.body.removeChild(printFrame), 500);
+        setTimeout(() => document.body.removeChild(printFrame), PRINT_FRAME_CLEANUP_MS);
       };
+      frameDoc.open();
+      frameDoc.write(html);
+      frameDoc.close();
     }
-  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount]);
+  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount, saleType, additionalDiscount]);
 
   const clearCart = () => {
     if (window.confirm('Clear cart and start a new sale?')) {
       setCart([]);
       setReturnedQuantities(new Map());
       setSelectedSaleId(null);
-      setCurrentBillIndex(-1); // Reset to new bill
+      setCurrentBillIndex(-1);
+      setAdditionalDiscount(0);
+      setAdditionalDiscountDraft(''); // Reset to new bill
       clearFormForNewBill();
     }
   };
 
-  const subtotalValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    return sum + (item.unitPrice * netPills);
-  }, 0);
+  // Memoize cart totals to prevent recalculation on every render
+  const subtotalValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      return sum + (item.unitPrice * netPills);
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const discountValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    const itemSubtotal = item.unitPrice * netPills;
-    return sum + ((itemSubtotal * item.discount) / 100);
-  }, 0);
+  const discountValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      return sum + ((itemSubtotal * item.discount) / 100);
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const taxValue = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
-    const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-    const itemSubtotal = item.unitPrice * netPills;
-    return sum + ((itemSubtotal * item.tax) / 100); // Tax on original subtotal
-  }, 0);
+  const taxValue = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const itemSubtotal = item.unitPrice * netPills;
+      const itemDiscount = (itemSubtotal * item.discount) / 100;
+      const discountedAmount = itemSubtotal - itemDiscount;
+      return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
+    }, 0);
+  }, [cart, returnedQuantities, currentBillIndex]);
 
-  const grandTotal = subtotalValue - discountValue + taxValue;
+  const grandTotal = useMemo(() => {
+    const baseTotal = subtotalValue - discountValue + taxValue;
+    // Apply additional discount for Family/Relatives or Charity
+    if (saleType === 'Family/Relatives' || saleType === 'Charity') {
+      const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
+      return baseTotal - additionalDiscountAmount;
+    }
+    return baseTotal;
+  }, [subtotalValue, discountValue, taxValue, saleType, additionalDiscount]);
 
-  const formatCurrency = (value: number) => {
+  // Memoize net payable to avoid recalculation
+  const netPayable = useMemo(() => {
+    return Math.max(0, grandTotal - currentSaleReturnTotal);
+  }, [grandTotal, currentSaleReturnTotal]);
+
+  // Memoize return amount calculation
+  const returnAmount = useMemo(() => {
+    if (!receivedAmount || receivedAmount === '') return 0;
+    return Number(receivedAmount) - netPayable;
+  }, [receivedAmount, netPayable]);
+
+  const formatCurrency = useCallback((value: number) => {
     const currency = pharmacyInfo.currency || 'USD';
     const symbol = getSymbol(currency);
     if (currency === 'INR' || currency === 'PKR') {
       return `${symbol}${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
     }
     return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(value);
-  };
+  }, [pharmacyInfo.currency]);
 
   // Function to load sale details into the form
   const loadSaleDetails = useCallback(
@@ -1060,6 +1344,14 @@ const SellingPanel: React.FC = () => {
         setCustomerPhone(sale.customerPhone || '0000');
         setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
+        
+        // Set additional discount from the first item (all items in a sale have the same additional discount)
+        const firstItem = sale.items[0];
+        if (firstItem && (firstItem.additionalDiscount !== undefined && firstItem.additionalDiscount !== null)) {
+          setAdditionalDiscount(firstItem.additionalDiscount);
+        } else {
+          setAdditionalDiscount(0);
+        }
 
         // Set date and time from sale
         const saleDate = new Date(sale.createdAt);
@@ -1132,6 +1424,7 @@ const SellingPanel: React.FC = () => {
           return recalculateSaleItem(cartItem);
         });
 
+        setQtyInputDraft({});
         setCart(cartItems);
         setReturnedQuantities(returnedByMedicine);
         setCurrentSaleReturnTotal(totalReturned);
@@ -1396,8 +1689,16 @@ const SellingPanel: React.FC = () => {
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
 
+  /** Active new sale: larger, spaced summary (not viewing history / returns). */
+  const expandedSaleSummary = currentBillIndex === -1 && cart.length > 0;
+
   return (
-    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
+    <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2 relative">
+      <div className="fixed top-20 right-4 z-[100] pointer-events-none">
+        <div className="pointer-events-auto">
+          <ToastContainer toasts={toasts} onClose={removeToast} />
+        </div>
+      </div>
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm">
@@ -1473,28 +1774,37 @@ const SellingPanel: React.FC = () => {
                             role="button"
                             tabIndex={0}
                             className="p-2.5 border border-gray-200 dark:border-gray-700 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors flex items-center justify-between"
-                            onClick={() => addToCart(medicine, 1)}
+                            onClick={() => addToCart(medicine)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault();
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                               }
                             }}
                           >
                             <div className="flex-1 min-w-0">
                               <h3 className="text-sm font-medium text-gray-900 dark:text-white truncate">
                                 {medicine.name}
+                                {medicineCompanyLine(medicine) !== '—' && (
+                                  <span className="font-normal text-gray-500 dark:text-gray-400">
+                                    {' '}
+                                    — {medicineCompanyLine(medicine)}
+                                  </span>
+                                )}
                               </h3>
-                              <div className="flex items-center gap-3 mt-1">
+                              <div className="flex items-center gap-3 mt-1 flex-wrap">
                                 {medicine.barcode && (
-                                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                                    Barcode: {medicine.barcode}
+                                  <p
+                                    className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[10rem]"
+                                    title={medicine.barcode}
+                                  >
+                                    Barcode: {formatBarcodePreview(medicine.barcode)}
                                   </p>
                                 )}
                                 <span className="text-xs font-semibold text-green-600 dark:text-green-400">
                                   {(
                                     medicine.averageSellablePricePerPill || 0
-                                  ).toFixed(2)}
+                                  ).toFixed(1)}
                                 </span>
                                 <span
                                   className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${(medicine.sellablePills ?? 0) > 0
@@ -1502,7 +1812,15 @@ const SellingPanel: React.FC = () => {
                                     : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                                     }`}
                                 >
-                                  Stock: {medicine.sellablePills ?? 0}
+                                  {(medicine.sellablePills ?? 0) > 0
+                                    ? (medicine.criticalExpiryPills ?? 0) > 0
+                                      ? `Critical: ${medicine.sellablePills ?? 0}`
+                                      : (medicine.nearExpiryPills ?? 0) > 0
+                                        ? `Near expiry: ${medicine.sellablePills ?? 0}`
+                                        : `Stock: ${medicine.sellablePills ?? 0}`
+                                    : (medicine.totalAvailablePills ?? 0) > 0
+                                      ? 'Out of date / expired'
+                                      : 'Stock: 0'}
                                 </span>
                               </div>
                             </div>
@@ -1510,7 +1828,7 @@ const SellingPanel: React.FC = () => {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                               }}
                               disabled={(medicine.sellablePills ?? 0) === 0}
                               className="ml-3 px-3 py-1.5 bg-emerald-600 dark:bg-emerald-500 text-white rounded-md hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 text-xs font-medium flex-shrink-0"
@@ -1534,22 +1852,31 @@ const SellingPanel: React.FC = () => {
                       role="button"
                       tabIndex={0}
                       className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                      onClick={() => addToCart(medicine, 1)}
+                      onClick={() => addToCart(medicine)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          addToCart(medicine, 1);
+                          addToCart(medicine);
                         }
                       }}
                     >
                       <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-gray-900 dark:text-white">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-gray-900 dark:text-white truncate">
                             {medicine.name}
+                            {medicineCompanyLine(medicine) !== '—' && (
+                              <span className="font-normal text-gray-500 dark:text-gray-400 font-medium">
+                                {' '}
+                                — {medicineCompanyLine(medicine)}
+                              </span>
+                            )}
                           </h3>
                           {medicine.barcode && (
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                              Barcode: {medicine.barcode}
+                            <p
+                              className="text-sm text-gray-500 dark:text-gray-400 truncate"
+                              title={medicine.barcode}
+                            >
+                              Barcode: {formatBarcodePreview(medicine.barcode)}
                             </p>
                           )}
                           <div className="flex items-center gap-4 mt-2">
@@ -1565,7 +1892,15 @@ const SellingPanel: React.FC = () => {
                                 : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
                                 }`}
                             >
-                              Sellable Pills: {medicine.sellablePills ?? 0}
+                              {(medicine.sellablePills ?? 0) > 0
+                                ? (medicine.criticalExpiryPills ?? 0) > 0
+                                  ? `Critical: ${medicine.sellablePills ?? 0} pills`
+                                  : (medicine.nearExpiryPills ?? 0) > 0
+                                    ? `Near expiry: ${medicine.sellablePills ?? 0} pills`
+                                    : `Sellable Pills: ${medicine.sellablePills ?? 0}`
+                                : (medicine.totalAvailablePills ?? 0) > 0
+                                  ? 'Not sellable (expired)'
+                                  : `Sellable Pills: 0`}
                             </span>
                           </div>
                         </div>
@@ -1573,7 +1908,7 @@ const SellingPanel: React.FC = () => {
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            addToCart(medicine, 1);
+                            addToCart(medicine);
                           }}
                           disabled={(medicine.sellablePills ?? 0) === 0}
                           className="ml-4 px-4 py-2 bg-emerald-600 dark:bg-emerald-500 text-white rounded-lg hover:bg-emerald-700 dark:hover:bg-emerald-600 disabled:bg-gray-300 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
@@ -1688,7 +2023,10 @@ const SellingPanel: React.FC = () => {
           {/* Left Side: Products and Cart */}
           <div className="lg:col-span-8 flex flex-col overflow-hidden min-h-0 gap-3">
             {/* Top Section: Invoice, Date, Time, Customer Info */}
-            <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0">
+            <div
+              data-wedge-typing="true"
+              className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0"
+            >
 
               {/* TOP GRID ROW */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -1802,7 +2140,7 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
-                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setAdditionalDiscount(0); setAdditionalDiscountDraft(''); setShowCustomerDropdown(false); }}
                         >
                           CASH CUSTOMER
                         </div>
@@ -1848,25 +2186,55 @@ const SellingPanel: React.FC = () => {
                   />
                 </div>
 
-                {/* VISITS */}
+                {/* PRESCRIPTION */}
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
-                    Visits
+                    Rx #
                   </label>
                   <input
                     type="text"
-                    value="0"
-                    readOnly
-                    className="w-16 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
+                    value={prescriptionNumber}
+                    onChange={(e) => setPrescriptionNumber(e.target.value)}
+                    placeholder="Prescription no."
+                    className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
                   />
                 </div>
+
+                {/* DOCTOR */}
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
+                    Dr.
+                  </label>
+                  <input
+                    type="text"
+                    value={doctorName}
+                    onChange={(e) => setDoctorName(e.target.value)}
+                    placeholder="Doctor name"
+                    className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition"
+                  />
+                </div>
+
+                <div className="flex-1"></div>
+
+                {/* NEW SALE BTN */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearFormForNewBill();
+                    setCurrentBillIndex(-1);
+                    setSelectedSaleId(null);
+                  }}
+                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-all shadow-md flex items-center gap-2"
+                >
+                  NEW SALE
+                </button>
 
                 {/* HISTORY BTN */}
                 <Link
                   to="/sales"
-                  className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide bg-e-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 transition shadow-sm"
+                  className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-all shadow-sm border border-gray-200 dark:border-gray-600"
                 >
-                  History
+                  HISTORY
                 </Link>
               </div>
             </div>
@@ -1913,7 +2281,7 @@ const SellingPanel: React.FC = () => {
                           setShowSearchResults(false);
                           setHighlightedIndex(-1);
                         }
-                      }, 200);
+                      }, DROPDOWN_BLUR_DELAY_MS);
                     }}
                     placeholder="Search or scan product..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"
@@ -1937,7 +2305,7 @@ const SellingPanel: React.FC = () => {
                           onFocus={() => setHighlightedIndex(index)}
                           onMouseDown={(e) => {
                             e.preventDefault(); // Prevent input blur
-                            addToCart(medicine, 1);
+                            addToCart(medicine);
                             setSearchTerm('');
                             setShowSearchResults(false);
                             setHighlightedIndex(-1);
@@ -1946,7 +2314,7 @@ const SellingPanel: React.FC = () => {
                             if (e.key === 'Enter' || e.key === ' ') {
                               e.preventDefault();
                               if ((medicine.sellablePills ?? 0) > 0) {
-                                addToCart(medicine, 1);
+                                addToCart(medicine);
                                 setSearchTerm('');
                                 setShowSearchResults(false);
                                 setHighlightedIndex(-1);
@@ -1976,18 +2344,27 @@ const SellingPanel: React.FC = () => {
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium text-gray-900 dark:text-white truncate">
                               {medicine.name}
+                              {medicineCompanyLine(medicine) !== '—' && (
+                                <span className="font-normal text-gray-500 dark:text-gray-400">
+                                  {' '}
+                                  — {medicineCompanyLine(medicine)}
+                                </span>
+                              )}
                             </div>
-                            <div className="flex items-center gap-3 mt-1">
+                            <div className="flex items-center gap-3 mt-1 flex-wrap">
                               {medicine.barcode && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400">
-                                  Barcode: {medicine.barcode}
+                                <span
+                                  className="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[10rem]"
+                                  title={medicine.barcode}
+                                >
+                                  Barcode: {formatBarcodePreview(medicine.barcode)}
                                 </span>
                               )}
                               <span className="text-xs font-semibold text-green-600 dark:text-green-400">
                                 Price:{' '}
                                 {(
                                   medicine.averageSellablePricePerPill || 0
-                                ).toFixed(2)}
+                                ).toFixed(1)}
                               </span>
                               <span
                                 className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${(medicine.sellablePills ?? 0) > 0
@@ -1995,7 +2372,15 @@ const SellingPanel: React.FC = () => {
                                   : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
                                   }`}
                               >
-                                Stock: {medicine.sellablePills ?? 0}
+                                {(medicine.sellablePills ?? 0) > 0
+                                  ? (medicine.criticalExpiryPills ?? 0) > 0
+                                    ? `Critical: ${medicine.sellablePills ?? 0}`
+                                    : (medicine.nearExpiryPills ?? 0) > 0
+                                      ? `Near expiry: ${medicine.sellablePills ?? 0}`
+                                      : `Stock: ${medicine.sellablePills ?? 0}`
+                                  : (medicine.totalAvailablePills ?? 0) > 0
+                                    ? 'Out of date / expired'
+                                    : 'Stock: 0'}
                               </span>
                             </div>
                           </div>
@@ -2004,7 +2389,7 @@ const SellingPanel: React.FC = () => {
                             onMouseDown={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
-                              addToCart(medicine, 1);
+                              addToCart(medicine);
                               setSearchTerm('');
                               setShowSearchResults(false);
                             }}
@@ -2048,6 +2433,7 @@ const SellingPanel: React.FC = () => {
             {/* Cart Items - Scrollable */}
             <div
               data-cart-section
+              data-wedge-typing="true"
               className="flex-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200/60 dark:border-gray-700/60 shadow-md overflow-hidden flex flex-col min-h-0 max-h-full backdrop-blur-sm"
             >
               <div className="px-4 py-3 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200/60 dark:border-gray-600/60 flex-shrink-0 z-10">
@@ -2080,16 +2466,19 @@ const SellingPanel: React.FC = () => {
                     {/* Table Header */}
                     <div className="grid grid-cols-12 gap-1.5 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider">
                       <div className="col-span-1">Sr#</div>
-                      <div className="col-span-3">Product</div>
+                      <div className="col-span-2">Product</div>
+                      <div className="col-span-2">Company</div>
                       <div className="col-span-1 text-center">Qty</div>
                       <div className="col-span-2 text-center">Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
-                      <div className="col-span-2 text-center">Amount</div>
+                      <div className="col-span-1 text-center">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
                     {/* Cart Items */}
-                    {cart.map((item, index) => (
+                    {cart.map((item, index) => {
+                      const companyLabel = medicineCompanyLine(item.medicine);
+                      return (
                       <div
                         key={item.medicine.id}
                         className="grid grid-cols-12 gap-1.5 px-3 py-2.5 hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30"
@@ -2097,13 +2486,22 @@ const SellingPanel: React.FC = () => {
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
                         </div>
-                        <div className="col-span-3">
+                        <div className="col-span-2 min-w-0">
                           <div className="font-medium text-gray-900 dark:text-white truncate text-[11px]">
                             {item.medicine.name}
                           </div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                            {item.medicine.barcode || '-'}
+                          <div
+                            className="text-[10px] text-gray-500 dark:text-gray-500 truncate"
+                            title={item.medicine.barcode || undefined}
+                          >
+                            {formatBarcodePreview(item.medicine.barcode)}
                           </div>
+                        </div>
+                        <div
+                          className="col-span-2 min-w-0 text-[10px] text-gray-700 dark:text-gray-300 truncate"
+                          title={companyLabel !== '—' ? companyLabel : undefined}
+                        >
+                          {companyLabel}
                         </div>
                         <div className="col-span-1">
                           <div className="flex items-center gap-0.5 justify-center">
@@ -2118,30 +2516,67 @@ const SellingPanel: React.FC = () => {
                               <FiMinus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
                             <input
-                              type="number"
-                              min={1}
-                              max={
-                                typeof item.medicine.sellablePills === 'number'
-                                  ? item.medicine.sellablePills + item.pills
-                                  : undefined
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Quantity"
+                              value={
+                                qtyInputDraft[item.medicine.id] ??
+                                (item.pills === 0 ? '' : String(item.pills))
                               }
-                              value={item.pills}
                               readOnly={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
-                              onChange={(
-                                e: React.ChangeEvent<HTMLInputElement>
-                              ) => {
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                                 if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
-                                let val = parseInt(e.target.value, 10);
-                                if (Number.isNaN(val) || val < 1) val = 1;
-                                const maxAvailable = typeof item.medicine.sellablePills === 'number'
-                                  ? item.medicine.sellablePills + item.pills
-                                  : Infinity;
-                                if (val > maxAvailable) {
-                                  val = maxAvailable;
+                                const v = e.target.value;
+                                const id = item.medicine.id;
+                                if (v === '') {
+                                  setQtyInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  setQtyInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  if (numVal >= 1) {
+                                    const maxAvail = item.medicine.sellablePills;
+                                    if (typeof maxAvail === 'number' && numVal > maxAvail) {
+                                      warning(`Only ${maxAvail} pills available for sale!`);
+                                      setCartItemQuantity(id, maxAvail);
+                                    } else {
+                                      setCartItemQuantity(id, numVal);
+                                    }
+                                  }
                                 }
-                                setCartItemQuantity(item.medicine.id, val);
                               }}
-                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
+                              onBlur={() => {
+                                if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
+                                const id = item.medicine.id;
+                                const draft = qtyInputDraft[id];
+                                setQtyInputDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[id];
+                                  return next;
+                                });
+                                if (draft === undefined) return;
+                                const trimmed = draft.trim();
+                                const line = cart.find((x) => x.medicine.id === id);
+                                if (!line) return;
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 1) {
+                                  val = Math.max(1, line.pills);
+                                }
+                                const maxAvail = line.medicine.sellablePills;
+                                if (typeof maxAvail === 'number' && val > maxAvail) {
+                                  warning(`Only ${maxAvail} pills available for sale!`);
+                                  val = maxAvail;
+                                }
+                                setCartItemQuantity(id, val);
+                              }}
+                              className={`w-12 px-1 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all tabular-nums ${isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'bg-gray-100 dark:bg-gray-800 cursor-not-allowed' : ''}`}
                             />
                             <button
                               type="button"
@@ -2152,7 +2587,7 @@ const SellingPanel: React.FC = () => {
                               disabled={
                                 (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) ||
                                 (typeof item.medicine.sellablePills === 'number'
-                                  ? item.pills >= (item.medicine.sellablePills + item.pills)
+                                  ? item.pills >= item.medicine.sellablePills
                                   : false)
                               }
                             >
@@ -2165,65 +2600,132 @@ const SellingPanel: React.FC = () => {
                             </div>
                           )}
                         </div>
-                        <div className="col-span-2 text-center">
+                        <div className="col-span-2 text-center min-w-0">
 
                           <input
                             type="number"
                             min={0}
                             step={0.01}
-                            value={item.unitPrice}
+                            value={item.unitPrice.toFixed(1)}
                             readOnly
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
                           />
                         </div>
                         <div className="col-span-1 text-center">
                           <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={item.discount || 0}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLInputElement>
-                            ) =>
-                              updateCartItemField(
-                                item.medicine.id,
-                                'discount',
-                                parseFloat(e.target.value) || 0
-                              )
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            aria-label="Discount"
+                            value={
+                              discountInputDraft[item.medicine.id] ??
+                              (item.discount === 0 ? '' : String(Math.round(item.discount)))
                             }
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              const id = item.medicine.id;
+                              // Only allow digits and check if value is <= 100
+                              if (v === '') {
+                                setDiscountInputDraft((prev) => ({
+                                  ...prev,
+                                  [id]: v,
+                                }));
+                                updateCartItemField(id, 'discount', 0);
+                              } else if (/^\d+$/.test(v)) {
+                                const numVal = parseInt(v, 10);
+                                if (numVal <= 100) {
+                                  setDiscountInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  updateCartItemField(id, 'discount', numVal);
+                                }
+                              }
+                            }}
+                            onBlur={() => {
+                              const id = item.medicine.id;
+                              const draft = discountInputDraft[id];
+                              setDiscountInputDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[id];
+                                return next;
+                              });
+                              if (draft === undefined) return;
+                              const trimmed = draft.trim();
+                              let val = parseInt(trimmed, 10);
+                              if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                val = 0;
+                              }
+                              if (val > 100) val = 100;
+                              updateCartItemField(id, 'discount', val);
+                            }}
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
                         <div className="col-span-1 text-center">
                           <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={0.1}
-                            value={item.tax || 0}
-                            onChange={(
-                              e: React.ChangeEvent<HTMLInputElement>
-                            ) =>
-                              updateCartItemField(
-                                item.medicine.id,
-                                'tax',
-                                parseFloat(e.target.value) || 0
-                              )
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            aria-label="Tax"
+                            value={
+                              taxInputDraft[item.medicine.id] ??
+                              (item.tax === 0 ? '' : String(Math.round(item.tax)))
                             }
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+                              const v = e.target.value;
+                              const id = item.medicine.id;
+                              // Only allow digits and check if value is <= 100
+                              if (v === '') {
+                                setTaxInputDraft((prev) => ({
+                                  ...prev,
+                                  [id]: v,
+                                }));
+                                updateCartItemField(id, 'tax', 0);
+                              } else if (/^\d+$/.test(v)) {
+                                const numVal = parseInt(v, 10);
+                                if (numVal <= 100) {
+                                  setTaxInputDraft((prev) => ({
+                                    ...prev,
+                                    [id]: v,
+                                  }));
+                                  updateCartItemField(id, 'tax', numVal);
+                                }
+                              }
+                            }}
+                            onBlur={() => {
+                              const id = item.medicine.id;
+                              const draft = taxInputDraft[id];
+                              setTaxInputDraft((prev) => {
+                                const next = { ...prev };
+                                delete next[id];
+                                return next;
+                              });
+                              if (draft === undefined) return;
+                              const trimmed = draft.trim();
+                              let val = parseInt(trimmed, 10);
+                              if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                val = 0;
+                              }
+                              if (val > 100) val = 100;
+                              updateCartItemField(id, 'tax', val);
+                            }}
                             className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-2 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs">
+                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
                           {symbol}{(() => {
                             const returned = returnedQuantities.get(item.medicine.id) || 0;
                             const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
-                            const itemTax = (itemSubtotal * item.tax) / 100; // Tax on original subtotal
-                            return (itemSubtotal - itemDiscount + itemTax).toFixed(2);
+                            const discountedAmount = itemSubtotal - itemDiscount;
+                            const itemTax = (discountedAmount * item.tax) / 100;
+                            return (discountedAmount + itemTax).toFixed(1);
                           })()}
                         </div>
                         <div className="col-span-1 text-center">
@@ -2245,7 +2747,8 @@ const SellingPanel: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                    ))}
+                    );
+                    })}
                   </div>
                 )}
               </div>
@@ -2254,41 +2757,74 @@ const SellingPanel: React.FC = () => {
           </div>
 
           {/* Right Side: Summary (Top Half) and History (Bottom Half) */}
-          <div className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full">
+          <div
+            data-wedge-typing="true"
+            className="lg:col-span-4 flex flex-col gap-2 overflow-hidden min-h-0 h-full"
+          >
             {/* Sale Summary - Top Half */}
             <div className="flex-1 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex flex-col overflow-hidden min-h-0">
-              <div className="px-4 py-2.5 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0">
-                <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+              <div
+                className={`px-4 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-700/30 border-b border-gray-200 dark:border-gray-600 flex-shrink-0 ${
+                  expandedSaleSummary ? 'py-3' : 'py-2.5'
+                }`}
+              >
+                <h3
+                  className={`font-bold text-gray-900 dark:text-white uppercase tracking-wide ${
+                    expandedSaleSummary ? 'text-base' : 'text-sm'
+                  }`}
+                >
                   Sale Summary
                 </h3>
               </div>
-              <div className="flex-1 flex flex-col p-3 gap-3 min-h-0 overflow-y-auto">
+              <div
+                className={`flex-1 flex flex-col min-h-0 ${
+                  expandedSaleSummary ? 'p-2.5 gap-2' : 'p-2.5 gap-2'
+                }`}
+              >
                 {/* Net Payable - Most Prominent */}
-                <div className="bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 rounded-lg p-2 border border-emerald-600 dark:border-emerald-500 shadow-lg">
-                  <div className="flex items-center justify-between mb-0">
-                    <div className="text-xs font-semibold text-white/90 uppercase tracking-wide">
+                <div
+                  className={`bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-500 dark:from-emerald-600 dark:via-emerald-700 dark:to-emerald-600 border border-emerald-600 dark:border-emerald-500 shadow-lg flex-shrink-0 rounded-xl ${
+                    expandedSaleSummary ? 'p-2.5' : 'p-2'
+                  }`}
+                >
+                  <div className={`flex items-center justify-between ${expandedSaleSummary ? 'mb-1' : 'mb-0'}`}>
+                    <div
+                      className={`font-bold text-white/95 uppercase tracking-wide ${
+                        expandedSaleSummary ? 'text-xs' : 'text-xs font-semibold text-white/90'
+                      }`}
+                    >
                       Net Payable
                     </div>
-                    <div className="px-2 py-0.5 bg-white/20 dark:bg-white/10 rounded-full">
-                      <span className="text-[10px] font-bold text-white">
+                    <div
+                      className={`bg-white/20 dark:bg-white/10 rounded-full ${
+                        expandedSaleSummary ? 'px-2.5 py-1' : 'px-2 py-0.5'
+                      }`}
+                    >
+                      <span
+                        className={`font-bold text-white ${expandedSaleSummary ? 'text-xs sm:text-sm' : 'text-[10px]'}`}
+                      >
                         {cart.length} {cart.length === 1 ? 'Item' : 'Items'}
                       </span>
                     </div>
                   </div>
-                  <div className="text-2xl font-bold text-white tracking-tight">
-                    {formatCurrency(Math.max(0, calculateTotal() - currentSaleReturnTotal))}
+                  <div
+                    className={`font-bold text-white tracking-tight ${
+                      expandedSaleSummary ? 'text-2xl sm:text-3xl leading-tight' : 'text-2xl'
+                    }`}
+                  >
+                    {formatCurrency(netPayable)}
                   </div>
                   {currentSaleReturnTotal > 0 && (
                     <div className="mt-2 pt-2 border-t border-white/20">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/80">Original Total:</span>
-                        <span className="text-white/90 font-semibold">{formatCurrency(calculateTotal())}</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(grandTotal)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1">
                         <span className="text-white/80">Returned:</span>
                         <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
                       </div>
-                      {calculateTotal() < currentSaleReturnTotal && (
+                      {grandTotal < currentSaleReturnTotal && (
                         <div className="mt-2 pt-2 border-t border-red-300/30">
                           <p className="text-xs text-red-200">
                             ⚠️ Data inconsistency detected
@@ -2299,91 +2835,275 @@ const SellingPanel: React.FC = () => {
                   )}
                 </div>
 
-                {/* Summary Breakdown - Show only when creating new sale */}
+                {/* Summary breakdown + given/return — expanded layout fills space on active new sale */}
                 {currentBillIndex === -1 && cart.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {/* Block 1: Discounts & Taxes */}
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2">
-                      <div className="flex justify-between items-center">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Discount
+                  <div
+                    className={
+                      expandedSaleSummary
+                        ? 'flex flex-col gap-2.5'
+                        : ''
+                    }
+                  >
+                    <div
+                      className={`grid ${expandedSaleSummary ? 'gap-2' : 'gap-2'}`}
+                      style={{ gridTemplateColumns: '1fr 1fr', gridAutoRows: '1fr' }}
+                    >
+                      {/* Block 1: Discounts & Taxes */}
+                      <div
+                        className={`h-full bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
+                          expandedSaleSummary
+                            ? 'p-2 rounded-lg flex flex-col gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg flex flex-col space-y-2'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Disc
+                          </div>
+                          <div
+                            className={`font-bold text-red-600 dark:text-red-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
+                            }`}
+                          >
+                            -{formatCurrency(discountValue)}
+                          </div>
                         </div>
-                        <div className="text-sm font-bold text-red-600 dark:text-red-400">
-                          -{formatCurrency(discountValue)}
+                        
+                        <div className="flex items-center justify-between gap-4">
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Tax
+                          </div>
+                          <div
+                            className={`font-bold text-blue-600 dark:text-blue-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
+                            }`}
+                          >
+                            +{formatCurrency(taxValue)}
+                          </div>
                         </div>
+                        
+                        {/* ADDITIONAL DISCOUNT INPUT - Only show for Family/Relatives or Charity */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && (
+                          <div
+                            className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
+                              expandedSaleSummary
+                                ? 'pt-1.5 border-t-2'
+                                : 'pt-1.5 border-t'
+                            }`}
+                          >
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              }`}
+                            >
+                              Extra Disc%
+                            </div>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              autoComplete="off"
+                              aria-label="Extra Discount"
+                              value={
+                                isEditingAdditionalDiscount
+                                  ? additionalDiscountDraft
+                                  : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
+                              }
+                              onFocus={(e) => {
+                                setIsEditingAdditionalDiscount(true);
+                                if (additionalDiscount === 0) {
+                                  setAdditionalDiscountDraft('');
+                                } else {
+                                  setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
+                                }
+                                e.target.select();
+                              }}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                // Allow empty string or digits only, and check if value is <= 100
+                                if (v === '') {
+                                  setAdditionalDiscountDraft('');
+                                  setAdditionalDiscount(0);
+                                } else if (/^\d+$/.test(v)) {
+                                  const numVal = parseInt(v, 10);
+                                  if (numVal <= 100) {
+                                    setAdditionalDiscountDraft(v);
+                                    setAdditionalDiscount(numVal);
+                                  }
+                                }
+                              }}
+                              onBlur={() => {
+                                setIsEditingAdditionalDiscount(false);
+                                const draft = additionalDiscountDraft;
+                                setAdditionalDiscountDraft('');
+                                if (draft === undefined || draft === '') {
+                                  setAdditionalDiscount(0);
+                                  return;
+                                }
+                                const trimmed = draft.trim();
+                                let val = parseInt(trimmed, 10);
+                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                  val = 0;
+                                }
+                                if (val > 100) val = 100;
+                                setAdditionalDiscount(val);
+                              }}
+                              placeholder="0"
+                              className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
+                            />
+                          </div>
+                        )}
                       </div>
-                      <div className="flex justify-between items-center pt-1.5 border-t border-gray-100 dark:border-gray-600/50">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Tax
+
+                      {/* Block 2: Values & Final Total */}
+                      <div
+                        className={`h-full bg-white dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 ${
+                          expandedSaleSummary
+                            ? 'p-2 rounded-lg flex flex-col gap-2 shadow-sm dark:shadow-none'
+                            : 'p-2 rounded-lg flex flex-col space-y-2'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div
+                            className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Subtotal
+                          </div>
+                          <div
+                            className={`font-bold text-gray-900 dark:text-white tabular-nums ${
+                              expandedSaleSummary ? 'text-sm' : 'text-sm'
+                            }`}
+                          >
+                            {formatCurrency(subtotalValue)}
+                          </div>
                         </div>
-                        <div className="text-sm font-bold text-blue-600 dark:text-blue-400">
-                          +{formatCurrency(taxValue)}
+                        
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount > 0 && (
+                          <div className="flex items-center justify-between gap-4">
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              }`}
+                            >
+                              Extra Disc
+                            </div>
+                            <div
+                              className={`font-bold text-amber-600 dark:text-amber-400 tabular-nums ${
+                                expandedSaleSummary ? 'text-sm' : 'text-sm'
+                              }`}
+                            >
+                              -{formatCurrency(((subtotalValue - discountValue + taxValue) * additionalDiscount) / 100)}
+                            </div>
+                          </div>
+                        )}
+                        
+                        <div className={`flex items-center justify-between gap-4 border-t border-gray-200 dark:border-gray-600 ${expandedSaleSummary ? 'pt-1 mt-0' : 'pt-1.5 mt-1.5'}`}>
+                          <div
+                            className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
+                              expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                            }`}
+                          >
+                            Total
+                          </div>
+                          <div
+                            className={`font-black text-emerald-600 dark:text-emerald-400 tabular-nums ${
+                              expandedSaleSummary ? 'text-base' : 'text-sm'
+                            }`}
+                          >
+                            {formatCurrency(grandTotal)}
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    {/* Block 2: Values & Final Total */}
-                    <div className="bg-white dark:bg-gray-700/50 rounded-lg p-2.5 border border-gray-200 dark:border-gray-600 space-y-2 text-right">
-                      <div className="flex justify-between items-center">
-                        <div className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                          Subtotal
+                    {/* Given & Return Amounts - Calculator */}
+                    <div
+                      className={`grid grid-cols-2 ${
+                        expandedSaleSummary
+                          ? 'gap-2'
+                          : 'gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700'
+                      }`}
+                    >
+                      <div
+                        className={`bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-800/50 flex items-center gap-2 ${
+                          expandedSaleSummary ? 'p-2 rounded-lg' : 'p-2 rounded-lg'
+                        }`}
+                      >
+                        <div
+                          className={`font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide leading-tight ${
+                            expandedSaleSummary
+                              ? 'text-xs'
+                              : 'text-[10px] font-semibold'
+                          }`}
+                        >
+                          <div>Given</div>
+                          <div>Amount</div>
                         </div>
-                        <div className="text-sm font-bold text-gray-900 dark:text-white">
-                          {formatCurrency(subtotalValue)}
+                        <input
+                          type="number"
+                          value={receivedAmount}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setReceivedAmount(e.target.value)}
+                          placeholder="0.00"
+                          className={`bg-white dark:bg-gray-800 border-2 border-emerald-200 dark:border-emerald-700 rounded-lg font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/40 outline-none transition-all tabular-nums ${
+                            expandedSaleSummary
+                              ? 'px-2.5 py-1.5 text-base w-32'
+                              : 'px-2 py-1 text-sm w-28'
+                          }`}
+                        />
+                      </div>
+                      <div
+                        className={`border transition-colors flex items-center gap-2 ${
+                          expandedSaleSummary ? 'p-2 rounded-lg' : 'p-2 rounded-lg'
+                        } ${
+                          returnAmount >= 0
+                            ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800/50'
+                            : 'bg-red-50/50 dark:bg-red-900/10 border-red-200 dark:border-red-800/50'
+                        }`}
+                      >
+                        <div
+                          className={`font-bold uppercase tracking-wide leading-tight ${
+                            expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                          } ${
+                            returnAmount >= 0
+                              ? 'text-blue-700 dark:text-blue-400'
+                              : 'text-red-700 dark:text-red-400'
+                          }`}
+                        >
+                          <div>Return</div>
+                          <div>Amount</div>
                         </div>
-                      </div>
-                      <div className="flex justify-between items-center pt-1.5 border-t border-emerald-100 dark:border-emerald-900/30">
-                        <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
-                          Total
+                        <div
+                          className={`text-right font-black tabular-nums ${
+                            expandedSaleSummary ? 'text-lg w-32' : 'text-sm w-28'
+                          } ${
+                            returnAmount >= 0
+                              ? 'text-blue-600 dark:text-blue-400'
+                              : 'text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {formatCurrency(returnAmount)}
                         </div>
-                        <div className="text-sm font-black text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(grandTotal)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Given & Return Amounts - Calculator */}
-                {currentBillIndex === -1 && cart.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">
-                    <div className="bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg p-2.5 border border-emerald-100 dark:border-emerald-800/50">
-                      <div className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide mb-1">
-                        Given Amount
-                      </div>
-                      <input
-                        type="number"
-                        value={receivedAmount}
-                        onChange={(e) => setReceivedAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-white dark:bg-gray-800 border border-emerald-200 dark:border-emerald-700 rounded px-2 py-1 text-sm font-bold text-gray-900 dark:text-white focus:ring-2 focus:ring-emerald-500/30 outline-none transition-all"
-                      />
-                    </div>
-                    <div className={`rounded-lg p-2.5 border transition-colors ${
-                      receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                        ? 'bg-blue-50/50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-800/50'
-                        : 'bg-red-50/50 dark:bg-red-900/10 border-red-100 dark:border-red-800/50'
-                    }`}>
-                      <div className={`text-[10px] font-semibold uppercase tracking-wide mb-1 ${
-                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                          ? 'text-blue-700 dark:text-blue-400'
-                          : 'text-red-700 dark:text-red-400'
-                      }`}>
-                        Return Amount
-                      </div>
-                      <div className={`text-sm font-black ${
-                        receivedAmount && (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) >= 0
-                          ? 'text-blue-600 dark:text-blue-400'
-                          : 'text-red-600 dark:text-red-400'
-                      }`}>
-                        {formatCurrency(receivedAmount ? (Number(receivedAmount) - (calculateTotal() - currentSaleReturnTotal)) : 0)}
                       </div>
                     </div>
                   </div>
                 )}
 
                 {/* Action Buttons Section */}
-                <div className="mt-auto pt-2 border-t border-gray-200 dark:border-gray-700 space-y-2">
+                <div
+                  className={`mt-auto border-t border-gray-200 dark:border-gray-700 space-y-2 flex-shrink-0 ${
+                    expandedSaleSummary ? 'pt-2.5' : 'pt-2'
+                  }`}
+                >
                   {currentBillIndex >= 0 ? (
                     // When viewing a previous sale
                     <>
@@ -2457,7 +3177,7 @@ const SellingPanel: React.FC = () => {
                       <button
                         type="button"
                         onClick={handleOpenReturnModal}
-                        className="w-full py-3 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
+                        className="w-full py-2.5 bg-gradient-to-r from-orange-600 to-orange-500 dark:from-orange-700 dark:to-orange-600 text-white rounded-lg text-sm font-semibold hover:from-orange-700 hover:to-orange-600 dark:hover:from-orange-800 dark:hover:to-orange-700 transition-all shadow-md hover:shadow-lg transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
                       >
                         <FiRotateCcw className="w-4 h-4" />
                         <span>Return Items</span>
@@ -2477,25 +3197,44 @@ const SellingPanel: React.FC = () => {
                       </button>
                     </>
                   ) : (
-                    // When creating new sale - Show Complete Sale button
-                    <button
-                      type="button"
-                      onClick={handleCheckout}
-                      disabled={processing || cart.length === 0}
-                      className="w-full py-4 bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-lg text-base font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                    >
-                      {processing ? (
-                        <>
-                          <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          <span>Processing Sale...</span>
-                        </>
-                      ) : (
-                        <>
-                          <FiCheck className="w-5 h-5" />
-                          <span>Complete Sale</span>
-                        </>
-                      )}
-                    </button>
+                    // When creating new sale - Show Checkout Actions
+                    <div className={`flex ${expandedSaleSummary ? 'gap-3' : 'gap-2'}`}>
+                      <button
+                        type="button"
+                        onClick={clearCart}
+                        disabled={cart.length === 0}
+                        className={`w-[30%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
+                          expandedSaleSummary ? 'py-2.5 text-sm rounded-lg' : 'py-2.5 text-sm rounded-lg'
+                        }`}
+                      >
+                        <FiRefreshCw className={expandedSaleSummary ? 'w-4 h-4' : 'w-4 h-4'} />
+                        <span>CLEAR</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCheckout}
+                        disabled={processing || cart.length === 0}
+                        className={`w-[70%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
+                          expandedSaleSummary ? 'py-2.5 text-sm rounded-lg' : 'py-2.5 text-sm rounded-lg'
+                        }`}
+                      >
+                        {processing ? (
+                          <>
+                            <div
+                              className={`border-2 border-white border-t-transparent rounded-full animate-spin ${
+                                expandedSaleSummary ? 'w-4 h-4' : 'w-5 h-5'
+                              }`}
+                            />
+                            <span>PROCESSING...</span>
+                          </>
+                        ) : (
+                          <>
+                            <FiCheck className={expandedSaleSummary ? 'w-4 h-4' : 'w-5 h-5'} />
+                            <span>COMPLETE SALE</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -2632,6 +3371,14 @@ const SellingPanel: React.FC = () => {
                                   {sale.items.length === 1 ? 'item' : 'items'}
                                 </span>
                               </div>
+                              {/* Additional Discount Badge */}
+                              {(sale.additionalDiscount ?? 0) > 0 && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded">
+                                  <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400">
+                                    Special Disc. -{sale.additionalDiscount}%
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span
@@ -2701,7 +3448,7 @@ const SellingPanel: React.FC = () => {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div data-wedge-typing="true" className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Top inputs section */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
@@ -2818,7 +3565,7 @@ const SellingPanel: React.FC = () => {
                                     {item.availableToReturn} PILLS AVAILABLE
                                   </div>
                                   <div className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
-                                    {symbol}{item.unitPrice.toFixed(2)} / unit
+                                    {symbol}{item.unitPrice.toFixed(1)} / unit
                                   </div>
 
                                   {/* Compact Financial Stats */}

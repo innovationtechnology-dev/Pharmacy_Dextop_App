@@ -38,6 +38,9 @@ export default class App extends React.Component {
   async componentDidMount() {
     window.addEventListener('resize', updateMainColWidth);
   }
+  componentWillUnmount() {
+    window.removeEventListener('resize', updateMainColWidth);
+  }
   render() {
     return (
       <ThemeProvider>

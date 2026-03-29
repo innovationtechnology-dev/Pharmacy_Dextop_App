@@ -23,7 +23,6 @@ import {
   FiPackage,
   FiRefreshCw,
 } from 'react-icons/fi';
-import WelcomeNotification from '../../components/WelcomeNotification';
 import { invokeIpc } from '../../utils/ipcHelpers';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
@@ -46,6 +45,8 @@ type SaleRecord = {
   customerName?: string;
   customerPhone?: string;
   saleType?: string;
+  additionalDiscount?: number;
+  additionalDiscountAmount?: number;
   createdAt?: string;
   items: SaleItemSummary[];
 };
@@ -66,38 +67,57 @@ type MedicineRecord = {
   pillQuantity: number;
   totalAvailablePills?: number;
   sellablePills?: number;
+  averageSellablePricePerPill?: number | null;
   status: string;
 };
 
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatNumber = (value: number) => numberFormatter.format(value);
 
-const getDateKey = (date: Date) => date.toISOString().slice(0, 10);
+const getDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
   
+  // Calculate COGS using actual purchase costs from medicine inventory
   let costOfGoodsSold = 0;
+  const medicineMap = new Map(medicines.map(m => [m.id, m]));
+  
   sales.forEach((sale) => {
     sale.items?.forEach((item) => {
-      const estimatedCost = (item.unitPrice || 0) * 0.6;
-      costOfGoodsSold += estimatedCost * (item.pills || 0);
+      const medicine = medicineMap.get(item.medicineId);
+      
+      // Use average sellable price per pill as cost if available
+      // This represents the weighted average cost of inventory that can be sold
+      let actualCost = 0;
+      
+      if (medicine?.averageSellablePricePerPill && medicine.averageSellablePricePerPill > 0) {
+        // Use the average cost from purchase_items (this is the actual purchase cost)
+        actualCost = medicine.averageSellablePricePerPill;
+      } else {
+        // Fallback: Use 70% of selling price as conservative estimate
+        // This should rarely happen if purchases are properly recorded
+        actualCost = (item.unitPrice || 0) * 0.7;
+      }
+      
+      costOfGoodsSold += actualCost * (item.pills || 0);
     });
   });
-
-  if (costOfGoodsSold === 0 && revenue > 0) {
-    costOfGoodsSold = revenue * 0.7;
-  }
 
   const netRevenue = revenue - saleReturnsTotal;
   const profit = netRevenue - costOfGoodsSold;
 
   const familyTotal = sales
     .filter((sale) => sale.saleType === 'Family/Relatives')
-    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
   const charityTotal = sales
     .filter((sale) => sale.saleType === 'Charity')
-    .reduce((sum, sale) => sum + (sale.total || 0), 0);
+    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
 
   const uniqueCustomers = new Set(
     sales
@@ -199,6 +219,13 @@ const buildRevenueSpark = (sales: SaleRecord[]) => {
   return months;
 };
 
+const getDefaultKpiDates = () => {
+  const now = new Date();
+  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+  const toIso = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: toIso(firstDay), to: toIso(now) };
+};
+
 const Dashboard = () => {
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
@@ -209,8 +236,11 @@ const Dashboard = () => {
   const [range, setRange] = useState<'this_month' | 'last_month' | 'this_year'>('this_month');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
-
+  const defaultDates = getDefaultKpiDates();
+  const [kpiFromDate, setKpiFromDate] = useState<string>(defaultDates.from);
+  const [kpiToDate, setKpiToDate] = useState<string>(defaultDates.to);
+  const [recentOrdersPage, setRecentOrdersPage] = useState(1);
+  const RECENT_ORDERS_PER_PAGE = 20;
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
     const symbol = getSymbol(currency);
@@ -261,22 +291,40 @@ const Dashboard = () => {
     setLoading(true);
     setError(null);
     try {
-      const [salesData, purchaseData, medicineData, saleReturnsData] = await Promise.all([
+      const [salesData, purchaseData, medicineData] = await Promise.all([
         invokeIpc<SaleRecord[]>('sale-get-all', 'sale-get-all-reply'),
         invokeIpc<PurchaseRecord[]>('purchase-get-all', 'purchase-get-all-reply'),
         invokeIpc<MedicineRecord[]>('medicine-get-all', 'medicine-get-all-reply'),
-        invokeIpc<number>('sale-return-get-total', 'sale-return-get-total-reply'),
       ]);
       setSales(salesData || []);
       setPurchases(purchaseData || []);
       setMedicines(medicineData || []);
-      setSaleReturnsTotal(saleReturnsData || 0);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data.');
     } finally {
       setLoading(false);
     }
   }, []);
+
+  // Load sale returns filtered by date range
+  const loadSaleReturns = useCallback(async () => {
+    try {
+      const returns = await invokeIpc<any[]>(
+        'sale-return-get-by-date-range',
+        'sale-return-get-by-date-range-reply',
+        [kpiFromDate, kpiToDate]
+      );
+      const total = (returns || []).reduce((sum: number, ret: any) => sum + (ret.total || 0), 0);
+      setSaleReturnsTotal(total);
+    } catch (err) {
+      console.error('Failed to load sale returns:', err);
+      setSaleReturnsTotal(0);
+    }
+  }, [kpiFromDate, kpiToDate]);
+
+  useEffect(() => {
+    loadSaleReturns();
+  }, [loadSaleReturns]);
 
   useEffect(() => {
     loadData();
@@ -299,88 +347,138 @@ const Dashboard = () => {
     return () => setHeader(null);
   }, [setHeader, loadData, loading]);
 
+  const filteredSales = useMemo(() => {
+    if (!kpiFromDate && !kpiToDate) return sales;
+    return sales.filter((s) => {
+      if (!s.createdAt) return false;
+      const d = s.createdAt.slice(0, 10);
+      return (!kpiFromDate || d >= kpiFromDate) && (!kpiToDate || d <= kpiToDate);
+    });
+  }, [sales, kpiFromDate, kpiToDate]);
+
+  const filteredPurchases = useMemo(() => {
+    if (!kpiFromDate && !kpiToDate) return purchases;
+    return purchases.filter((p) => {
+      if (!p.createdAt) return false;
+      const d = p.createdAt.slice(0, 10);
+      return (!kpiFromDate || d >= kpiFromDate) && (!kpiToDate || d <= kpiToDate);
+    });
+  }, [purchases, kpiFromDate, kpiToDate]);
+
+  const totals = useMemo(() => {
+    // For accurate profit calculation matching Financial Summary,
+    // we should use the backend calculation instead of estimating locally
+    // However, for now we'll use the local calculation with filtered data
+    return buildTotals(filteredSales, filteredPurchases, medicines, saleReturnsTotal);
+  }, [filteredSales, filteredPurchases, medicines, saleReturnsTotal]);
+
+  // Fetch accurate profit from backend (same calculation as Financial Summary)
+  const [accurateProfit, setAccurateProfit] = useState<number | null>(null);
+  
   useEffect(() => {
-    const shouldShow = sessionStorage.getItem('shouldShowWelcome');
-    if (shouldShow === 'true') {
-      const timer = setTimeout(() => setShowWelcomeNotification(true), 500);
-      return () => clearTimeout(timer);
+    const fetchAccurateProfit = async () => {
+      try {
+        console.log('Fetching accurate profit for date range:', kpiFromDate, 'to', kpiToDate);
+        const response = await invokeIpc<any>(
+          'financial-get-date-range',
+          'financial-get-date-range-reply',
+          [kpiFromDate, kpiToDate]
+        );
+        console.log('Financial data received:', response);
+        
+        // invokeIpc already extracts response.data, so response IS the data object
+        if (response?.profit !== undefined) {
+          console.log('Setting accurate profit to:', response.profit);
+          setAccurateProfit(response.profit);
+        } else {
+          console.log('No profit data in response');
+        }
+      } catch (err) {
+        console.error('Failed to fetch accurate profit:', err);
+      }
+    };
+    fetchAccurateProfit();
+  }, [kpiFromDate, kpiToDate]);
+
+  // Use accurate profit from backend if available, otherwise use calculated
+  const displayTotals = useMemo(() => {
+    console.log('displayTotals - accurateProfit:', accurateProfit, 'calculated profit:', totals.profit);
+    if (accurateProfit !== null) {
+      return { ...totals, profit: accurateProfit };
     }
-  }, []);
-
-  const handleCloseWelcomeNotification = () => {
-    setShowWelcomeNotification(false);
-    sessionStorage.removeItem('shouldShowWelcome');
-  };
-
-  const totals = useMemo(
-    () => buildTotals(sales, purchases, medicines, saleReturnsTotal),
-    [sales, purchases, medicines, saleReturnsTotal]
-  );
+    return totals;
+  }, [totals, accurateProfit]);
 
   const metrics = useMemo(
     () => [
       {
         id: 'purchases',
         title: 'Purchases',
-        value: formatCurrency(totals.purchasesTotal),
+        value: formatCurrency(displayTotals.purchasesTotal),
         icon: <FiPackage />,
       },
       {
         id: 'revenue',
         title: 'Gross Sales',
-        value: formatCurrency(totals.revenue),
+        value: formatCurrency(displayTotals.revenue),
         icon: <FiDollarSign />,
       },
       {
         id: 'netRevenue',
         title: 'Net Sales',
-        value: formatCurrency(totals.netRevenue),
+        value: formatCurrency(displayTotals.netRevenue),
         icon: <FiShoppingBag />,
       },
       {
         id: 'profit',
         title: 'Net Profit',
-        value: formatCurrency(totals.profit),
+        value: formatCurrency(Math.max(0, displayTotals.profit)),
         icon: <FiTrendingUp />,
       },
       {
         id: 'customers',
         title: 'Customers',
-        value: formatNumber(totals.uniqueCustomers),
+        value: formatNumber(displayTotals.uniqueCustomers),
         icon: <FiUsers />,
       },
       {
         id: 'inventory',
         title: 'Medicines',
-        value: formatNumber(totals.totalMedicines),
+        value: formatNumber(displayTotals.totalMedicines),
         icon: <FiPackage />,
       },
       {
         id: 'family',
         title: 'Relative',
-        value: formatCurrency(totals.familyTotal),
+        value: formatCurrency(displayTotals.familyTotal),
         icon: <FiUsers />,
       },
       {
         id: 'charity',
         title: 'Charity',
-        value: formatCurrency(totals.charityTotal),
+        value: formatCurrency(displayTotals.charityTotal),
         icon: <FiPackage />,
       },
+      {
+        id: 'saleReturns',
+        title: 'Return Amount',
+        value: formatCurrency(displayTotals.saleReturnsTotal),
+        icon: <FiRefreshCw />,
+      },
     ],
-    [totals]
+    [displayTotals]
   );
 
   const chartData = useMemo(() => buildSalesSeries(sales, range), [sales, range]);
   const sparkData = useMemo(() => buildRevenueSpark(sales), [sales]);
-  const recentOrders = useMemo(() => sales.slice(0, 5), [sales]);
+  const totalRecentPages = useMemo(() => Math.max(1, Math.ceil(sales.length / RECENT_ORDERS_PER_PAGE)), [sales]);
+  const recentOrders = useMemo(() => {
+    const start = (recentOrdersPage - 1) * RECENT_ORDERS_PER_PAGE;
+    return sales.slice(start, start + RECENT_ORDERS_PER_PAGE);
+  }, [sales, recentOrdersPage]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
-      {showWelcomeNotification && (
-        <WelcomeNotification onClose={handleCloseWelcomeNotification} />
-      )}
-
       {error && (
         <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300 mb-2">
           {error}
@@ -407,6 +505,7 @@ const Dashboard = () => {
                   metric.id === 'customers' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
                   metric.id === 'family' ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-600/50' :
                   metric.id === 'charity' ? 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-600/50' :
+                  metric.id === 'saleReturns' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-600/50' :
                   'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-600/50'
                 }`}>
                   <div className={
@@ -417,6 +516,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-500' :
                     metric.id === 'family' ? 'text-purple-500' :
                     metric.id === 'charity' ? 'text-pink-500' :
+                    metric.id === 'saleReturns' ? 'text-red-500' :
                     'text-amber-500'
                   }>
                     {React.cloneElement(metric.icon as React.ReactElement, { className: 'w-3.5 h-3.5' })}
@@ -432,6 +532,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-600 dark:text-teal-400' :
                     metric.id === 'family' ? 'text-purple-600 dark:text-purple-400' :
                     metric.id === 'charity' ? 'text-pink-600 dark:text-pink-400' :
+                    metric.id === 'saleReturns' ? 'text-red-600 dark:text-red-400' :
                     'text-amber-600 dark:text-amber-400'
                   }`}>
                     {metric.value}
@@ -440,13 +541,37 @@ const Dashboard = () => {
               </div>
             ))}
             
-            <button
-              onClick={loadData}
-              className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-            >
-              <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">KPI Period:</span>
+              <input
+                type="date"
+                value={kpiFromDate}
+                max={kpiToDate || undefined}
+                onChange={(e) => { setKpiFromDate(e.target.value); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:ring-1 focus:ring-emerald-500 outline-none"
+              />
+              <span className="text-[10px] text-gray-400">to</span>
+              <input
+                type="date"
+                value={kpiToDate}
+                min={kpiFromDate || undefined}
+                onChange={(e) => { setKpiToDate(e.target.value); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:ring-1 focus:ring-emerald-500 outline-none"
+              />
+              <button
+                onClick={() => { const d = getDefaultKpiDates(); setKpiFromDate(d.from); setKpiToDate(d.to); setRecentOrdersPage(1); }}
+                className="px-2 py-1 text-[11px] bg-gray-100 dark:bg-gray-600 hover:bg-gray-200 dark:hover:bg-gray-500 text-gray-600 dark:text-gray-200 rounded-md border border-gray-200 dark:border-gray-500 font-semibold transition-colors"
+              >
+                This Month
+              </button>
+              <button
+                onClick={loadData}
+                className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+              >
+                <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
           </div>
 
           <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 flex-1 overflow-hidden min-h-0">
@@ -608,12 +733,12 @@ const Dashboard = () => {
                   <div className="flex items-center justify-between p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/30">
                     <div>
                       <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Net Profit</div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(totals.profit)}</div>
+                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(Math.max(0, displayTotals.profit))}</div>
                     </div>
                     <div className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-                      totals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
+                      displayTotals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'
                     }`}>
-                      {totals.profit >= 0 ? 'PROFIT' : 'LOSS'}
+                      {displayTotals.profit >= 0 ? 'PROFIT' : 'LOSS'}
                     </div>
                   </div>
 
@@ -634,31 +759,51 @@ const Dashboard = () => {
 
           <section className="mt-4 flex-shrink-0">
             <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex flex-col overflow-hidden">
-              <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+              <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide flex items-center gap-2">
                   <FiShoppingBag className="text-blue-500" />
                   Recent Sales
+                  <span className="text-[10px] font-medium text-gray-400 normal-case">({sales.length} total)</span>
                 </h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setRecentOrdersPage((p) => Math.max(1, p - 1))}
+                    disabled={recentOrdersPage === 1}
+                    className="px-2 py-1 text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-semibold disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    ‹ Prev
+                  </button>
+                  <span className="text-[11px] text-gray-500 dark:text-gray-400 font-medium">
+                    {recentOrdersPage} / {totalRecentPages}
+                  </span>
+                  <button
+                    onClick={() => setRecentOrdersPage((p) => Math.min(totalRecentPages, p + 1))}
+                    disabled={recentOrdersPage === totalRecentPages}
+                    className="px-2 py-1 text-[11px] bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded font-semibold disabled:opacity-40 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
+                  >
+                    Next ›
+                  </button>
+                </div>
               </div>
-              <div className="p-4 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100 dark:border-gray-700">
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">ID</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Customer</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Date</th>
-                      <th className="py-2 px-2 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right">Amount</th>
+              <div className="overflow-x-auto overflow-y-auto max-h-[150px] custom-scrollbar rounded-b-lg">
+                <table className="w-full text-left text-xs relative">
+                  <thead className="sticky top-0 bg-gray-50 dark:bg-gray-800/90 backdrop-blur-md z-10 shadow-sm">
+                    <tr>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">ID</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">Customer</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider border-b border-gray-100 dark:border-gray-700">Date</th>
+                      <th className="py-2.5 px-4 font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-right border-b border-gray-100 dark:border-gray-700">Amount</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                     {recentOrders.map((order) => (
-                      <tr key={order.id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                        <td className="py-2 px-2 font-bold text-gray-900 dark:text-white">#{order.id}</td>
-                        <td className="py-2 px-2 text-gray-600 dark:text-gray-300">{order.customerName || 'Walk-in'}</td>
-                        <td className="py-2 px-2 text-gray-500 dark:text-gray-400">
+                      <tr key={order.id} className="hover:bg-blue-50/50 dark:hover:bg-blue-900/10 transition-colors group">
+                        <td className="py-2.5 px-4 font-bold text-gray-900 dark:text-white">#{order.id}</td>
+                        <td className="py-2.5 px-4 text-gray-600 dark:text-gray-300 font-medium">{order.customerName || 'Walk-in'}</td>
+                        <td className="py-2.5 px-4 text-gray-500 dark:text-gray-400">
                           {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : '-'}
                         </td>
-                        <td className="py-2 px-2 font-bold text-gray-900 dark:text-white text-right">{formatCurrency(order.total)}</td>
+                        <td className="py-2.5 px-4 font-bold text-gray-900 dark:text-white text-right">{formatCurrency(order.total)}</td>
                       </tr>
                     ))}
                   </tbody>

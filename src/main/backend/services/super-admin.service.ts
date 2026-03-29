@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import fs from 'fs';
+import path from 'path';
 import { getDatabaseService } from './database.service';
 import { databaseConfig } from '../config/database.config';
 
@@ -14,6 +15,7 @@ export interface User {
   name: string;
   email: string;
   password_hash: string;
+  role?: string;
   created_at: string;
 }
 
@@ -156,7 +158,7 @@ export class SuperAdminService {
       if (email !== this.SUPER_ADMIN_EMAIL) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -167,7 +169,7 @@ export class SuperAdminService {
       if (!user) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Email address not found. Please check your email and try again.',
         };
       }
 
@@ -175,7 +177,7 @@ export class SuperAdminService {
       if (user.password_hash !== passwordHash) {
         return {
           success: false,
-          error: 'Invalid credentials',
+          error: 'Incorrect password. Please try again.',
         };
       }
 
@@ -200,12 +202,20 @@ export class SuperAdminService {
   }
 
   /**
+   * Force WAL checkpoint to ensure all changes are written to main database file
+   */
+  public async checkpointDatabase(): Promise<void> {
+    await this.dbService.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+  }
+
+
+  /**
    * Get all users
    */
   public async getAllUsers(): Promise<User[]> {
     try {
       const users = await this.dbService.query(
-        'SELECT id, name, email, password_hash, created_at FROM users ORDER BY created_at DESC'
+        'SELECT id, name, email, password_hash, role, created_at FROM users ORDER BY created_at DESC'
       );
       return users as User[];
     } catch (error) {
@@ -219,9 +229,34 @@ export class SuperAdminService {
   public async createUser(
     name: string,
     email: string,
-    password: string
+    password: string,
+    role: string = 'cashier'
   ): Promise<{ success: boolean; error?: string; user?: User }> {
     try {
+      // Prevent creating superadmin role
+      if (role === 'superadmin' || role === 'super_admin') {
+        return {
+          success: false,
+          error: 'Cannot create user with superadmin role. Only "admin" or "cashier" roles are allowed',
+        };
+      }
+
+      // Validate role
+      if (role !== 'admin' && role !== 'cashier') {
+        return {
+          success: false,
+          error: 'Invalid role. Must be either "admin" or "cashier"',
+        };
+      }
+
+      // Prevent creating user with super admin email
+      if (email.toLowerCase() === this.SUPER_ADMIN_EMAIL.toLowerCase()) {
+        return {
+          success: false,
+          error: 'Cannot create user with Super Admin email address',
+        };
+      }
+
       // Check if user exists
       const existingUser = await this.dbService.queryOne(
         `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}'`
@@ -236,12 +271,12 @@ export class SuperAdminService {
 
       const passwordHash = this.hashPassword(password);
       const result = await this.dbService.execute(
-        `INSERT INTO users (name, email, password_hash) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}')`
+        `INSERT INTO users (name, email, password_hash, role) VALUES ('${name.replace(/'/g, "''")}', '${email.replace(/'/g, "''")}', '${passwordHash}', '${role}')`
       );
 
       const userId = (result as any).lastID;
       const user = (await this.dbService.queryOne(
-        `SELECT id, name, email, password_hash, created_at FROM users WHERE id = ${userId}`
+        `SELECT id, name, email, password_hash, role, created_at FROM users WHERE id = ${userId}`
       )) as User;
 
       return {
@@ -262,9 +297,38 @@ export class SuperAdminService {
   public async updateUser(
     userId: number,
     name: string,
-    email: string
+    email: string,
+    role?: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Prevent modifying the super admin account
+      const userToUpdate = await this.dbService.queryOne(
+        `SELECT email, role FROM users WHERE id = ${userId}`
+      ) as { email: string; role?: string } | null;
+
+      if (userToUpdate && userToUpdate.email === this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Cannot modify the Super Admin account',
+        };
+      }
+
+      // Prevent setting or changing to superadmin role
+      if (role && (role === 'superadmin' || role === 'super_admin')) {
+        return {
+          success: false,
+          error: 'Cannot assign superadmin role. Only "admin" or "cashier" roles are allowed',
+        };
+      }
+
+      // Validate role if provided
+      if (role && role !== 'admin' && role !== 'cashier') {
+        return {
+          success: false,
+          error: 'Invalid role. Must be either "admin" or "cashier"',
+        };
+      }
+
       // Check if email is already taken by another user
       const existingUser = await this.dbService.queryOne(
         `SELECT * FROM users WHERE email = '${email.replace(/'/g, "''")}' AND id != ${userId}`
@@ -277,9 +341,14 @@ export class SuperAdminService {
         };
       }
 
-      await this.dbService.execute(
-        `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}' WHERE id = ${userId}`
-      );
+      // Build update query
+      let updateQuery = `UPDATE users SET name = '${name.replace(/'/g, "''")}', email = '${email.replace(/'/g, "''")}'`;
+      if (role) {
+        updateQuery += `, role = '${role}'`;
+      }
+      updateQuery += ` WHERE id = ${userId}`;
+
+      await this.dbService.execute(updateQuery);
 
       return {
         success: true,
@@ -300,6 +369,18 @@ export class SuperAdminService {
     newPassword: string
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Prevent changing super admin password through this method
+      const user = await this.dbService.queryOne(
+        `SELECT email FROM users WHERE id = ${userId}`
+      ) as { email: string } | null;
+
+      if (user && user.email === this.SUPER_ADMIN_EMAIL) {
+        return {
+          success: false,
+          error: 'Cannot change Super Admin password through this method',
+        };
+      }
+
       const passwordHash = this.hashPassword(newPassword);
       await this.dbService.execute(
         `UPDATE users SET password_hash = '${passwordHash}' WHERE id = ${userId}`
@@ -368,8 +449,28 @@ export class SuperAdminService {
     isActive: boolean
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // Get the activation code for this license
+      const license = await this.dbService.queryOne(
+        `SELECT activation_code FROM licenses WHERE id = ${licenseId}`
+      ) as { activation_code: string } | null;
+
+      if (!license) {
+        return {
+          success: false,
+          error: 'License not found',
+        };
+      }
+
+      // Update the license
       await this.dbService.execute(
         `UPDATE licenses SET expiry_date = '${expiryDate}', is_active = ${isActive ? 1 : 0}, updated_at = CURRENT_TIMESTAMP WHERE id = ${licenseId}`
+      );
+
+      // Sync with generated_licenses table
+      // If activating the license, mark the generated key as used
+      // If deactivating the license, mark the generated key as unused
+      await this.dbService.execute(
+        `UPDATE generated_licenses SET is_used = ${isActive ? 1 : 0}, used_at = ${isActive ? "datetime('now', 'localtime')" : 'NULL'} WHERE code = '${license.activation_code.replace(/'/g, "''")}'`
       );
 
       return {
@@ -458,39 +559,135 @@ export class SuperAdminService {
   }
 
   /**
-   * Import database file
+   * Validate database schema - checks for all critical tables
    */
-  public async importDatabase(filePath: string): Promise<{ success: boolean; error?: string }> {
+  private async validateDatabaseSchema(filePath: string): Promise<{ valid: boolean; missingTables: string[] }> {
+    const requiredTables = [
+      'users',
+      'medicines',
+      'customers',
+      'suppliers',
+      'sales',
+      'sale_items',
+      'purchases',
+      'purchase_items',
+      'purchase_payments'
+    ];
+
+    const sqlite3 = require('sqlite3').verbose();
+    const tempDb = new sqlite3.Database(filePath);
+    const missingTables: string[] = [];
+
+    for (const tableName of requiredTables) {
+      const exists = await new Promise<boolean>((resolve) => {
+        tempDb.get(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`,
+          (err: any, row: any) => {
+            resolve(!err && !!row);
+          }
+        );
+      });
+
+      if (!exists) {
+        missingTables.push(tableName);
+      }
+    }
+
+    await new Promise<void>((resolve) => tempDb.close(() => resolve()));
+
+    return {
+      valid: missingTables.length === 0,
+      missingTables
+    };
+  }
+
+  /**
+   * Get database summary statistics
+   */
+  private async getDatabaseSummary(): Promise<{
+    users: number;
+    medicines: number;
+    customers: number;
+    sales: number;
+    purchases: number;
+    payments: number;
+  }> {
+    try {
+      const counts = {
+        users: 0,
+        medicines: 0,
+        customers: 0,
+        sales: 0,
+        purchases: 0,
+        payments: 0
+      };
+
+      const userCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM users');
+      counts.users = (userCount as any)?.count || 0;
+
+      const medicineCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM medicines');
+      counts.medicines = (medicineCount as any)?.count || 0;
+
+      const customerCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM customers');
+      counts.customers = (customerCount as any)?.count || 0;
+
+      const salesCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM sales');
+      counts.sales = (salesCount as any)?.count || 0;
+
+      const purchaseCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM purchases');
+      counts.purchases = (purchaseCount as any)?.count || 0;
+
+      const paymentCount = await this.dbService.queryOne('SELECT COUNT(*) as count FROM purchase_payments');
+      counts.payments = (paymentCount as any)?.count || 0;
+
+      return counts;
+    } catch (error) {
+      return {
+        users: 0,
+        medicines: 0,
+        customers: 0,
+        sales: 0,
+        purchases: 0,
+        payments: 0
+      };
+    }
+  }
+
+  /**
+   * Import database file with enhanced validation and verification
+   */
+  public async importDatabase(filePath: string): Promise<{ 
+    success: boolean; 
+    error?: string;
+    summary?: {
+      users: number;
+      medicines: number;
+      customers: number;
+      sales: number;
+      purchases: number;
+      payments: number;
+    };
+  }> {
     try {
       if (!fs.existsSync(filePath)) {
         return { success: false, error: 'Source file does not exist' };
       }
 
-      // 1. Basic SQLite Validation
-      const sqlite3 = require('sqlite3').verbose();
-      const tempDb = new sqlite3.Database(filePath);
-
-      const schemaCheck = await new Promise<boolean>((resolve) => {
-        // Check for 'users' table as a proxy for a valid schema
-        tempDb.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'", (err: any, row: any) => {
-          if (err || !row) {
-            resolve(false);
-          } else {
-            resolve(true);
-          }
-        });
-      });
-
-      // Close temp connection
-      await new Promise<void>((resolve) => tempDb.close(() => resolve()));
-
-      if (!schemaCheck) {
-        return { success: false, error: 'Incompatible database: Missing required tables' };
+      // 1. Enhanced Schema Validation
+      const validation = await this.validateDatabaseSchema(filePath);
+      
+      if (!validation.valid) {
+        return { 
+          success: false, 
+          error: `Incompatible database: Missing required tables (${validation.missingTables.join(', ')})` 
+        };
       }
 
-      // 2. Rotate Database
+      // 2. Create Timestamped Backup (using local system time)
       const currentDbPath = this.getDatabasePath();
-      const backupPath = `${currentDbPath}.bak`;
+      const now = new Date();
+      const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+      const timestampedBackupPath = `${currentDbPath}.backup-${timestamp}.bak`;
       const dbConnection = (require('../database/database.connection')).getDatabaseConnection();
 
       // Close current connection
@@ -510,10 +707,12 @@ export class SuperAdminService {
       }
 
       try {
-        // Backup current (if it exists)
+        // Create timestamped backup of current database (if it exists)
         if (fs.existsSync(currentDbPath)) {
-          if (fs.existsSync(backupPath)) fs.unlinkSync(backupPath);
-          fs.renameSync(currentDbPath, backupPath);
+          fs.copyFileSync(currentDbPath, timestampedBackupPath);
+          
+          // Automatically cleanup old backups, keeping only the 3 most recent
+          this.cleanupOldBackups(3);
         }
 
         // Copy new database
@@ -522,7 +721,10 @@ export class SuperAdminService {
         // Reconnect
         await dbConnection.connect();
 
-        return { success: true };
+        // 3. Post-Import Verification - Get summary of imported data
+        const summary = await this.getDatabaseSummary();
+
+        return { success: true, summary };
       } catch (err: any) {
         console.error('Error during database rotation:', err);
 
@@ -532,11 +734,11 @@ export class SuperAdminService {
           errorMessage = 'Database file is currently in use by another process. Please close all other database tools and try again.';
         }
 
-        // Rollback attempts
-        if (fs.existsSync(backupPath)) {
+        // Rollback attempts - restore from timestamped backup
+        if (fs.existsSync(timestampedBackupPath)) {
           try {
             if (fs.existsSync(currentDbPath)) fs.unlinkSync(currentDbPath);
-            fs.renameSync(backupPath, currentDbPath);
+            fs.copyFileSync(timestampedBackupPath, currentDbPath);
             await dbConnection.connect();
           } catch (rollbackErr) {
             console.error('Critical: Rollback failed:', rollbackErr);
@@ -547,6 +749,95 @@ export class SuperAdminService {
     } catch (error) {
       console.error('Import database error:', error);
       return { success: false, error: 'Database import failed' };
+    }
+  }
+
+  /**
+   * Get list of available database backups
+   */
+  public getAvailableBackups(): Array<{ filename: string; path: string; timestamp: string; size: number }> {
+    try {
+      const currentDbPath = this.getDatabasePath();
+      const dbDir = path.dirname(currentDbPath);
+      const dbBasename = path.basename(currentDbPath);
+      
+      const files = fs.readdirSync(dbDir);
+      const backups = files
+        .filter(file => file.startsWith(dbBasename) && file.includes('.backup-'))
+        .map(file => {
+          const filePath = path.join(dbDir, file);
+          const stats = fs.statSync(filePath);
+          const timestampMatch = file.match(/\.backup-(.+)\.bak$/);
+          
+          let timestamp = 'Unknown';
+          if (timestampMatch) {
+            // Format is: 2026-03-18T17-10-07
+            // Convert to: 2026-03-18T17:10:07
+            const rawTimestamp = timestampMatch[1];
+            // Replace hyphens with colons only in the time part (after T)
+            timestamp = rawTimestamp.replace(/T(\d{2})-(\d{2})-(\d{2})/, 'T$1:$2:$3');
+          }
+          
+          return {
+            filename: file,
+            path: filePath,
+            timestamp,
+            size: stats.size
+          };
+        })
+        .sort((a, b) => b.timestamp.localeCompare(a.timestamp)); // Most recent first
+
+      return backups;
+    } catch (error) {
+      console.error('Error getting backups:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Restore database from a backup file
+   */
+  public async restoreFromBackup(backupPath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      if (!fs.existsSync(backupPath)) {
+        return { success: false, error: 'Backup file does not exist' };
+      }
+
+      // Use the same import logic
+      return await this.importDatabase(backupPath);
+    } catch (error) {
+      console.error('Restore from backup error:', error);
+      return { success: false, error: 'Failed to restore from backup' };
+    }
+  }
+
+  /**
+   * Delete old backups, keeping only the most recent N backups
+   */
+  public cleanupOldBackups(keepCount: number = 10): { success: boolean; deletedCount: number } {
+    try {
+      const backups = this.getAvailableBackups();
+      
+      if (backups.length <= keepCount) {
+        return { success: true, deletedCount: 0 };
+      }
+
+      const toDelete = backups.slice(keepCount);
+      let deletedCount = 0;
+
+      for (const backup of toDelete) {
+        try {
+          fs.unlinkSync(backup.path);
+          deletedCount++;
+        } catch (err) {
+          console.error(`Failed to delete backup ${backup.filename}:`, err);
+        }
+      }
+
+      return { success: true, deletedCount };
+    } catch (error) {
+      console.error('Cleanup backups error:', error);
+      return { success: false, deletedCount: 0 };
     }
   }
 }

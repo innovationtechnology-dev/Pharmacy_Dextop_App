@@ -387,49 +387,65 @@ export class PurchaseService {
     query += ' ORDER BY p.created_at DESC';
 
     const purchases = await this.dbService.query(query, params);
-    const purchasesWithItems: Purchase[] = [];
-
-    for (const purchase of purchases) {
-      const items = await this.dbService.query('SELECT * FROM purchase_items WHERE purchase_id = ?', [purchase.id]);
-      purchasesWithItems.push({
-        id: purchase.id,
-        supplierId: purchase.supplier_id,
-        supplierName: purchase.supplier_name,
-        supplierCompanyName: purchase.supplier_company_name,
-        supplierAddress: purchase.supplier_address,
-        supplierPhone: purchase.supplier_phone,
-        supplierEmail: purchase.supplier_email,
-        subtotal: purchase.subtotal,
-        discountTotal: purchase.discount_total,
-        taxTotal: purchase.tax_total,
-        grandTotal: purchase.grand_total,
-        paymentAmount: purchase.payment_amount,
-        remainingBalance: purchase.remaining_balance,
-        status: purchase.status || 'ordered',
-        invoiceNumber: purchase.invoice_number || undefined,
-        notes: purchase.notes,
-        createdAt: purchase.created_at,
-        updatedAt: purchase.updated_at,
-        items: items.map((item: any) => ({
-          id: item.id, // Include the purchase item ID
-          medicineId: item.medicine_id,
-          medicineName: item.medicine_name,
-          packetQuantity: item.packet_quantity,
-          pillsPerPacket: item.pills_per_packet,
-          totalPills: item.total_pills,
-          availablePills: item.available_pills,
-          pricePerPacket: item.price_per_packet,
-          pricePerPill: item.price_per_pill,
-          discountAmount: item.discount_amount,
-          taxAmount: item.tax_amount,
-          lineSubtotal: item.line_subtotal,
-          lineTotal: item.line_total,
-          expiryDate: item.expiry_date,
-        })),
-      });
+    
+    if (purchases.length === 0) {
+      return [];
     }
 
-    return purchasesWithItems;
+    // Fetch all items in one query using IN clause
+    const purchaseIds = purchases.map((p: any) => p.id);
+    const placeholders = purchaseIds.map(() => '?').join(',');
+    const allItems = await this.dbService.query(
+      `SELECT * FROM purchase_items WHERE purchase_id IN (${placeholders})`,
+      purchaseIds
+    );
+
+    // Group items by purchase_id
+    const itemsMap = new Map<number, any[]>();
+    allItems.forEach((item: any) => {
+      if (!itemsMap.has(item.purchase_id)) {
+        itemsMap.set(item.purchase_id, []);
+      }
+      itemsMap.get(item.purchase_id)!.push(item);
+    });
+
+    // Build result with items
+    return purchases.map((purchase: any) => ({
+      id: purchase.id,
+      supplierId: purchase.supplier_id,
+      supplierName: purchase.supplier_name,
+      supplierCompanyName: purchase.supplier_company_name,
+      supplierAddress: purchase.supplier_address,
+      supplierPhone: purchase.supplier_phone,
+      supplierEmail: purchase.supplier_email,
+      subtotal: purchase.subtotal,
+      discountTotal: purchase.discount_total,
+      taxTotal: purchase.tax_total,
+      grandTotal: purchase.grand_total,
+      paymentAmount: purchase.payment_amount,
+      remainingBalance: purchase.remaining_balance,
+      status: purchase.status || 'ordered',
+      invoiceNumber: purchase.invoice_number || undefined,
+      notes: purchase.notes,
+      createdAt: purchase.created_at,
+      updatedAt: purchase.updated_at,
+      items: (itemsMap.get(purchase.id) || []).map((item: any) => ({
+        id: item.id,
+        medicineId: item.medicine_id,
+        medicineName: item.medicine_name,
+        packetQuantity: item.packet_quantity,
+        pillsPerPacket: item.pills_per_packet,
+        totalPills: item.total_pills,
+        availablePills: item.available_pills,
+        pricePerPacket: item.price_per_packet,
+        pricePerPill: item.price_per_pill,
+        discountAmount: item.discount_amount,
+        taxAmount: item.tax_amount,
+        lineSubtotal: item.line_subtotal,
+        lineTotal: item.line_total,
+        expiryDate: item.expiry_date,
+      })),
+    }));
   }
 
   /**
@@ -622,6 +638,120 @@ export class PurchaseService {
   /**
    * Update payment for an existing purchase (add additional payment).
    */
+  /**
+   * Set purchases.payment_amount and remaining_balance from SUM(purchase_payments.amount).
+   */
+  public async syncPurchaseTotalsFromPayments(purchaseId: number): Promise<void> {
+    const row = await this.dbService.queryOne(
+      'SELECT grand_total FROM purchases WHERE id = ?',
+      [purchaseId]
+    );
+    if (!row) {
+      throw new Error(`Purchase with id ${purchaseId} not found`);
+    }
+    const sumRow = await this.dbService.queryOne(
+      'SELECT COALESCE(SUM(amount), 0) as total_paid FROM purchase_payments WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    const totalPaid = sumRow?.total_paid ?? 0;
+    const grandTotal = row.grand_total ?? 0;
+    const remainingBalance = grandTotal - totalPaid;
+    await this.dbService.execute(
+      'UPDATE purchases SET payment_amount = ?, remaining_balance = ? WHERE id = ?',
+      [totalPaid, remainingBalance, purchaseId]
+    );
+  }
+
+  /**
+   * Record money returned to the supplier after the PO total dropped below recorded payments.
+   * Inserts a negative row into purchase_payments and syncs purchase totals.
+   */
+  public async recordSupplierRefund(
+    purchaseId: number,
+    opts: {
+      amount: number;
+      paymentMethod: 'cash' | 'bank_transfer' | 'check' | 'online';
+      referenceNumber?: string;
+      checkNumber?: string;
+      bankName?: string;
+      accountNumber?: string;
+      notes?: string;
+      paymentDate?: string;
+    }
+  ): Promise<void> {
+    const refundAmount = Number(opts.amount);
+    if (!Number.isFinite(refundAmount) || refundAmount <= 0) {
+      throw new Error('Refund amount must be greater than zero');
+    }
+
+    const purchase = await this.dbService.queryOne(
+      'SELECT id, grand_total FROM purchases WHERE id = ?',
+      [purchaseId]
+    );
+    if (!purchase) {
+      throw new Error(`Purchase with id ${purchaseId} not found`);
+    }
+
+    const sumRow = await this.dbService.queryOne(
+      'SELECT COALESCE(SUM(amount), 0) as total_paid FROM purchase_payments WHERE purchase_id = ?',
+      [purchaseId]
+    );
+    const totalPaid = sumRow?.total_paid ?? 0;
+    const grandTotal = purchase.grand_total ?? 0;
+    const overpayment = totalPaid - grandTotal;
+
+    if (overpayment <= 0.0001) {
+      throw new Error(
+        'There is no overpayment on this purchase to refund. Recorded payments do not exceed the order total.'
+      );
+    }
+    if (refundAmount > overpayment + 0.0001) {
+      throw new Error(
+        `Refund amount (${refundAmount.toFixed(2)}) cannot exceed overpayment (${overpayment.toFixed(2)})`
+      );
+    }
+
+    const paymentMethod =
+      opts.paymentMethod === 'bank_transfer'
+        ? 'bank_deposit'
+        : opts.paymentMethod === 'check'
+          ? 'cheque'
+          : opts.paymentMethod;
+
+    let reference = opts.referenceNumber?.trim() || 'Supplier refund';
+    if (opts.checkNumber) {
+      reference = `Refund | Check: ${opts.checkNumber}`;
+      if (opts.bankName) reference += ` | Bank: ${opts.bankName}`;
+    } else if (opts.bankName && opts.accountNumber) {
+      reference = `Refund | Bank: ${opts.bankName} | Acc: ${opts.accountNumber}`;
+    }
+
+    const noteParts = [opts.notes?.trim()].filter(Boolean);
+    noteParts.unshift('Supplier refund (cash/bank out)');
+    const notes = noteParts.join(' — ') || null;
+
+    await this.dbService.execute('BEGIN TRANSACTION');
+    try {
+      await this.dbService.execute(
+        `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          purchaseId,
+          -refundAmount,
+          paymentMethod,
+          reference || null,
+          notes,
+          opts.paymentDate || new Date().toISOString(),
+        ]
+      );
+      await this.syncPurchaseTotalsFromPayments(purchaseId);
+      await this.dbService.execute('COMMIT');
+    } catch (err) {
+      await this.dbService.execute('ROLLBACK');
+      throw err;
+    }
+  }
+
   public async updatePurchasePayment(purchaseId: number, additionalPayment: number): Promise<void> {
     if (additionalPayment <= 0) {
       throw new Error('Payment amount must be greater than zero');
@@ -740,6 +870,7 @@ export class PurchaseService {
       finalPaymentAmount = totalPaid;
     }
 
+    // Positive = still owe supplier; negative = overpaid (supplier credit / refund due) after PO total dropped.
     const remainingBalance = grandTotal - finalPaymentAmount;
 
     await this.dbService.execute('BEGIN TRANSACTION');
@@ -858,6 +989,59 @@ export class PurchaseService {
       await this.dbService.execute('ROLLBACK');
       throw error;
     }
+  }
+
+  /**
+   * Get all purchase items as flat rows (one row per medicine item) for reporting
+   * Similar to sales flat rows but for purchases
+   */
+  public async getAllPurchaseFlatRows(fromDate?: string, toDate?: string, supplierId?: number): Promise<any[]> {
+    let query = `
+      SELECT 
+        p.id as purchaseId,
+        p.created_at as createdAt,
+        p.supplier_id as supplierId,
+        p.supplier_name as supplierName,
+        s.company_name as supplierCompanyName,
+        s.phone as supplierPhone,
+        s.email as supplierEmail,
+        s.address as supplierAddress,
+        pi.medicine_id as medicineId,
+        pi.medicine_name as medicineName,
+        pi.packet_quantity as packetQuantity,
+        pi.pills_per_packet as pillsPerPacket,
+        pi.total_pills as totalPills,
+        pi.price_per_packet as pricePerPacket,
+        pi.price_per_pill as pricePerPill,
+        pi.discount_amount as discountAmount,
+        pi.tax_amount as taxAmount,
+        pi.line_subtotal as lineSubtotal,
+        pi.line_total as lineTotal,
+        pi.expiry_date as expiryDate
+      FROM purchases p
+      LEFT JOIN suppliers s ON p.supplier_id = s.id
+      INNER JOIN purchase_items pi ON p.id = pi.purchase_id
+      WHERE 1=1
+    `;
+    
+    const params: any[] = [];
+
+    if (fromDate && toDate) {
+      const fromDateTime = `${fromDate} 00:00:00`;
+      const toDateTime = `${toDate} 23:59:59`;
+      query += ' AND datetime(p.created_at) >= datetime(?) AND datetime(p.created_at) <= datetime(?)';
+      params.push(fromDateTime, toDateTime);
+    }
+
+    if (supplierId) {
+      query += ' AND p.supplier_id = ?';
+      params.push(supplierId);
+    }
+
+    query += ' ORDER BY p.supplier_name, p.created_at DESC, pi.medicine_name';
+
+    const rows = await this.dbService.query(query, params);
+    return rows;
   }
 }
 
