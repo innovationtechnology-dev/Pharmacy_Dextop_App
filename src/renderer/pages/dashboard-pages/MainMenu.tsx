@@ -158,6 +158,15 @@ const MainMenu: React.FC = () => {
       shortcut: 'Ctrl+M',
     },
     {
+      id: 'stocks',
+      title: 'Stocks',
+      icon: <FiLayers className="w-5 h-5" />,
+      color: 'from-emerald-500 to-emerald-600',
+      gradient: 'bg-gradient-to-br from-emerald-500/10 to-emerald-600/10',
+      description: 'Stock Monitoring',
+      route: '/stocks',
+    },
+    {
       id: 'purchasing-panel',
       title: 'Purchasing Panel',
       icon: <FiPackage className="w-5 h-5" />,
@@ -485,6 +494,14 @@ const MainMenu: React.FC = () => {
           title="Medicines (Ctrl+M)"
         >
           <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/stocks')}
+          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+          title="Stocks"
+        >
+          <FiLayers className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         {!isCashier && (
           <button

@@ -24,6 +24,7 @@ import Settings from './pages/dashboard-pages/Settings';
 import Alerts from './pages/dashboard-pages/Alerts';
 import MainMenu from './pages/dashboard-pages/MainMenu';
 import SaleReturn from './pages/dashboard-pages/SaleReturn';
+import Stocks from './pages/dashboard-pages/Stocks';
 import License from './pages/dashboard-pages/License';
 import SuperAdminDashboard from './pages/super-admin/SuperAdminDashboard';
 import './index.css';
@@ -70,6 +71,7 @@ export default class App extends React.Component {
                 <Route path="/payments" element={<Payments />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/sale-return" element={<SaleReturn />} />
+                <Route path="/stocks" element={<Stocks />} />
                 <Route path="/license" element={<License />} />
               </Route>
             </Routes>

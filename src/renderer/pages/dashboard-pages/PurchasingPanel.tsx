@@ -37,7 +37,7 @@ interface Supplier {
   companyName?: string;
 }
 
-const MIN_EXPIRY_DAYS = 90;
+const MIN_EXPIRY_DAYS = 0;
 
 interface PurchaseItem {
   medicine: Medicine;
@@ -206,8 +206,14 @@ const PurchasingPanel: React.FC = () => {
       return false;
     }
     const min = new Date();
+    min.setHours(0, 0, 0, 0);
     min.setDate(min.getDate() + MIN_EXPIRY_DAYS);
-    return expDate >= min;
+    
+    // Normalize expDate to start of day as well to be safe
+    const normalizedExpDate = new Date(expDate);
+    normalizedExpDate.setHours(0, 0, 0, 0);
+    
+    return normalizedExpDate >= min;
   }, []);
 
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -488,9 +494,7 @@ const PurchasingPanel: React.FC = () => {
       for (const item of cart) {
         if (!isExpiryValid(item.expiryDate)) {
           warning(
-            `"${item.medicine.name}" must have an expiry date at least ${Math.round(
-              MIN_EXPIRY_DAYS / 30
-            )} months from today.`
+            `"${item.medicine.name}" must have a valid future expiry date (today or later).`
           );
           setProcessing(false);
           return;
@@ -2182,7 +2186,7 @@ const PurchasingPanel: React.FC = () => {
           </div>
         )
       }
-    </div >
+    </div>
   );
 };
 

@@ -19,7 +19,6 @@ import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
-
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
 interface Medicine {
@@ -1097,17 +1096,17 @@ export default function MedicinesPage() {
                         </select>
                       </div>
                       <div className="col-span-1 flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Check if medicine has any stock (has been purchased)
-                            if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
-                              alert('Cannot edit medicine with existing stock. This medicine has been used in transactions. You can only change its status (active/inactive).');
-                              return;
-                            }
-                            handleEdit(medicine);
-                          }}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              // Check if medicine has any stock (has been purchased)
+                              if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
+                                alert('Cannot edit medicine with existing stock. This medicine has been used in transactions. You can only change its status (active/inactive).');
+                                return;
+                              }
+                              handleEdit(medicine);
+                            }}
                           disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
                           className={`p-1.5 rounded transition-colors ${
                             medicine.totalAvailablePills > 0 || medicine.sellablePills > 0

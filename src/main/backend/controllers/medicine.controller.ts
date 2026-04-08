@@ -556,6 +556,18 @@ export class MedicineController {
       }
     });
 
+    // Get detailed inventory for a medicine
+    ipcMain.on('medicine-get-inventory-details', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const medicineId = args[0] as number;
+        const details = await this.medicineService.getMedicineInventoryDetails(medicineId);
+        event.reply('medicine-get-inventory-details-reply', { success: true, data: details });
+      } catch (error) {
+        console.error('Get medicine inventory details error:', error);
+        event.reply('medicine-get-inventory-details-reply', { success: false, error: String(error) });
+      }
+    });
+
     // Create sale
     ipcMain.on('sale-create', async (event: IpcMainEvent, args: any[]) => {
       try {

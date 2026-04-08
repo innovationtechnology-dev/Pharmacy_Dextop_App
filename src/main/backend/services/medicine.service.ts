@@ -613,6 +613,38 @@ export class MedicineService {
       deficit: (row.minimum_stock_level ?? 0) - (row.sellable_pills ?? 0),
     }));
   }
+  /**
+   * Get detailed inventory information (batches) for a specific medicine.
+   */
+  public async getMedicineInventoryDetails(medicineId: number): Promise<any[]> {
+    const sql = `
+      SELECT 
+        pi.purchase_id AS purchaseId,
+        m.name AS medicineName,
+        m.pill_quantity AS pillQuantity,
+        pi.total_pills AS totalPills,
+        pi.available_pills AS availablePills,
+        (pi.total_pills - pi.available_pills) AS soldPills,
+        p.created_at AS purchaseDate,
+        pi.expiry_date AS expiryDate,
+        pi.price_per_packet AS originalPricePerPacket,
+        CASE 
+          WHEN pi.packet_quantity > 0 THEN (pi.discount_amount / pi.packet_quantity)
+          ELSE 0 
+        END AS discountPerPacket,
+        COALESCE((
+          SELECT AVG(si.unit_price) 
+          FROM sale_items si 
+          WHERE si.medicine_id = m.id
+        ), 0) AS sellingPricePerPill
+      FROM purchase_items pi
+      JOIN purchases p ON pi.purchase_id = p.id
+      JOIN medicines m ON pi.medicine_id = m.id
+      WHERE pi.medicine_id = ?
+      ORDER BY p.created_at DESC
+    `;
+    return await this.dbService.query(sql, [medicineId]);
+  }
 }
 
 export default MedicineService;
