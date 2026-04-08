@@ -205,13 +205,11 @@ export class PurchaseService {
     if (Number.isNaN(parsedExpiry.getTime())) {
       throw new Error(`Expiry date is invalid for ${medicineName}`);
     }
-    const minDate = new Date();
-    minDate.setDate(minDate.getDate() + MIN_PURCHASE_EXPIRY_DAYS);
-    if (parsedExpiry < minDate) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (parsedExpiry < today) {
       throw new Error(
-        `${medicineName} must have an expiry date at least ${Math.round(
-          MIN_PURCHASE_EXPIRY_DAYS / 30
-        )} months from today.`
+        `${medicineName} must have an expiry date of today or later.`
       );
     }
   }

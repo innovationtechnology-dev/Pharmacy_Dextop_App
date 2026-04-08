@@ -626,6 +626,7 @@ export class MedicineService {
         pi.available_pills AS availablePills,
         (pi.total_pills - pi.available_pills) AS soldPills,
         p.created_at AS purchaseDate,
+        p.supplier_name AS supplierName,
         pi.expiry_date AS expiryDate,
         pi.price_per_packet AS originalPricePerPacket,
         CASE 

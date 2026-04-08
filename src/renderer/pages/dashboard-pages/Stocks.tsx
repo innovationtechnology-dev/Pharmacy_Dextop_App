@@ -220,14 +220,18 @@ const Stocks: React.FC = () => {
                 No matching medicines found.
               </div>
             ) : (
-              filteredStocks.map((med) => {
+              (selectedMedicineForDetails 
+                ? filteredStocks.filter(med => med.id === selectedMedicineForDetails.id) 
+                : filteredStocks
+              ).map((med) => {
                 const isOutOfStock = med.totalAvailablePills === 0;
                 const isLowStock = !isOutOfStock && med.totalAvailablePills <= med.minimumStockLevel;
                 const safetyMargin = Math.min(100, (med.totalAvailablePills / (med.minimumStockLevel || 100)) * 50);
 
                 return (
-                  <div key={med.id} className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b border-gray-50 dark:border-gray-800 hover:bg-emerald-50/20 dark:hover:bg-emerald-900/5 transition-all">
-                    <div className="col-span-1 text-gray-400 dark:text-gray-600 font-bold">#{med.id}</div>
+                  <React.Fragment key={med.id}>
+                    <div className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b ${selectedMedicineForDetails?.id === med.id ? 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-emerald-50/20 dark:hover:bg-emerald-900/5'} transition-all`}>
+                      <div className="col-span-1 text-gray-400 dark:text-gray-600 font-bold">#{med.id}</div>
                     
                     <div className="col-span-4">
                       <div className="font-bold text-gray-900 dark:text-white uppercase truncate">{med.name}</div>
@@ -260,16 +264,30 @@ const Stocks: React.FC = () => {
 
                     <div className="col-span-1 text-center font-medium text-gray-500">
                        <button
-                         onClick={() => setSelectedMedicineForDetails({ id: med.id, name: med.name })}
-                         className="p-1.5 bg-blue-500 dark:bg-blue-900 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-800 transition-colors shadow-sm"
-                         title="View Batch Details"
+                         onClick={() => setSelectedMedicineForDetails(selectedMedicineForDetails?.id === med.id ? null : { id: med.id, name: med.name })}
+                         className={`p-1.5 rounded transition-colors shadow-sm ${selectedMedicineForDetails?.id === med.id ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600' : 'bg-blue-500 dark:bg-blue-900 text-white hover:bg-blue-600 dark:hover:bg-blue-800'}`}
+                         title={selectedMedicineForDetails?.id === med.id ? "Close Batch Details" : "View Batch Details"}
                        >
                          <FiEye className="w-3.5 h-3.5" />
                        </button>
                     </div>
                   </div>
-                );
-              })
+                  
+                  {/* Expanded Row for Inline Details */}
+                  {selectedMedicineForDetails?.id === med.id && (
+                    <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200">
+                      <MedicineInventoryDetails
+                        medicineId={selectedMedicineForDetails.id}
+                        medicineName={selectedMedicineForDetails.name}
+                        currencySymbol={currencySymbol}
+                        inline={true}
+                        onClose={() => setSelectedMedicineForDetails(null)}
+                      />
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })
             )}
           </div>
           
@@ -285,15 +303,7 @@ const Stocks: React.FC = () => {
         </div>
       </div>
 
-      {/* Batch Details Modal */}
-      {selectedMedicineForDetails && (
-        <MedicineInventoryDetails
-          medicineId={selectedMedicineForDetails.id}
-          medicineName={selectedMedicineForDetails.name}
-          currencySymbol={currencySymbol}
-          onClose={() => setSelectedMedicineForDetails(null)}
-        />
-      )}
+      {/* Background modales removed in favor of Inline expansion */}
     </div>
   );
 };
