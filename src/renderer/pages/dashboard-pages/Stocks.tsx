@@ -265,10 +265,10 @@ const Stocks: React.FC = () => {
                     <div className="col-span-1 text-center font-medium text-gray-500">
                        <button
                          onClick={() => setSelectedMedicineForDetails(selectedMedicineForDetails?.id === med.id ? null : { id: med.id, name: med.name })}
-                         className={`p-1.5 rounded transition-colors shadow-sm ${selectedMedicineForDetails?.id === med.id ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600' : 'bg-blue-500 dark:bg-blue-900 text-white hover:bg-blue-600 dark:hover:bg-blue-800'}`}
+                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedMedicineForDetails?.id === med.id ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
                          title={selectedMedicineForDetails?.id === med.id ? "Close Batch Details" : "View Batch Details"}
                        >
-                         <FiEye className="w-3.5 h-3.5" />
+                         {selectedMedicineForDetails?.id === med.id ? "Close" : "View"}
                        </button>
                     </div>
                   </div>
@@ -281,7 +281,6 @@ const Stocks: React.FC = () => {
                         medicineName={selectedMedicineForDetails.name}
                         currencySymbol={currencySymbol}
                         inline={true}
-                        onClose={() => setSelectedMedicineForDetails(null)}
                       />
                     </div>
                   )}

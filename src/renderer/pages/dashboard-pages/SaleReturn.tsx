@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { getSaleReturnsFlatRowsByRange, FlatSaleReturnRow, exportSaleReturnsPdf, exportSaleReturnsCsv } from '../../utils/sale-return';
 import { getAuthUser } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText } from 'react-icons/fi';
-import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel } from 'react-icons/fa';
+import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaArrowLeft } from 'react-icons/fa';
 import ReportDetailModal from '../../components/common/DetailModal';
 import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
@@ -63,14 +63,14 @@ export default function SaleReturn() {
     return () => setHeader(null);
   }, [setHeader]);
 
-  const fetchReport = useCallback(async () => {
+  const fetchReport = useCallback(async (overrideFrom?: string, overrideTo?: string) => {
     setLoading(true);
     setError(null);
     try {
       // Simulate a small delay for the animation effect if the fetch is too fast
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      const res = await getSaleReturnsFlatRowsByRange(fromDate, toDate);
+      const res = await getSaleReturnsFlatRowsByRange(overrideFrom || fromDate, overrideTo || toDate);
       if (res.success && res.data) {
         setReportRows(res.data);
         setPage(1); // Reset to first page on new fetch
@@ -86,10 +86,36 @@ export default function SaleReturn() {
     }
   }, [fromDate, toDate]);
 
+  const handleTodayFilter = () => {
+    setFromDate(today);
+    setToDate(today);
+    fetchReport(today, today);
+  };
+
+  const handleMonthFilter = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const mm = String(firstDay.getMonth() + 1).padStart(2, '0');
+    const dd = String(firstDay.getDate()).padStart(2, '0');
+    const fDate = `${firstDay.getFullYear()}-${mm}-${dd}`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchReport(fDate, today);
+  };
+
+  const handleYearFilter = () => {
+    const now = new Date();
+    const fDate = `${now.getFullYear()}-01-01`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchReport(fDate, today);
+  };
+
   // Initial fetch
   useEffect(() => {
     fetchReport();
-  }, []); // Run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDownloadPdf = async () => {
     setExporting(true);
@@ -284,14 +310,27 @@ export default function SaleReturn() {
           </div>
         </div>
 
-        {/* Refresh Button */}
-        <button
-          onClick={fetchReport}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Back to Selling Button */}
+          {isCashier && (
+            <button
+              onClick={() => window.location.hash = '#/selling-panel'}
+              className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 border border-orange-600 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+            >
+              <FaArrowLeft className="w-3.5 h-3.5" />
+              Back to Selling
+            </button>
+          )}
+
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchReport()}
+            className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          >
+            <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Main Content: Vertical Layout */}
@@ -339,14 +378,49 @@ export default function SaleReturn() {
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
                 />
               </div>
-              <button
-                onClick={fetchReport}
-                disabled={loading}
-                className="w-full sm:w-auto px-4 py-1.5 bg-gradient-to-r from-orange-600 to-orange-500 text-white rounded hover:from-orange-700 hover:to-orange-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
-                Fetch Reports
-              </button>
+              <div className="flex-1 flex gap-2 sm:justify-end">
+                <button
+                  onClick={() => handleTodayFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === today && toDate === today
+                      ? 'bg-orange-600 text-white border-orange-600'
+                      : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => handleMonthFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01` && toDate === today
+                      ? 'bg-orange-600 text-white border-orange-600'
+                      : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+                  }`}
+                >
+                  Month
+                </button>
+                {!isCashier && (
+                  <button
+                    onClick={() => handleYearFilter()}
+                    className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                      fromDate === `${new Date().getFullYear()}-01-01` && toDate === today
+                        ? 'bg-orange-600 text-white border-orange-600'
+                        : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+                    }`}
+                  >
+                    Year
+                  </button>
+                )}
+                <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+                <button
+                  onClick={() => fetchReport()}
+                  disabled={loading}
+                  className="flex-1 sm:flex-none px-4 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
+                  Fetch Reports
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -415,10 +489,10 @@ export default function SaleReturn() {
                   No sale returns found for the selected range.
                 </div>
               ) : (
-                pagedRows.map((row) => (
-                  <div key={row.saleReturnId} className="contents border-b border-gray-100 dark:border-gray-700">
+                (selectedReturn ? pagedRows.filter(r => r.saleReturnId === selectedReturn.saleReturnId) : pagedRows).map((row) => (
+                  <React.Fragment key={row.saleReturnId}>
                     <div 
-                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
+                      className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b transition-all duration-200 ${selectedReturn?.saleReturnId === row.saleReturnId ? 'border-orange-200 dark:border-orange-900/50 bg-orange-50/30 dark:bg-orange-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-orange-50/20 dark:hover:bg-orange-900/5'}`}
                     >
                       <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                         <div>
@@ -430,8 +504,8 @@ export default function SaleReturn() {
                       <div className="col-span-3">
                         <div className="font-medium text-gray-900 dark:text-white whitespace-pre-wrap leading-tight" title={row.displayMedicineName}>{row.displayMedicineName}</div>
                         {row.reason && (
-                          <div className="text-[9px] text-gray-500 dark:text-gray-400 italic truncate" title={row.reason}>
-                            Reason: {row.reason}
+                          <div className="text-[9px] text-gray-400 dark:text-gray-500 italic truncate" title={row.reason}>
+                            {row.reason}
                           </div>
                         )}
                       </div>
@@ -456,17 +530,103 @@ export default function SaleReturn() {
                       <div className="col-span-1 text-center">
                         <button
                           onClick={() => {
-                            setSelectedReturn(row);
-                            setShowDetailModal(true);
+                            if (selectedReturn?.saleReturnId === row.saleReturnId) {
+                               setSelectedReturn(null);
+                            } else {
+                               setSelectedReturn(row);
+                            }
                           }}
-                          className="p-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors shadow-sm"
-                          title="View Details"
+                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedReturn?.saleReturnId === row.saleReturnId ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
+                          title={selectedReturn?.saleReturnId === row.saleReturnId ? "Close Details" : "View Details"}
                         >
-                          View 
+                          {selectedReturn?.saleReturnId === row.saleReturnId ? "Close" : "View"}
                         </button>
                       </div>
                     </div>
-                  </div>
+
+                    {/* Inline Details expansion */}
+                    {selectedReturn?.saleReturnId === row.saleReturnId && (
+                      <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200 bg-gray-50/50 dark:bg-gray-800/30 shadow-inner w-full flex flex-col">
+                        
+                        {/* Inline header info */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-3 bg-white dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Customer</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerName || 'Walk-in Customer'}</span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Return Info</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{new Date(row.createdAt).toLocaleDateString()}</span>
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 rounded text-[8px] font-bold text-orange-700 dark:text-orange-400 whitespace-nowrap">
+                                REF #{row.saleId}
+                              </span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Contact</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerPhone || 'N/A'}</span>
+                           </div>
+                           {row.reason && (
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Reason</span>
+                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-400 italic line-clamp-2" title={row.reason}>{row.reason}</span>
+                           </div>
+                           )}
+                        </div>
+
+                        {/* Inline Table Header */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100/50 dark:bg-gray-800 text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest border-y border-gray-200 dark:border-gray-700">
+                          <div className="col-span-1 text-center font-bold">#</div>
+                          <div className="col-span-5 font-bold">Medicine Product</div>
+                          <div className="col-span-2 text-center font-bold">Qty</div>
+                          <div className="col-span-2 text-right font-bold">Price / Disc.</div>
+                          <div className="col-span-2 text-right font-bold">Subtotal</div>
+                        </div>
+
+                        {/* Inline Table Body */}
+                        <div className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900/40">
+                           {row.children?.map((item: any, idx: number) => (
+                             <div key={idx} className="grid grid-cols-12 gap-3 px-8 py-3 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all">
+                                <div className="col-span-1 text-center text-[10px] text-gray-400">
+                                   {(idx + 1).toString().padStart(2, '0')}
+                                </div>
+                                <div className="col-span-5">
+                                   <div className="text-[11px] font-semibold text-gray-800 dark:text-gray-200">{item.medicineName}</div>
+                                   <div className="text-[9px] text-gray-500">ID: #{item.medicineId}</div>
+                                </div>
+                                <div className="col-span-2 text-center text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                                   {item.pills}
+                                </div>
+                                <div className="col-span-2 text-right">
+                                   <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                                      {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                   </div>
+                                   {item.discountAmount > 0 && (
+                                     <div className="text-[9px] text-red-500">
+                                        -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                     </div>
+                                   )}
+                                </div>
+                                <div className="col-span-2 text-right text-[11px] font-bold text-gray-900 dark:text-white">
+                                   {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                             </div>
+                           ))}
+                        </div>
+
+                        {/* Inline Footer */}
+                        <div className="px-8 py-3 bg-orange-50/80 dark:bg-orange-900/10 border-b border-orange-100/50 dark:border-orange-900/30 flex flex-wrap justify-between gap-6 text-[10px] text-orange-800 dark:text-orange-400 tracking-wide">
+                            <div className="flex flex-wrap gap-6 items-center">
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Gross Value:</span> {getCurrencySymbol()}{(row.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Adjustment:</span> {getCurrencySymbol()}{(row.discountAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Tax Reversal:</span> {getCurrencySymbol()}{(row.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            </div>
+                            <div className="flex items-center gap-4 ml-auto">
+                              <div className="text-xs"><span className="font-bold opacity-70 uppercase mr-1">Refund Amount:</span> <span className="font-black">{getCurrencySymbol()}{(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                            </div>
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
                 ))
               )}
             </div>
@@ -510,95 +670,7 @@ export default function SaleReturn() {
         </div>
       </div>
 
-      {/* Detail Modal */}
-      <ReportDetailModal
-        isOpen={showDetailModal && !!selectedReturn}
-        onClose={() => setShowDetailModal(false)}
-        title="Return Details"
-        icon={FaUndo}
-        colorTheme="orange"
-        headerBadges={[
-          { label: 'Return #', value: String(selectedReturn?.saleReturnId || '') },
-          { label: 'Sale Reference', value: `#${selectedReturn?.saleId}`, isItalic: true }
-        ]}
-        infoCards={[
-          { 
-            title: 'Customer', 
-            value: selectedReturn?.customerName || 'Walk-in Customer', 
-            icon: FiUser, 
-            theme: 'blue' 
-          },
-          { 
-            title: 'Return Info', 
-            value: selectedReturn?.createdAt ? new Date(selectedReturn.createdAt).toLocaleDateString() : 'N/A', 
-            icon: FiCalendar, 
-            theme: 'orange',
-            badge: {
-              label: `REF #${selectedReturn?.saleId}`,
-              color: 'bg-orange-100 dark:bg-orange-900/40 text-orange-700 dark:text-orange-300'
-            }
-          },
-          { 
-            title: 'Contact Detail', 
-            value: selectedReturn?.customerPhone || 'N/A', 
-            icon: FiPhone, 
-            theme: 'purple' 
-          }
-        ]}
-        tableTitle="Returned Items"
-        tableItemsCount={selectedReturn?.children.length || 0}
-        tableHeaders={['#', 'Medicine Product', 'Qty', 'Unit Price', 'Disc.', 'Subtotal']}
-        items={selectedReturn?.children || []}
-        renderTableRow={(item: any, idx: number) => (
-          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
-            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
-              {String(idx + 1).padStart(2, '0')}
-            </div>
-            <div className="col-span-5 translate-x-1">
-              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors">{item.medicineName}</div>
-              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal italic">ID: #{item.medicineId}</div>
-            </div>
-            <div className="col-span-1 text-right">
-              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {item.pills}
-              </span>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="col-span-1 text-right">
-              <div className="text-[11px] font-normal text-red-500">
-                 -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
-                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-          </div>
-        )}
-        remarks={{
-          title: 'Remarks',
-          content: (
-            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400 whitespace-pre-wrap">
-              {selectedReturn?.reason || 'No specific return reason Recorded.'}
-            </p>
-          )
-        }}
-        summaryItems={[
-          { label: 'Gross Value', value: `${getCurrencySymbol()}${selectedReturn?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Adjustment', type: 'discount', value: `${getCurrencySymbol()}${selectedReturn?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Tax Reversal', type: 'tax', value: `${getCurrencySymbol()}${selectedReturn?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Refund Amount', type: 'total', value: `${getCurrencySymbol()}${selectedReturn?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
-        ]}
-        footerStatus={{
-          label: 'Return Processed',
-          color: 'orange'
-        }}
-      />
+      {/* Detail Modal removed in favor of Inline expansion */}
 
       {/* Export Dialog */}
       {showExportDialog && (
