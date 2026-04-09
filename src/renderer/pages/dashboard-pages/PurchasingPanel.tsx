@@ -20,6 +20,7 @@ interface Medicine {
   id: number;
   barcode?: string;
   name: string;
+  manufacturer?: string;
   pillQuantity: number;
   status: MedicineStatus;
   sellablePills?: number;
@@ -1550,7 +1551,7 @@ const PurchasingPanel: React.FC = () => {
                 ) : (
                   <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
                     {/* Header */}
-                    <div className="grid grid-cols-[40px_1fr_80px_80px_100px_60px_60px_140px_120px] gap-2 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
+                    <div className="grid grid-cols-[40px_minmax(170px,240px)_80px_80px_100px_60px_60px_140px_120px] gap-2 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
                       <div className="flex justify-center">Sr#</div>
                       <div>Product</div>
                       <div className="text-center">Pkt</div>
@@ -1565,7 +1566,7 @@ const PurchasingPanel: React.FC = () => {
                     <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
                       {cart.map((item, index) => (
                         <div key={item.medicine.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-all border-b border-gray-100 dark:border-gray-700/50">
-                          <div className="grid grid-cols-[40px_1fr_80px_80px_100px_60px_60px_140px_120px] gap-2 px-4 py-3 items-center">
+                          <div className="grid grid-cols-[40px_minmax(170px,240px)_80px_80px_100px_60px_60px_140px_120px] gap-2 px-4 py-3 items-center">
                           {/* S.No */}
                           <div className="flex justify-center text-[11px] text-gray-400 font-bold">
                             {index + 1}
@@ -1576,6 +1577,11 @@ const PurchasingPanel: React.FC = () => {
                             <div className="font-medium text-gray-900 dark:text-white truncate text-[11px]" title={item.medicine.name}>
                               {item.medicine.name}
                             </div>
+                            {item.medicine.manufacturer && (
+                              <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate" title={item.medicine.manufacturer}>
+                                {item.medicine.manufacturer}
+                              </div>
+                            )}
                             <div className="flex items-center gap-2 mt-1">
                               {item.medicine.barcode && (
                                 <span className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
