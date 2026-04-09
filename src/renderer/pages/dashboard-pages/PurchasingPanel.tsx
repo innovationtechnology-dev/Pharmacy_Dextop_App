@@ -24,6 +24,7 @@ interface Medicine {
   status: MedicineStatus;
   sellablePills?: number;
   totalAvailablePills?: number;
+  averageSellablePricePerPill?: number | null;
 }
 
 interface Supplier {
@@ -91,6 +92,36 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
     discountAmount,
     taxAmount,
     lineTotal,
+  };
+};
+
+const getPricingInsights = (item: PurchaseItem) => {
+  const totalPills = Math.max(0, item.totalPills || 0);
+  const packetQuantity = Math.max(0, item.packetQuantity || 0);
+  const grossAmount = Math.max(0, item.totalAmount || 0);
+  const netAmount = Math.max(0, item.lineTotal || 0);
+
+  // User-entered purchase amount per pill/packet (before discount & tax).
+  const purchasePerPill = totalPills > 0 ? grossAmount / totalPills : 0;
+  const purchasePerPacket = packetQuantity > 0 ? grossAmount / packetQuantity : 0;
+
+  // Effective per-pill/packet amount after discount and tax.
+  const sellingPerPill = totalPills > 0 ? netAmount / totalPills : 0;
+  const sellingPerPacket = packetQuantity > 0 ? netAmount / packetQuantity : 0;
+
+  // Savings/margin impact from discount and tax.
+  const profitPerPill = purchasePerPill - sellingPerPill;
+  const profitPerPacket = purchasePerPacket - sellingPerPacket;
+  const marginPerPill = purchasePerPill > 0 ? (profitPerPill / purchasePerPill) * 100 : 0;
+  const marginPerPacket = purchasePerPacket > 0 ? (profitPerPacket / purchasePerPacket) * 100 : 0;
+
+  return {
+    purchasePerPill,
+    sellingPerPill,
+    profitPerPill,
+    profitPerPacket,
+    marginPerPill,
+    marginPerPacket,
   };
 };
 
@@ -1524,7 +1555,7 @@ const PurchasingPanel: React.FC = () => {
                       <div>Product</div>
                       <div className="text-center">Pkt</div>
                       <div className="text-center">Pills/Pkt</div>
-                      <div className="text-center">Price</div>
+                      <div className="text-center">Pkt/Price</div>
                       <div className="text-center">Disc%</div>
                       <div className="text-center">Tax%</div>
                       <div className="text-center">Expiry</div>
@@ -1533,7 +1564,8 @@ const PurchasingPanel: React.FC = () => {
                     {/* Medicine Items */}
                     <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
                       {cart.map((item, index) => (
-                        <div key={item.medicine.id} className="grid grid-cols-[40px_1fr_80px_80px_100px_60px_60px_140px_120px] gap-2 px-4 py-3 hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-all items-center border-b border-gray-100 dark:border-gray-700/50">
+                        <div key={item.medicine.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-all border-b border-gray-100 dark:border-gray-700/50">
+                          <div className="grid grid-cols-[40px_1fr_80px_80px_100px_60px_60px_140px_120px] gap-2 px-4 py-3 items-center">
                           {/* S.No */}
                           <div className="flex justify-center text-[11px] text-gray-400 font-bold">
                             {index + 1}
@@ -1545,10 +1577,6 @@ const PurchasingPanel: React.FC = () => {
                               {item.medicine.name}
                             </div>
                             <div className="flex items-center gap-2 mt-1">
-                              <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                {/*Price Per Pill*/}
-                                {symbol}{item.pricePerPacket.toFixed(1)}
-                              </span>
                               {item.medicine.barcode && (
                                 <span className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
                                   {item.medicine.barcode}
@@ -1729,7 +1757,7 @@ const PurchasingPanel: React.FC = () => {
 
                           {/* Action / Trash */}
                           <div className="flex items-center justify-end gap-3 pr-2">
-                             <div className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
+                            <div className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
                               {symbol} {item.lineTotal.toFixed(2)}
                             </div>
                             <button
@@ -1741,6 +1769,34 @@ const PurchasingPanel: React.FC = () => {
                               <FiTrash2 className="w-4 h-4" />
                             </button>
                           </div>
+                          </div>
+
+                          {(() => {
+                            const pricing = getPricingInsights(item);
+                            const profitTone =
+                              pricing.profitPerPill >= 0
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-red-600 dark:text-red-400';
+
+                            return (
+                              <div className="px-4 pb-2">
+                                <div className="ml-[48px] text-[9px] flex flex-wrap items-center gap-3">
+                                  <span className="font-bold text-emerald-700 dark:text-emerald-400">
+                                    Buy/Pill: {symbol}{pricing.purchasePerPill.toFixed(2)}
+                                  </span>
+                                  <span className="font-bold text-blue-700 dark:text-blue-400">
+                                    Sell/Pill: {symbol}{pricing.sellingPerPill.toFixed(2)}
+                                  </span>
+                                  <span className={`font-bold ${profitTone}`}>
+                                    Profit/Pill: {symbol}{pricing.profitPerPill.toFixed(2)} ({pricing.marginPerPill.toFixed(1)}%)
+                                  </span>
+                                  <span className="font-semibold text-gray-600 dark:text-gray-400">
+                                    Profit/Pkt: {symbol}{pricing.profitPerPacket.toFixed(2)} ({pricing.marginPerPacket.toFixed(1)}%)
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ))}
                     </div>
