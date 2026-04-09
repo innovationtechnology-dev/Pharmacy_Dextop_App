@@ -66,11 +66,22 @@ export class SaleReturnService {
         discount_amount REAL NOT NULL DEFAULT 0,
         tax_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL,
+        cost_price REAL NOT NULL DEFAULT 0,
+        cost_subtotal REAL NOT NULL DEFAULT 0,
         reason TEXT,
         FOREIGN KEY (sale_return_id) REFERENCES sale_returns(id) ON DELETE CASCADE,
         FOREIGN KEY (medicine_id) REFERENCES medicines(id)
       )
     `);
+
+    // Migration: add cost_price and cost_subtotal to sale_return_items if they don't exist
+    const columnInfo = await this.dbService.query(`PRAGMA table_info(sale_return_items)`);
+    if (!columnInfo.some((col: any) => col.name === 'cost_price')) {
+      await this.dbService.execute(`ALTER TABLE sale_return_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0`);
+    }
+    if (!columnInfo.some((col: any) => col.name === 'cost_subtotal')) {
+      await this.dbService.execute(`ALTER TABLE sale_return_items ADD COLUMN cost_subtotal REAL NOT NULL DEFAULT 0`);
+    }
 
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_return_items_sale_return_id ON sale_return_items(sale_return_id)
@@ -271,6 +282,14 @@ export class SaleReturnService {
       const saleReturnId = (saleReturnResult as any).lastID;
 
       for (const item of computedItems) {
+        // Get cost price for the return item (try to get it from sale_items first, else average)
+        const saleItemRecord = await this.dbService.queryOne(
+          'SELECT cost_price FROM sale_items WHERE sale_id = ? AND medicine_id = ? LIMIT 1',
+          [payload.saleId, item.medicineId]
+        );
+        const costPrice = saleItemRecord?.cost_price || 0;
+        const costSubtotal = costPrice * item.pills;
+
         const insertItemSql = `
           INSERT INTO sale_return_items (
             sale_return_id,
@@ -282,9 +301,11 @@ export class SaleReturnService {
             discount_amount,
             tax_amount,
             total,
+            cost_price,
+            cost_subtotal,
             reason
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           saleReturnId,
@@ -296,6 +317,8 @@ export class SaleReturnService {
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.total,
+          costPrice,
+          costSubtotal,
           item.reason || null,
         ]);
 
@@ -631,8 +654,8 @@ export class SaleReturnService {
         sri.reason
       FROM sale_return_items sri
       INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
-      WHERE date(sr.created_at, 'localtime') >= date(?)
-        AND date(sr.created_at, 'localtime') <= date(?)
+      WHERE date(sr.created_at) >= date(?)
+        AND date(sr.created_at) <= date(?)
       ORDER BY sr.created_at DESC, sr.id DESC, sri.id ASC
     `;
     const rows = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
@@ -680,6 +703,23 @@ export class SaleReturnService {
     `;
     const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
     return result?.total_returns || 0;
+  }
+
+  /**
+   * Get total cost of returned items by date range
+   */
+  public async getSaleReturnsCostByDateRange(fromDate: string, toDate: string): Promise<number> {
+    const fromDateTime = `${fromDate} 00:00:00`;
+    const toDateTime = `${toDate} 23:59:59`;
+    const sql = `
+      SELECT COALESCE(SUM(sri.cost_subtotal), 0) as total_return_cost
+      FROM sale_return_items sri
+      JOIN sale_returns sr ON sri.sale_return_id = sr.id
+      WHERE datetime(sr.created_at) >= datetime(?) 
+        AND datetime(sr.created_at) <= datetime(?)
+    `;
+    const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+    return result?.total_return_cost || 0;
   }
 }
 

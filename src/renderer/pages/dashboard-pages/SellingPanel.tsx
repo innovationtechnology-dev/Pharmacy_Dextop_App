@@ -1278,31 +1278,28 @@ const SellingPanel: React.FC = () => {
   // Memoize cart totals to prevent recalculation on every render
   const subtotalValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-      return sum + (item.unitPrice * netPills);
+      // item.pills = originalPills when viewing history; net pills for new bills
+      return sum + (item.unitPrice * item.pills);
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const discountValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const netPills = item.pills;
       const itemSubtotal = item.unitPrice * netPills;
       return sum + ((itemSubtotal * item.discount) / 100);
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const taxValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const netPills = item.pills;
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;
       const discountedAmount = itemSubtotal - itemDiscount;
       return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const grandTotal = useMemo(() => {
     const baseTotal = subtotalValue - discountValue + taxValue;
@@ -1314,7 +1311,8 @@ const SellingPanel: React.FC = () => {
     return baseTotal;
   }, [subtotalValue, discountValue, taxValue, saleType, additionalDiscount]);
 
-  // Memoize net payable to avoid recalculation
+  // Memoize net payable: grandTotal holds original total (based on originalPills),
+  // so we subtract the returned amount to get the true net payable.
   const netPayable = useMemo(() => {
     return Math.max(0, grandTotal - currentSaleReturnTotal);
   }, [grandTotal, currentSaleReturnTotal]);
@@ -1399,26 +1397,38 @@ const SellingPanel: React.FC = () => {
             averageSellablePricePerPill: item.unitPrice,
           };
 
-          // Calculate discount percentage from discount amount
-          const subtotal = item.unitPrice * item.pills;
-          const discountPercent =
-            subtotal > 0 ? (item.discountAmount / subtotal) * 100 : 0;
+          // Use ORIGINAL quantities so QTY column shows what was actually sold (e.g. 10)
+          // The RET. column shows how many were returned (e.g. 8)
+          // Amount column computes net: (origPills - returnedQty) × unitPrice
+          const origPills = item.originalPills || item.pills;
+          const origDiscountAmt = item.originalDiscountAmount ?? item.discountAmount;
+          const origTaxAmt = item.originalTaxAmount ?? item.taxAmount;
+          const origTotal = item.originalTotal ?? item.total;
 
-          // Calculate tax percentage from tax amount
-          const taxableBase = subtotal - item.discountAmount;
+          // The user specifically requested that historical bills show the PRE-DISCOUNT
+          // original per-pill price, even if the database occasionally stores it as a net value.
+          // By reversing the subtotal, we guarantee the display matches the original sale expectation.
+          const originalSubtotal = item.originalSubtotal || item.subtotal;
+          const derivedUnitPrice = origPills > 0 ? Number((originalSubtotal / origPills).toFixed(2)) : item.unitPrice;
+
+          const subtotal = derivedUnitPrice * origPills;
+          const discountPercent =
+            subtotal > 0 ? (origDiscountAmt / subtotal) * 100 : 0;
+
+          const taxableBase = subtotal - origDiscountAmt;
           const taxPercent =
-            taxableBase > 0 ? (item.taxAmount / taxableBase) * 100 : 0;
+            taxableBase > 0 ? (origTaxAmt / taxableBase) * 100 : 0;
 
           const cartItem: CartItem = {
             medicine: medicineObj,
-            pills: item.pills,
-            unitPrice: item.unitPrice,
+            pills: origPills,
+            unitPrice: derivedUnitPrice,
             discount: discountPercent,
             tax: taxPercent,
             subtotal,
-            discountAmount: item.discountAmount,
-            taxAmount: item.taxAmount,
-            finalPrice: item.total,
+            discountAmount: origDiscountAmt,
+            taxAmount: origTaxAmt,
+            finalPrice: origTotal,
           };
 
           return recalculateSaleItem(cartItem);
@@ -2464,20 +2474,30 @@ const SellingPanel: React.FC = () => {
                 ) : (
                   <div className="divide-y divide-gray-100 dark:divide-gray-700">
                     {/* Table Header */}
+                    {(() => {
+                      const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
+                      return (
                     <div className="grid grid-cols-12 gap-1.5 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider">
                       <div className="col-span-1">Sr#</div>
                       <div className="col-span-2">Product</div>
                       <div className="col-span-2">Company</div>
                       <div className="col-span-1 text-center">Qty</div>
-                      <div className="col-span-2 text-center">Price</div>
+                      {showRetCol && (
+                        <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
+                      )}
+                      <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-1 text-center">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
+                      );
+                    })()}
                     {/* Cart Items */}
                     {cart.map((item, index) => {
                       const companyLabel = medicineCompanyLine(item.medicine);
+                      const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
+                      const returnedQty = returnedQuantities.get(item.medicine.id) || 0;
                       return (
                       <div
                         key={item.medicine.id}
@@ -2591,16 +2611,23 @@ const SellingPanel: React.FC = () => {
                                   : false)
                               }
                             >
-                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
                           </div>
-                          {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
-                            <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold text-center mt-1">
-                              {returnedQuantities.get(item.medicine.id)} returned
-                            </div>
-                          )}
                         </div>
-                        <div className="col-span-2 text-center min-w-0">
+                        {/* RET. column — dedicated returned qty cell */}
+                        {showRetCol && (
+                          <div className="col-span-1 text-center">
+                            {returnedQty > 0 ? (
+                              <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-700">
+                                -{returnedQty}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600 text-[10px]">—</span>
+                            )}
+                          </div>
+                        )}
+                        <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
 
                           <input
                             type="number"
@@ -2719,8 +2746,8 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
                           {symbol}{(() => {
-                            const returned = returnedQuantities.get(item.medicine.id) || 0;
-                            const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+                            // Backend already provides net pillars and total
+                            const netPills = item.pills;
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
                             const discountedAmount = itemSubtotal - itemDiscount;
@@ -2806,6 +2833,11 @@ const SellingPanel: React.FC = () => {
                         {cart.length} {cart.length === 1 ? 'Item' : 'Items'}
                       </span>
                     </div>
+                    {currentSaleReturnTotal > 0 && (
+                      <div className="ml-2 px-2 py-0.5 bg-rose-500 text-white text-[10px] font-black rounded border border-white/40 animate-pulse shadow-sm">
+                        HAS RETURNS
+                      </div>
+                    )}
                   </div>
                   <div
                     className={`font-bold text-white tracking-tight ${
@@ -2814,23 +2846,20 @@ const SellingPanel: React.FC = () => {
                   >
                     {formatCurrency(netPayable)}
                   </div>
-                  {currentSaleReturnTotal > 0 && (
+                  {currentSaleReturnTotal > 0 && selectedSale && (
                     <div className="mt-2 pt-2 border-t border-white/20">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/80">Original Total:</span>
-                        <span className="text-white/90 font-semibold">{formatCurrency(grandTotal)}</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(selectedSale.items.reduce((sum, i) => sum + (i.originalTotal || 0), 0))}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1">
                         <span className="text-white/80">Returned:</span>
-                        <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
+                        <span className="text-red-200 font-semibold">-{formatCurrency(selectedSale.items.reduce((sum, i) => sum + (i.returnedTotal || 0), 0))}</span>
                       </div>
-                      {grandTotal < currentSaleReturnTotal && (
-                        <div className="mt-2 pt-2 border-t border-red-300/30">
-                          <p className="text-xs text-red-200">
-                            ⚠️ Data inconsistency detected
-                          </p>
-                        </div>
-                      )}
+                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                        <span className="text-white/80 font-semibold">Net Total:</span>
+                        <span className="text-white font-bold">{formatCurrency(netPayable)}</span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -3379,6 +3408,14 @@ const SellingPanel: React.FC = () => {
                                   </span>
                                 </div>
                               )}
+                              {/* Return Status Badge */}
+                              {(saleReturnsMap.get(sale.saleId) || 0) > 0 && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-rose-100 dark:bg-rose-900/30 border border-rose-300 dark:border-rose-700 rounded animate-pulse">
+                                  <span className="text-[9px] font-black text-rose-700 dark:text-rose-400 uppercase tracking-tighter">
+                                    Item Returned
+                                  </span>
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-1.5 flex-shrink-0">
                               <span
@@ -3396,7 +3433,7 @@ const SellingPanel: React.FC = () => {
                                   }`}
                               >
                                 {symbol}
-                                {Math.max(0, sale.total - (saleReturnsMap.get(sale.saleId) || 0)).toFixed(2)}
+                                {sale.total.toFixed(2)}
                               </span>
                             </div>
                           </div>

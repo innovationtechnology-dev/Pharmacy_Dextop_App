@@ -142,6 +142,13 @@ export class PurchaseService {
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_purchases_created_at ON purchases(created_at)
     `);
+
+    // One-time migration to fix price_per_pill for existing items to account for discounts/taxes
+    await this.dbService.execute(`
+      UPDATE purchase_items 
+      SET price_per_pill = line_total / total_pills 
+      WHERE total_pills > 0 AND ABS(price_per_pill - (line_total / total_pills)) > 0.001
+    `);
   }
 
   private async migrateLegacyPurchases(): Promise<void> {
@@ -183,11 +190,11 @@ export class PurchaseService {
     this.assertMinimumExpiry(item.expiryDate, item.medicineName);
 
     const totalPills = item.packetQuantity * item.pillsPerPacket;
-    const pricePerPill = item.pricePerPacket / item.pillsPerPacket;
     const lineSubtotal = item.packetQuantity * item.pricePerPacket;
     const discountAmount = item.discountAmount ?? 0;
     const taxAmount = item.taxAmount ?? 0;
     const lineTotal = lineSubtotal - discountAmount + taxAmount;
+    const pricePerPill = lineTotal / totalPills;
 
     return {
       ...item,

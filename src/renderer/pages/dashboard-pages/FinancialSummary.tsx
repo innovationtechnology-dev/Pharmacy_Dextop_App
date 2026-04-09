@@ -95,7 +95,7 @@ const FinancialSummary = () => {
                 </span>
               </div>
               <span className="text-xs font-black text-gray-900 dark:text-white">
-                {formatCurrency(entry.value)}
+                {formatCurrency(Math.max(0, entry.value))}
               </span>
             </div>
           ))}
@@ -146,18 +146,25 @@ const FinancialSummary = () => {
     loadFinancialData();
   };
 
+  const toLocalIso = (d: Date) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const setCurrentMonth = () => {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    setFromDate(start.toISOString().split('T')[0]);
-    setToDate(now.toISOString().split('T')[0]);
+    setFromDate(toLocalIso(start));
+    setToDate(toLocalIso(now));
   };
 
   const setCurrentYear = () => {
     const now = new Date();
     const start = new Date(now.getFullYear(), 0, 1);
-    setFromDate(start.toISOString().split('T')[0]);
-    setToDate(now.toISOString().split('T')[0]);
+    setFromDate(toLocalIso(start));
+    setToDate(toLocalIso(now));
   };
 
   return (
@@ -190,9 +197,11 @@ const FinancialSummary = () => {
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-teal-50 dark:bg-teal-900/20 px-2.5 py-1.5 rounded-md border border-teal-200 dark:border-teal-600/50 shadow-sm">
-            <FiDollarSign className="w-3.5 h-3.5 text-teal-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Net Profit</span>
+          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border shadow-sm ${financialData.profit >= 0 ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-600/50'}`}>
+            <FiDollarSign className={`w-3.5 h-3.5 ${financialData.profit >= 0 ? 'text-teal-500' : 'text-red-500'}`} />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+              {financialData.profit >= 0 ? 'Net Profit' : 'Net Loss'}
+            </span>
             <span className={`text-xs font-bold ml-1 ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
               {formatCurrency(Math.max(0, financialData.profit))}
             </span>
@@ -338,15 +347,17 @@ const FinancialSummary = () => {
                     financialData.profit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'
                   }`}>
                     <div>
-                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Net Profit Margin</p>
+                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">
+                        {financialData.profit >= 0 ? 'Net Profit' : 'Net Loss'}
+                      </p>
                       <p className={`text-2xl font-black ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {formatCurrency(Math.max(0, financialData.profit))}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Margin %</p>
-                      <p className="text-xl font-bold text-gray-700 dark:text-gray-300">
-                         {financialData.sellingTotal > 0 ? Math.max(0, Math.min(100, Math.round((financialData.profit / financialData.sellingTotal) * 100))) : 0}%
+                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Profit Margin %</p>
+                      <p className={`text-xl font-bold ${financialData.profit >= 0 ? 'text-gray-700 dark:text-gray-300' : 'text-red-600'}`}>
+                         {financialData.sellingTotal > 0 ? Math.round((financialData.profit / financialData.sellingTotal) * 100) : 0}%
                       </p>
                     </div>
                   </div>

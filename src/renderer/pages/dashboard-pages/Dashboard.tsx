@@ -222,8 +222,13 @@ const buildRevenueSpark = (sales: SaleRecord[]) => {
 const getDefaultKpiDates = () => {
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  const toIso = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: toIso(firstDay), to: toIso(now) };
+  const toLocalIso = (d: Date) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+  return { from: toLocalIso(firstDay), to: toLocalIso(now) };
 };
 
 const Dashboard = () => {
@@ -431,8 +436,8 @@ const Dashboard = () => {
       },
       {
         id: 'profit',
-        title: 'Net Profit',
-        value: formatCurrency(Math.max(0, displayTotals.profit)),
+        title: displayTotals.profit >= 0 ? 'Net Profit' : 'Net Loss',
+        value: formatCurrency(Math.abs(displayTotals.profit)),
         icon: <FiTrendingUp />,
       },
       {
@@ -732,8 +737,12 @@ const Dashboard = () => {
 
                   <div className="flex items-center justify-between p-3 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100/50 dark:border-emerald-800/30">
                     <div>
-                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Net Profit</div>
-                      <div className="text-sm font-bold text-gray-900 dark:text-white">{formatCurrency(Math.max(0, displayTotals.profit))}</div>
+                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                        {displayTotals.profit >= 0 ? 'Net Profit' : 'Net Loss'}
+                      </div>
+                      <div className={`text-sm font-bold ${displayTotals.profit >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400'}`}>
+                        {formatCurrency(Math.abs(displayTotals.profit))}
+                      </div>
                     </div>
                     <div className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
                       displayTotals.profit >= 0 ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400' : 'bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400'

@@ -212,7 +212,7 @@ export class MedicineService {
                  THEN date(pi.expiry_date) ELSE NULL END) AS next_expiry_date,
         CASE 
           WHEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END) > 0
-            THEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN (pi.price_per_pill * pi.available_pills) ELSE 0 END) 
+            THEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN ((pi.price_per_packet * 1.0 / pi.pills_per_packet) * pi.available_pills) ELSE 0 END) 
                  / SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END)
           ELSE NULL
         END AS avg_sellable_price_per_pill

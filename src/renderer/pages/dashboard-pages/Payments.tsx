@@ -126,6 +126,13 @@ const getPaymentMethodLabel = (method: string) => {
   return paymentMethodLabels[method] || method;
 };
 
+const toLocalIsoDate = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const Payments: React.FC = () => {
   const { setHeader } = useDashboardHeader();
 
@@ -227,7 +234,7 @@ const Payments: React.FC = () => {
       
       if (periodType !== 'all') {
         const today = new Date();
-        toDate = today.toISOString().split('T')[0];
+        toDate = toLocalIsoDate(today);
         
         switch (periodType) {
           case 'today':
@@ -236,7 +243,7 @@ const Payments: React.FC = () => {
           case 'week':
             const weekAgo = new Date(today);
             weekAgo.setDate(weekAgo.getDate() - 7);
-            fromDate = weekAgo.toISOString().split('T')[0];
+            fromDate = toLocalIsoDate(weekAgo);
             break;
           case 'month':
             fromDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
@@ -529,7 +536,7 @@ const Payments: React.FC = () => {
     setBankName('');
     setAccountNumber('');
     setPaymentNotes('');
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(toLocalIsoDate(new Date()));
   };
 
   const handleViewPaymentHistory = (purchase: Purchase) => {
@@ -546,7 +553,7 @@ const Payments: React.FC = () => {
     setBankName('');
     setAccountNumber('');
     setPaymentNotes('');
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(toLocalIsoDate(new Date()));
   };
 
   const handleSubmitPayment = async () => {

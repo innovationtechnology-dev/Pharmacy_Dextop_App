@@ -21,6 +21,7 @@ interface Medicine {
   barcode?: string;
   name: string;
   manufacturer?: string;
+  brandName?: string;
   pillQuantity: number;
   status: MedicineStatus;
   sellablePills?: number;
@@ -1488,9 +1489,23 @@ const PurchasingPanel: React.FC = () => {
                             <div className="flex items-center gap-1.5">
                               <h4 className="font-semibold text-gray-900 dark:text-white text-sm break-words leading-tight" title={medicine.name}>{medicine.name}</h4>
                             </div>
+                            {(medicine.brandName || medicine.manufacturer) && (
+                              <div className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                                {medicine.brandName && (
+                                  <span className="font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 px-1 rounded border border-emerald-100 dark:border-emerald-800/40">
+                                    {medicine.brandName}
+                                  </span>
+                                )}
+                                {medicine.manufacturer && (
+                                  <span className="opacity-80 italic">
+                                    By: {medicine.manufacturer}
+                                  </span>
+                                )}
+                              </div>
+                            )}
                             {medicine.barcode && (
-                              <div className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400 break-words">
-                                {medicine.barcode}
+                              <div className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500 font-mono">
+                                [{medicine.barcode}]
                               </div>
                             )}
                           </div>
@@ -1577,8 +1592,9 @@ const PurchasingPanel: React.FC = () => {
                             <div className="font-medium text-gray-900 dark:text-white truncate text-[11px]" title={item.medicine.name}>
                               {item.medicine.name}
                             </div>
-                            {item.medicine.manufacturer && (
-                              <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate" title={item.medicine.manufacturer}>
+                            {(item.medicine.brandName || item.medicine.manufacturer) && (
+                              <div className="text-[10px] text-gray-500 dark:text-gray-400 truncate" title={`${item.medicine.brandName || ''} ${item.medicine.manufacturer || ''}`}>
+                                {item.medicine.brandName && <span className="font-bold text-emerald-600 dark:text-emerald-400 mr-1">{item.medicine.brandName}</span>}
                                 {item.medicine.manufacturer}
                               </div>
                             )}

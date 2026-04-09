@@ -198,12 +198,14 @@ export default function SalesReport() {
         existing.subtotal += row.subtotal;
         existing.discountAmount += row.discountAmount;
         existing.taxAmount += row.taxAmount;
+        (existing as any).returnedPills = ((existing as any).returnedPills || 0) + (row.returnedPills || 0);
       }
     });
 
     const groupedData = Array.from(map.values()).map(row => {
-      // Subtract additional discount from the total (it's applied at sale level, not item level)
-      const finalTotal = row.total - (row.additionalDiscountAmount || 0);
+      // Calculate net additional discount based on percentage, not fixed original amount
+      const extraDisc = (row.total * (row.additionalDiscount || 0)) / 100;
+      const finalTotal = row.total - extraDisc;
       return {
         ...row,
         total: finalTotal,
@@ -518,9 +520,16 @@ export default function SalesReport() {
                         )}
                       </div>
                       <div className="col-span-1 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
-                          {row.pills}
-                        </span>
+                        <div className="flex flex-col items-center">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
+                            {row.pills}
+                          </span>
+                          {((row as any).returnedPills > 0) && (
+                            <span className="text-[8px] font-black text-rose-500 mt-0.5 uppercase tracking-tighter">
+                              { (row as any).returnedPills } Ret.
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="col-span-2 text-right">
                         <div className="font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -591,9 +600,14 @@ export default function SalesReport() {
                                    <div className="text-[11px] font-semibold text-gray-800 dark:text-gray-200">{item.medicineName}</div>
                                    <div className="text-[9px] text-gray-500">ID: #{item.medicineId}</div>
                                 </div>
-                                <div className="col-span-2 text-center text-[11px] font-medium text-gray-600 dark:text-gray-400">
-                                   {item.pills}
-                                </div>
+                                 <div className="col-span-2 text-center text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                                    <div className="flex flex-col items-center">
+                                      <span>{item.pills}</span>
+                                      {item.returnedPills > 0 && (
+                                        <span className="text-[9px] text-gray-400 line-through decoration-red-400">Orig: {item.originalPills}</span>
+                                      )}
+                                    </div>
+                                 </div>
                                 <div className="col-span-2 text-right">
                                    <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
                                       {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
