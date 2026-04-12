@@ -42,11 +42,21 @@ interface Supplier {
 
 const MIN_EXPIRY_DAYS = 0;
 
+/** Same column template for cart header, item row, and insights line layer — keeps vertical borders aligned. */
+const PURCHASE_CART_GRID_TEMPLATE =
+  '40px minmax(140px, 1.35fr) 72px 64px 70px minmax(132px, 1.08fr) 58px 58px minmax(176px, 1.22fr) minmax(120px, 1fr)';
+
+const purchaseCartGridStyle = { gridTemplateColumns: PURCHASE_CART_GRID_TEMPLATE };
+
 interface PurchaseItem {
   medicine: Medicine;
   packetQuantity: number;
   pillsPerPacket: number;
   totalPills: number;
+  /** Rs per packet — what the user types under Pkt/Price */
+  purchasePricePerPacket: number;
+  /** per_packet: type one packet price (line = Pkt × price). line_total: type gross for all packets at once. */
+  priceEntryMode: 'per_packet' | 'line_total';
   totalAmount: number;
   pricePerPacket: number;
   pricePerPill: number;
@@ -63,13 +73,24 @@ interface PurchaseItem {
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
   const packetQuantity = Math.max(0, item.packetQuantity || 0);
   const pillsPerPacket = Math.max(1, item.pillsPerPacket || 1);
-  const totalAmount = Math.max(0, item.totalAmount || 0);
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
-  
-  // Calculate price per packet from total amount
-  const pricePerPacket = packetQuantity > 0 ? totalAmount / packetQuantity : 0;
-  
+
+  let purchasePricePerPacket = 0;
+  if (item.purchasePricePerPacket !== undefined && item.purchasePricePerPacket !== null) {
+    purchasePricePerPacket = Math.max(0, Number(item.purchasePricePerPacket) || 0);
+  } else if (packetQuantity > 0) {
+    const legacyTotal = Math.max(0, Number(item.totalAmount) || 0);
+    if (legacyTotal > 0) {
+      purchasePricePerPacket = legacyTotal / packetQuantity;
+    }
+  }
+
+  const totalAmount = packetQuantity * purchasePricePerPacket;
+
+  const pricePerPacket =
+    packetQuantity > 0 ? totalAmount / packetQuantity : purchasePricePerPacket;
+
   const totalPills = packetQuantity * pillsPerPacket;
   const pricePerPill = totalPills > 0 ? totalAmount / totalPills : 0;
   
@@ -84,6 +105,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
     ...item,
     packetQuantity,
     pillsPerPacket,
+    purchasePricePerPacket,
     totalAmount,
     pricePerPacket,
     discount: discountPercent,
@@ -98,32 +120,48 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
 };
 
 const getPricingInsights = (item: PurchaseItem) => {
-  const totalPills = Math.max(0, item.totalPills || 0);
-  const packetQuantity = Math.max(0, item.packetQuantity || 0);
-  const grossAmount = Math.max(0, item.totalAmount || 0);
-  const netAmount = Math.max(0, item.lineTotal || 0);
+  const pillsPerPacket = Math.max(1, item.pillsPerPacket || 1);
+  const packetQuantity = Math.max(0, Number(item.packetQuantity) || 0);
+  const totalPills = packetQuantity * pillsPerPacket;
+  const grossLine = Math.max(0, item.lineSubtotal || 0);
+  const netLine = Math.max(0, item.lineTotal || 0);
 
-  // User-entered purchase amount per pill/packet (before discount & tax).
-  const purchasePerPill = totalPills > 0 ? grossAmount / totalPills : 0;
-  const purchasePerPacket = packetQuantity > 0 ? grossAmount / packetQuantity : 0;
+  const hasEnteredPurchasePrice = grossLine > 0.0005;
 
-  // Effective per-pill/packet amount after discount and tax.
-  const sellingPerPill = totalPills > 0 ? netAmount / totalPills : 0;
-  const sellingPerPacket = packetQuantity > 0 ? netAmount / packetQuantity : 0;
+  // Sell = gross list per pill (Pkt/Price line before Disc% & Tax%) — does NOT move when only Disc%/Tax% change.
+  // Buy = net cost per pill after Disc% & Tax% — your actual purchase cost (moves with supplier discount/tax).
+  const sellPerPill =
+    hasEnteredPurchasePrice && totalPills > 0 ? grossLine / totalPills : 0;
+  const buyPerPill =
+    hasEnteredPurchasePrice && totalPills > 0 ? netLine / totalPills : 0;
 
-  // Savings/margin impact from discount and tax.
-  const profitPerPill = purchasePerPill - sellingPerPill;
-  const profitPerPacket = purchasePerPacket - sellingPerPacket;
-  const marginPerPill = purchasePerPill > 0 ? (profitPerPill / purchasePerPill) * 100 : 0;
-  const marginPerPacket = purchasePerPacket > 0 ? (profitPerPacket / purchasePerPacket) * 100 : 0;
+  const sellPerPacket =
+    hasEnteredPurchasePrice && packetQuantity > 0 ? grossLine / packetQuantity : 0;
+  const buyPerPacket =
+    hasEnteredPurchasePrice && packetQuantity > 0 ? netLine / packetQuantity : 0;
+
+  // Savings: list/gross minus what you pay (positive when supplier terms reduce your cost)
+  const profitPerPill = sellPerPill - buyPerPill;
+  const profitPerPacket = sellPerPacket - buyPerPacket;
+  const profitPercent =
+    sellPerPill > 0.0005 ? (profitPerPill / sellPerPill) * 100 : 0;
+
+  const hasDiscOrTax =
+    (item.discount || 0) > 0.0005 || (item.tax || 0) > 0.0005;
 
   return {
-    purchasePerPill,
-    sellingPerPill,
+    packetQuantity,
+    pillsPerPacket,
+    totalPills,
+    hasEnteredPurchasePrice,
+    hasDiscOrTax,
+    buyPerPill,
+    sellPerPill,
+    buyPerPacket,
+    sellPerPacket,
     profitPerPill,
     profitPerPacket,
-    marginPerPill,
-    marginPerPacket,
+    profitPercent,
   };
 };
 
@@ -252,6 +290,8 @@ const PurchasingPanel: React.FC = () => {
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const globalBarcodeBufferRef = useRef<string>('');
   const globalBarcodeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  /** Latest full medicine list for merging inventory/pricing into cart lines */
+  const medicinesRef = useRef<Medicine[]>([]);
 
   const loadMedicines = useCallback(async () => {
     try {
@@ -283,6 +323,36 @@ const PurchasingPanel: React.FC = () => {
     loadMedicines();
     loadSuppliers();
   }, [loadMedicines, loadSuppliers]);
+
+  useEffect(() => {
+    medicinesRef.current = medicines;
+  }, [medicines]);
+
+  /** Merge search/barcode payload with catalog row so retail avg price & fields are complete */
+  const mergeMedicineWithCatalog = useCallback((medicine: Medicine): Medicine => {
+    const master = medicinesRef.current.find((m) => m.id === medicine.id);
+    if (!master) return medicine;
+    return {
+      ...master,
+      ...medicine,
+      averageSellablePricePerPill:
+        medicine.averageSellablePricePerPill ?? master.averageSellablePricePerPill ?? null,
+      manufacturer: medicine.manufacturer ?? master.manufacturer,
+      brandName: medicine.brandName ?? master.brandName,
+    };
+  }, []);
+
+  /** When catalog loads, refresh pricing fields on existing cart rows */
+  useEffect(() => {
+    if (medicines.length === 0) return;
+    setCart((prev) =>
+      prev.map((row) => {
+        const fresh = medicines.find((m) => m.id === row.medicine.id);
+        if (!fresh) return row;
+        return { ...row, medicine: { ...row.medicine, ...fresh } };
+      })
+    );
+  }, [medicines]);
 
   // Reload suppliers when navigating back to this page
   useEffect(() => {
@@ -340,6 +410,7 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const addToCart = useCallback((medicine: Medicine) => {
+    const mergedMedicine = mergeMedicineWithCatalog(medicine);
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
 
@@ -347,6 +418,7 @@ const PurchasingPanel: React.FC = () => {
         const updatedItem = recalculatePurchaseItem({
           ...existingItem,
           packetQuantity: existingItem.packetQuantity + 1,
+          medicine: mergeMedicineWithCatalog(existingItem.medicine),
         });
         return prevCart.map((item) =>
           item.medicine.id === medicine.id ? updatedItem : item
@@ -354,9 +426,11 @@ const PurchasingPanel: React.FC = () => {
       }
 
       const baseItem: PurchaseItem = recalculatePurchaseItem({
-        medicine,
+        medicine: mergedMedicine,
         packetQuantity: 1,
-        pillsPerPacket: medicine.pillQuantity || 1,
+        pillsPerPacket: mergedMedicine.pillQuantity || 1,
+        purchasePricePerPacket: 0,
+        priceEntryMode: 'per_packet',
         totalPills: 0,
         totalAmount: 0,
         pricePerPacket: 0,
@@ -375,7 +449,7 @@ const PurchasingPanel: React.FC = () => {
     setShowAddMedicineModal(false);
     setSearchTerm('');
     setShowSearchResults(false);
-  }, []);
+  }, [mergeMedicineWithCatalog]);
 
   const handleBarcodeScan = useCallback(
     async (code: string) => {
@@ -788,8 +862,6 @@ const PurchasingPanel: React.FC = () => {
 
             // Calculate totalAmount from existing data
             // For old purchases, totalAmount = packetQuantity * pricePerPacket
-            const totalAmount = item.totalAmount || (item.packetQuantity * item.pricePerPacket);
-
             return recalculatePurchaseItem({
               medicine: {
                 id: item.medicineId,
@@ -801,7 +873,9 @@ const PurchasingPanel: React.FC = () => {
               },
               packetQuantity: item.packetQuantity,
               pillsPerPacket: item.pillsPerPacket,
-              totalAmount: totalAmount,
+              purchasePricePerPacket: item.pricePerPacket ?? 0,
+              priceEntryMode: 'per_packet',
+              totalAmount: item.totalAmount ?? item.packetQuantity * item.pricePerPacket,
               pricePerPacket: item.pricePerPacket,
               discount: discountPercent,
               tax: taxPercent,
@@ -1278,7 +1352,7 @@ const PurchasingPanel: React.FC = () => {
         {/* Main Content: Left (Products/Cart) and Right (Summary/History) */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 overflow-hidden min-h-0">
           {/* Left Side: Products and Cart */}
-          <div className="lg:col-span-8 flex flex-col overflow-hidden min-h-0 gap-3">
+          <div className="lg:col-span-9 flex flex-col overflow-hidden min-h-0 gap-3 min-w-0">
             {/* Top Section: PO, Date, Time, Supplier Info */}
             <div
               data-wedge-typing="true"
@@ -1564,31 +1638,67 @@ const PurchasingPanel: React.FC = () => {
                     <p className="text-sm">No items in purchase order</p>
                   </div>
                 ) : (
-                  <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm">
-                    {/* Header */}
-                    <div className="grid grid-cols-[40px_minmax(170px,240px)_80px_80px_100px_60px_60px_140px_120px] gap-2 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
-                      <div className="flex justify-center">Sr#</div>
-                      <div>Product</div>
-                      <div className="text-center">Pkt</div>
-                      <div className="text-center">Pills/Pkt</div>
-                      <div className="text-center">Pkt/Price</div>
-                      <div className="text-center">Disc%</div>
-                      <div className="text-center">Tax%</div>
-                      <div className="text-center">Expiry</div>
-                      <div className="text-right pr-9">Amount</div>
+                  <div className="w-full min-w-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-300 dark:border-gray-600 overflow-x-auto shadow-sm">
+                    {/* Table-style header: vertical grid lines between columns */}
+                    <div
+                      className="grid w-full min-w-[960px] items-center gap-0 border-b-2 border-gray-300 dark:border-gray-500 bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                      style={purchaseCartGridStyle}
+                    >
+                      <div className="flex justify-center" title="Line number">
+                        #
+                      </div>
+                      <div className="min-w-0" title="Medicine name, company, barcode">
+                        Item
+                      </div>
+                      <div className="text-center leading-tight" title="How many packs (boxes) you are buying">
+                        Packs
+                      </div>
+                      <div
+                        className="text-center leading-tight"
+                        title="Dose units in one pack: tablets, capsules, vials, etc."
+                      >
+                        Units / pack
+                      </div>
+                      <div
+                        className="text-center leading-tight"
+                        title="Total dose units = Packs × Units per pack"
+                      >
+                        Total units
+                      </div>
+                      <div
+                        className="text-center leading-tight"
+                        title="Choose per pack or whole line, then enter cost. Line amount = Packs × per-pack when per pack."
+                      >
+                        Buy price
+                      </div>
+                      <div className="text-center" title="Supplier discount % on this line (before tax)">
+                        Disc %
+                      </div>
+                      <div className="text-center" title="Tax % on the discounted amount">
+                        Tax %
+                      </div>
+                      <div className="text-center leading-tight" title="Expiry date and optional batch number">
+                        Expiry / batch
+                      </div>
+                      <div className="flex justify-end text-right pr-2 sm:pr-3" title="This line’s total after discount and tax">
+                        Line total
+                      </div>
                     </div>
-                    {/* Medicine Items */}
-                    <div className="divide-y divide-gray-100 dark:divide-gray-700/50">
+                    {/* Medicine Items — same column lines as header */}
+                    <div>
                       {cart.map((item, index) => (
-                        <div key={item.medicine.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-700/30 transition-all border-b border-gray-100 dark:border-gray-700/50">
-                          <div className="grid grid-cols-[40px_minmax(170px,240px)_80px_80px_100px_60px_60px_140px_120px] gap-2 px-4 py-3 items-center">
+                        <div key={item.medicine.id} className="border-b border-gray-200 dark:border-gray-600 last:border-b-0 hover:bg-gray-50/80 dark:hover:bg-gray-700/25 transition-colors">
+                          <div
+                            className="grid w-full min-w-[960px] gap-0 items-stretch [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
+                            style={purchaseCartGridStyle}
+                          >
                           {/* S.No */}
-                          <div className="flex justify-center text-[11px] text-gray-400 font-bold">
+                          <div className="flex h-full min-h-0 items-center justify-center text-[11px] text-gray-400 font-bold">
                             {index + 1}
                           </div>
 
                           {/* Medicine Name and Info */}
-                          <div className="min-w-0">
+                          <div className="min-w-0 h-full min-h-0 flex flex-col justify-start py-1">
                             <div className="font-medium text-gray-900 dark:text-white truncate text-[11px]" title={item.medicine.name}>
                               {item.medicine.name}
                             </div>
@@ -1608,7 +1718,7 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Packets */}
-                          <div>
+                          <div className="flex h-full min-h-0 items-center justify-center">
                             <input
                               type="number"
                               min="0"
@@ -1624,28 +1734,92 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Pills per packet */}
-                          <div className="text-center text-[12px] font-bold text-gray-500 dark:text-gray-400">
+                          <div className="flex h-full min-h-0 items-center justify-center text-center text-[12px] font-bold text-gray-500 dark:text-gray-400">
                             {item.pillsPerPacket}
                           </div>
 
-                          {/* Total Amount Input */}
-                          <div>
+                          {/* Total pills = Pkt × Pills/Pkt (recalculated when Pkt changes) */}
+                          <div className="flex h-full min-h-0 items-center justify-center text-center text-[12px] font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">
+                            {Math.max(0, Number(item.packetQuantity) || 0) * Math.max(1, item.pillsPerPacket || 1)}
+                          </div>
+
+                          {/* Price: per packet OR line total + amount input */}
+                          <div className="min-w-0 flex h-full min-h-0 flex-col justify-center gap-1 w-full">
+                            <select
+                              aria-label="Price entry mode"
+                              disabled={
+                                isCashier &&
+                                editingPurchaseId !== null &&
+                                !isWithin24Hours(selectedPurchase?.createdAt)
+                              }
+                              value={item.priceEntryMode ?? 'per_packet'}
+                              onChange={(e) => {
+                                if (
+                                  isCashier &&
+                                  editingPurchaseId !== null &&
+                                  !isWithin24Hours(selectedPurchase?.createdAt)
+                                ) {
+                                  return;
+                                }
+                                updateCartItemField(
+                                  item.medicine.id,
+                                  'priceEntryMode',
+                                  e.target.value as 'per_packet' | 'line_total'
+                                );
+                              }}
+                              className="w-full text-[9px] font-bold uppercase tracking-tight py-1 px-1 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200"
+                            >
+                              <option value="per_packet">Per packet</option>
+                              <option value="line_total">Line total</option>
+                            </select>
                             <input
                               type="number"
                               min="0"
-                              value={item.totalAmount || ''}
+                              title={
+                                item.priceEntryMode === 'line_total'
+                                  ? 'Gross amount for all packets (before Disc% / Tax%)'
+                                  : 'Price for one packet; line amount = Pkt × this'
+                              }
+                              value={
+                                (item.priceEntryMode === 'line_total'
+                                  ? item.lineSubtotal
+                                  : item.purchasePricePerPacket) || ''
+                              }
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => {
-                                if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                                if (
+                                  isCashier &&
+                                  editingPurchaseId !== null &&
+                                  !isWithin24Hours(selectedPurchase?.createdAt)
+                                ) {
+                                  return;
+                                }
                                 const numVal = parseFloat(e.target.value) || 0;
-                                updateCartItemField(item.medicine.id, 'totalAmount', numVal);
+                                const pktsRaw = Math.max(0, Number(item.packetQuantity) || 0);
+                                if (item.priceEntryMode === 'line_total') {
+                                  if (pktsRaw <= 0) {
+                                    updateCartItemField(item.medicine.id, 'purchasePricePerPacket', 0);
+                                  } else {
+                                    updateCartItemField(
+                                      item.medicine.id,
+                                      'purchasePricePerPacket',
+                                      numVal / pktsRaw
+                                    );
+                                  }
+                                } else {
+                                  updateCartItemField(
+                                    item.medicine.id,
+                                    'purchasePricePerPacket',
+                                    numVal
+                                  );
+                                }
                               }}
                               className="w-full h-8 text-center text-[12px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-emerald-500 outline-none transition-all dark:text-white shadow-sm"
                             />
                           </div>
 
                           {/* Discount */}
-                          <div>
+                          <div className="flex h-full min-h-0 items-center justify-center">
                             <input
                               type="text"
                               inputMode="numeric"
@@ -1701,7 +1875,7 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Tax */}
-                          <div>
+                          <div className="flex h-full min-h-0 items-center justify-center">
                             <input
                               type="text"
                               inputMode="numeric"
@@ -1757,7 +1931,7 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Expiry */}
-                          <div>
+                          <div className="flex h-full min-h-0 min-w-0 flex-col justify-center gap-1">
                             <input
                               type="date"
                               value={item.expiryDate}
@@ -1778,7 +1952,7 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Action / Trash */}
-                          <div className="flex items-center justify-end gap-3 pr-2">
+                          <div className="flex h-full min-h-0 items-center justify-end gap-2 pr-1 sm:pr-2">
                             <div className="text-right font-bold text-emerald-600 dark:text-emerald-400 text-[11px]">
                               {symbol} {item.lineTotal.toFixed(2)}
                             </div>
@@ -1801,21 +1975,41 @@ const PurchasingPanel: React.FC = () => {
                                 : 'text-red-600 dark:text-red-400';
 
                             return (
-                              <div className="px-4 pb-2">
-                                <div className="ml-[48px] text-[9px] flex flex-wrap items-center gap-3">
-                                  <span className="font-bold text-emerald-700 dark:text-emerald-400">
-                                    Buy/Pill: {symbol}{pricing.purchasePerPill.toFixed(2)}
+                              <div className="min-w-[960px] w-full border-t border-gray-200 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-900/30 px-2 sm:px-4 py-2 pl-8 sm:pl-10 text-[9px] flex flex-wrap items-center gap-x-3 gap-y-1">
+                                {!pricing.hasEnteredPurchasePrice ? (
+                                  <span className="text-gray-500 dark:text-gray-400 font-medium">
+                                    Enter Pkt/Price to see Sell/Pill (list), Buy/Pill (net), and savings.
                                   </span>
-                                  <span className="font-bold text-blue-700 dark:text-blue-400">
-                                    Sell/Pill: {symbol}{pricing.sellingPerPill.toFixed(2)}
-                                  </span>
-                                  <span className={`font-bold ${profitTone}`}>
-                                    Profit/Pill: {symbol}{pricing.profitPerPill.toFixed(2)} ({pricing.marginPerPill.toFixed(1)}%)
-                                  </span>
-                                  <span className="font-semibold text-gray-600 dark:text-gray-400">
-                                    Profit/Pkt: {symbol}{pricing.profitPerPacket.toFixed(2)} ({pricing.marginPerPacket.toFixed(1)}%)
-                                  </span>
-                                </div>
+                                ) : (
+                                  <>
+                                    <span
+                                      className="font-bold text-blue-700 dark:text-blue-400"
+                                      title="List per pill from your Pkt/Price (before Disc% & Tax%). Stays the same when you only change discount or tax."
+                                    >
+                                      Sell/Pill: {symbol}{pricing.sellPerPill.toFixed(2)}
+                                    </span>
+                                    <span
+                                      className="font-bold text-emerald-700 dark:text-emerald-400"
+                                      title="Net cost per pill after Disc% & Tax% — what you actually pay"
+                                    >
+                                      Buy/Pill: {symbol}{pricing.buyPerPill.toFixed(2)}
+                                    </span>
+                                    <span
+                                      className={`font-bold ${profitTone}`}
+                                      title="Sell/Pill minus Buy/Pill (savings from supplier terms on this line)"
+                                    >
+                                      Profit/Pill: {symbol}{pricing.profitPerPill.toFixed(2)}
+                                    </span>
+                                    <span className={`font-semibold ${profitTone}`}>
+                                      Profit %: {pricing.profitPercent.toFixed(1)}%
+                                    </span>
+                                    {!pricing.hasDiscOrTax && (
+                                      <span className="text-[8px] text-gray-500 dark:text-gray-400 w-full basis-full">
+                                        Buy/Pill matches Sell/Pill until you enter Disc% or Tax%.
+                                      </span>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             );
                           })()}
@@ -1830,7 +2024,7 @@ const PurchasingPanel: React.FC = () => {
           {/* Right Side: Summary & History */}
           <div
             data-wedge-typing="true"
-            className="lg:col-span-4 flex flex-col gap-3 overflow-hidden min-h-0 h-full"
+            className="lg:col-span-3 flex flex-col gap-3 overflow-hidden min-h-0 h-full min-w-0"
           >
             {/* Payment Summary Section */}
             <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 flex-shrink-0 space-y-4">
