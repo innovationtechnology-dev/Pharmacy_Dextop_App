@@ -9,8 +9,6 @@ import {
   FiFilter,
   FiEye,
   FiBox,
-  FiCheckCircle,
-  FiTrendingUp,
   FiAlertTriangle
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -90,61 +88,49 @@ const Stocks: React.FC = () => {
   }, [medicines]);
 
   return (
-    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
+    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gray-50 dark:bg-gray-950 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       
-      {/* Stats Header Row */}
-      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
+      {/* Stats — neutral chips; status shown with small accent dots only */}
+      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-2">
         
-        {/* Total Items */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-700/50 shadow-sm">
-            <FiBox className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600">
+            <FiBox className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
+            <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
               Total Items
             </span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+            <span className="text-xs font-bold text-gray-900 dark:text-gray-100 tabular-nums">
               {stats.totalItems}
             </span>
-          </div>
         </div>
 
-        {/* Healthy Stock */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-700/50 shadow-sm">
-            <FiCheckCircle className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600">
+            <span className="w-1.5 h-1.5 rounded-full bg-gray-400 dark:bg-gray-500" aria-hidden />
+            <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
               Healthy
             </span>
-            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+            <span className="text-xs font-bold text-gray-900 dark:text-gray-100 tabular-nums">
               {stats.totalItems - stats.lowStock - stats.outOfStock}
             </span>
-          </div>
         </div>
 
-        {/* Low Stock */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-700/50 shadow-sm">
-            <FiAlertTriangle className="w-3.5 h-3.5 text-orange-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600">
+            <FiAlertTriangle className="w-3.5 h-3.5 text-gray-600 dark:text-gray-400" />
+            <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
               Low Stock
             </span>
-            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+            <span className="text-xs font-bold text-gray-900 dark:text-gray-100 tabular-nums">
               {stats.lowStock}
             </span>
-          </div>
         </div>
 
-        {/* Out of Stock */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-md border border-red-200 dark:border-red-700/50 shadow-sm">
-            <FiAlertCircle className="w-3.5 h-3.5 text-red-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+        <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600">
+            <FiAlertCircle className="w-3.5 h-3.5 text-gray-600 dark:text-gray-400" />
+            <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
               Out of Stock
             </span>
-            <span className="text-xs font-bold text-red-600 dark:text-red-400 ml-1">
+            <span className="text-xs font-bold text-gray-900 dark:text-gray-100 tabular-nums">
               {stats.outOfStock}
             </span>
-          </div>
         </div>
 
         <button
@@ -158,7 +144,7 @@ const Stocks: React.FC = () => {
 
       {/* Criteria & Search Section */}
       <div className="flex-shrink-0 mb-2">
-        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md">
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
           <div className="p-3 flex flex-col sm:flex-row gap-4 items-end">
             <div className="flex-1 w-full">
               <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
@@ -171,7 +157,7 @@ const Stocks: React.FC = () => {
                   placeholder="Filter by name, brand, or manufacturer..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white"
+                  className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-gray-400 outline-none dark:text-white"
                 />
               </div>
             </div>
@@ -183,7 +169,7 @@ const Stocks: React.FC = () => {
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value as any)}
-                className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-emerald-500 outline-none dark:text-white"
+                className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-gray-400 outline-none dark:text-white"
               >
                 <option value="all">All Stocks</option>
                 <option value="low">Low Inventory</option>
@@ -194,12 +180,12 @@ const Stocks: React.FC = () => {
         </div>
       </div>
 
-      {/* Table Section */}
+      {/* Table Section — bordered grid (readability) */}
       <div className="flex-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
-        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
+        <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
           
           {/* Grid Header Row */}
-          <div className="grid grid-cols-12 gap-3 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          <div className="grid grid-cols-12 gap-0 min-w-[880px] w-full items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide sticky top-0 z-10 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:py-2.5">
             <div className="col-span-1">ID</div>
             <div className="col-span-4">Medicine Details</div>
             <div className="col-span-2 text-center">Safety Margin</div>
@@ -209,10 +195,10 @@ const Stocks: React.FC = () => {
           </div>
 
           {/* Grid Body */}
-          <div className="flex-1 overflow-visible md:overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-x-auto overflow-y-auto overscroll-contain border-x border-b border-gray-200/90 dark:border-gray-600/90 rounded-b-lg">
             {isLoading ? (
               <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                <FiRefreshCw className="w-8 h-8 animate-spin mb-2 text-emerald-500" />
+                <FiRefreshCw className="w-8 h-8 animate-spin mb-2 text-gray-400" />
                 <p className="text-xs">Analyzing stocks...</p>
               </div>
             ) : filteredStocks.length === 0 ? (
@@ -223,49 +209,57 @@ const Stocks: React.FC = () => {
               (selectedMedicineForDetails 
                 ? filteredStocks.filter(med => med.id === selectedMedicineForDetails.id) 
                 : filteredStocks
-              ).map((med) => {
+              ).map((med, rowIndex) => {
                 const isOutOfStock = med.totalAvailablePills === 0;
                 const isLowStock = !isOutOfStock && med.totalAvailablePills <= med.minimumStockLevel;
                 const safetyMargin = Math.min(100, (med.totalAvailablePills / (med.minimumStockLevel || 100)) * 50);
 
                 return (
                   <React.Fragment key={med.id}>
-                    <div className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b ${selectedMedicineForDetails?.id === med.id ? 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-emerald-50/20 dark:hover:bg-emerald-900/5'} transition-all`}>
-                      <div className="col-span-1 text-gray-400 dark:text-gray-600 font-bold">#{med.id}</div>
+                    <div
+                      className={`grid grid-cols-12 gap-0 min-w-[880px] w-full items-center text-[10px] border-b border-gray-200 dark:border-gray-600 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:py-2 ${
+                        selectedMedicineForDetails?.id === med.id
+                          ? 'bg-gray-100 dark:bg-gray-700/40 border-gray-300 dark:border-gray-500'
+                          : rowIndex % 2 === 0
+                            ? 'bg-white dark:bg-gray-800/30 hover:bg-gray-100/90 dark:hover:bg-gray-700/35'
+                            : 'bg-gray-50/95 dark:bg-gray-800/55 hover:bg-gray-100/90 dark:hover:bg-gray-700/40'
+                      } transition-colors`}
+                    >
+                      <div className="col-span-1 text-gray-400 dark:text-gray-600 font-bold tabular-nums">#{med.id}</div>
                     
-                    <div className="col-span-4">
+                    <div className="col-span-4 min-w-0 py-1">
                       <div className="font-bold text-gray-900 dark:text-white uppercase truncate">{med.name}</div>
                       <div className="text-[9px] text-gray-400 dark:text-gray-500 font-medium">
                         {med.brandName || 'Generic'} • {med.manufacturer || 'Unknown Mfr'}
                       </div>
                     </div>
 
-                    <div className="col-span-2 flex flex-col items-center px-4">
-                      <div className="w-full h-1 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden">
+                    <div className="col-span-2 flex flex-col items-center justify-center gap-0.5 px-1 sm:px-2 py-1">
+                      <div className="w-full h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div 
-                          className={`h-full ${isOutOfStock ? 'bg-red-500' : isLowStock ? 'bg-orange-500' : 'bg-emerald-500'}`}
+                          className={`h-full ${isOutOfStock ? 'bg-red-700/85' : isLowStock ? 'bg-amber-600/85' : 'bg-gray-600 dark:bg-gray-400'}`}
                           style={{ width: `${safetyMargin}%` }}
                         />
                       </div>
-                      <span className={`text-[8px] mt-1 font-black uppercase tracking-tighter ${isOutOfStock ? 'text-red-500' : isLowStock ? 'text-orange-500' : 'text-emerald-500'}`}>
-                        {isOutOfStock ? 'Crticial' : isLowStock ? 'Low' : 'Healthy'}
+                      <span className={`text-[8px] mt-1 font-bold uppercase tracking-tight ${isOutOfStock ? 'text-red-800 dark:text-red-300' : isLowStock ? 'text-amber-900 dark:text-amber-200' : 'text-gray-600 dark:text-gray-400'}`}>
+                        {isOutOfStock ? 'Critical' : isLowStock ? 'Low' : 'Healthy'}
                       </span>
                     </div>
 
-                    <div className="col-span-2 text-right">
-                      <span className={`text-xs font-black tabular-nums ${isOutOfStock ? 'text-red-500' : isLowStock ? 'text-orange-500' : 'text-gray-900 dark:text-white'}`}>
+                    <div className="col-span-2 flex justify-end items-center">
+                      <span className={`text-xs font-bold tabular-nums ${isOutOfStock ? 'text-red-800 dark:text-red-300' : isLowStock ? 'text-amber-900 dark:text-amber-100' : 'text-gray-900 dark:text-white'}`}>
                         {(med.totalAvailablePills || 0).toLocaleString()}
                       </span>
                     </div>
 
-                    <div className="col-span-2 text-right font-medium text-gray-500 dark:text-gray-400">
+                    <div className="col-span-2 flex justify-end items-center font-medium text-gray-500 dark:text-gray-400 tabular-nums">
                       {(med.minimumStockLevel || 0).toLocaleString()}
                     </div>
 
-                    <div className="col-span-1 text-center font-medium text-gray-500">
+                    <div className="col-span-1 flex justify-center items-center font-medium text-gray-500">
                        <button
                          onClick={() => setSelectedMedicineForDetails(selectedMedicineForDetails?.id === med.id ? null : { id: med.id, name: med.name })}
-                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedMedicineForDetails?.id === med.id ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
+                          className={`px-2.5 py-1 text-[10px] font-semibold uppercase rounded border transition-colors ${selectedMedicineForDetails?.id === med.id ? 'bg-gray-200 dark:bg-gray-600 text-gray-900 dark:text-white border-gray-300 dark:border-gray-500 hover:bg-gray-300 dark:hover:bg-gray-500' : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
                          title={selectedMedicineForDetails?.id === med.id ? "Close Batch Details" : "View Batch Details"}
                        >
                          {selectedMedicineForDetails?.id === med.id ? "Close" : "View"}
@@ -275,7 +269,7 @@ const Stocks: React.FC = () => {
                   
                   {/* Expanded Row for Inline Details */}
                   {selectedMedicineForDetails?.id === med.id && (
-                    <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200">
+                    <div className="min-w-[880px] border-b border-x-0 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/50 animate-in slide-in-from-top-1 fade-in duration-200">
                       <MedicineInventoryDetails
                         medicineId={selectedMedicineForDetails.id}
                         medicineName={selectedMedicineForDetails.name}
@@ -292,7 +286,7 @@ const Stocks: React.FC = () => {
           
           {/* Table Footer Stats */}
           {!isLoading && filteredStocks.length > 0 && (
-            <div className="px-4 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-t border-gray-100 dark:border-gray-700 flex justify-between items-center text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+            <div className="px-4 py-2.5 bg-gray-50/90 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600 flex justify-between items-center text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
               <span>Showing {filteredStocks.length} of {medicines.length} medicines</span>
               <div className="flex gap-4">
                  <span>Total Pooled Units: {(stats.totalPills || 0).toLocaleString()}</span>

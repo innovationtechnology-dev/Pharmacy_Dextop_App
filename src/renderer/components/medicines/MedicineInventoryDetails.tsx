@@ -90,7 +90,7 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/40 backdrop-blur-sm">
         <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-xl flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-emerald-100 dark:border-emerald-900/30 border-t-emerald-500 rounded-full animate-spin"></div>
+          <div className="w-12 h-12 border-4 border-gray-200 dark:border-gray-600 border-t-gray-600 dark:border-t-gray-300 rounded-full animate-spin"></div>
           <p className="text-sm font-medium text-gray-500 dark:text-gray-400">Loading inventory breakdown...</p>
         </div>
       </div>
@@ -119,7 +119,7 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
     const isExpired = daysToExpiry <= 0;
 
     return (
-      <div key={idx} className={`grid grid-cols-12 gap-3 ${inline ? 'px-8 py-3 bg-white dark:bg-gray-900 border-b border-gray-50 dark:border-gray-800' : 'px-5 py-4 border-b border-gray-50 dark:border-gray-800/50'} items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all`}>
+      <div key={idx} className={`grid grid-cols-12 gap-3 ${inline ? 'px-8 py-3 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700' : 'px-5 py-4 border-b border-gray-50 dark:border-gray-800/50'} items-center hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors`}>
         {/* Purchase Date Column */}
         <div className="col-span-2">
           <div className="text-[10px] font-medium text-gray-800 dark:text-gray-100">
@@ -138,7 +138,7 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
           <div className="flex items-center gap-2">
             <div className="text-[10px] font-bold text-gray-700 dark:text-gray-200">{batch.pillQuantity || 0} pills/pack</div>
           </div>
-          <div className={`text-[9px] mt-1 flex items-center gap-1 ${isExpired ? 'text-red-500' : isExpiringSoon ? 'text-orange-500' : 'text-emerald-500'}`}>
+          <div className={`text-[9px] mt-1 flex items-center gap-1 ${isExpired ? 'text-red-800 dark:text-red-300' : isExpiringSoon ? 'text-amber-900 dark:text-amber-200/90' : 'text-gray-600 dark:text-gray-400'}`}>
             <FiCalendar className="w-2.5 h-2.5" />
             <span>Exp: {batch.expiryDate ? new Date(batch.expiryDate).toLocaleDateString() : '—'}</span>
           </div>
@@ -150,9 +150,9 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
             <span className="text-gray-400 uppercase font-black tracking-widest leading-none">Stock Flow</span>
             <span className="font-bold text-gray-700 dark:text-gray-300 tabular-nums">{(batch.availablePills || 0)} / {(batch.totalPills || 0)} units</span>
           </div>
-          <div className="h-1.5 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden shadow-inner flex">
+          <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden flex">
             <div 
-              className={`h-full ${remainingPercent > 50 ? 'bg-emerald-500' : remainingPercent > 20 ? 'bg-orange-400' : 'bg-red-500'}`}
+              className={`h-full ${remainingPercent > 50 ? 'bg-gray-600 dark:bg-gray-400' : remainingPercent > 20 ? 'bg-amber-600/90' : 'bg-red-700/90'}`}
               style={{ width: `${remainingPercent}%` }}
             />
           </div>
@@ -166,7 +166,7 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
           <div className="text-[9px] text-gray-400 mt-1 flex items-center justify-end gap-1">
             <span>Cost: {currencySymbol}{((batch.originalPricePerPacket || 0) / (batch.pillQuantity || 1)).toFixed(2)}</span>
             <span className="w-0.5 h-0.5 bg-gray-400 rounded-full"></span>
-            <span className="text-emerald-500 font-bold">Disc: {currencySymbol}{((batch.discountPerPacket || 0) / (batch.pillQuantity || 1)).toFixed(2)}</span>
+            <span className="text-gray-600 dark:text-gray-400 font-medium">Disc: {currencySymbol}{((batch.discountPerPacket || 0) / (batch.pillQuantity || 1)).toFixed(2)}</span>
           </div>
         </div>
       </div>
@@ -177,17 +177,17 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
     if (details.length === 0) return <div className="p-6 text-center text-[10px] text-gray-500 bg-gray-50 dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800">No purchase batches recorded for this medicine.</div>;
 
     return (
-      <div className="bg-gray-50/50 dark:bg-gray-800/30 shadow-inner w-full">
-        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100/50 dark:bg-gray-800 text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest border-y border-gray-200 dark:border-gray-700">
+      <div className="bg-gray-50 dark:bg-gray-900/60 shadow-inner w-full border-t border-gray-200 dark:border-gray-700">
+        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100 dark:bg-gray-800 text-[9px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide border-b border-gray-200 dark:border-gray-700">
            <div className="col-span-2">Purchase Date</div>
            <div className="col-span-3">Pack Info</div>
            <div className="col-span-4">Availability</div>
            <div className="col-span-3 text-right">Pricing Metrics</div>
         </div>
-        <div className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900/40">
+        <div className="divide-y divide-gray-200 dark:divide-gray-700 bg-white dark:bg-gray-900/30">
           {details.map((batch, idx) => renderRow(batch, idx))}
         </div>
-        <div className="px-8 py-2 bg-emerald-50/80 dark:bg-emerald-900/10 border-b border-emerald-100/50 dark:border-emerald-900/30 flex gap-6 text-[9px] text-emerald-800 dark:text-emerald-400 tracking-wide">
+        <div className="px-8 py-2.5 bg-gray-100 dark:bg-gray-800/80 border-t border-gray-200 dark:border-gray-700 flex flex-wrap gap-x-6 gap-y-1 text-[9px] text-gray-700 dark:text-gray-300 tracking-wide">
           <div><span className="font-bold opacity-70 uppercase mr-1">Total Stocked:</span> {stats.totalPurchased.toLocaleString()}</div>
           <div><span className="font-bold opacity-70 uppercase mr-1">Total Sold:</span> {stats.totalSold.toLocaleString()}</div>
           <div><span className="font-bold opacity-70 uppercase mr-1">Current Assets:</span> <span className="font-black">{stats.totalAvailable.toLocaleString()}</span></div>
@@ -247,7 +247,7 @@ const MedicineInventoryDetails: React.FC<MedicineInventoryDetailsProps> = ({
         content: (
           <div className="space-y-1">
              <p className="text-[10px] text-gray-500 dark:text-gray-400">
-               Showing batch-level breakdown for item <span className="font-bold text-emerald-600 dark:text-emerald-400">#{medicineId}</span>. 
+               Showing batch-level breakdown for item <span className="font-bold text-gray-800 dark:text-gray-200">#{medicineId}</span>. 
                The safety margin indicators show real-time exhaustion rates per procurement lot.
              </p>
           </div>

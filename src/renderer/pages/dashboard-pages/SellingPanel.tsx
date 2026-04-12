@@ -2458,7 +2458,7 @@ const SellingPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
+              <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 overscroll-contain">
                 {cart.length === 0 ? (
                   <div className="p-12 text-center">
                     <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 mb-4">
@@ -2472,16 +2472,18 @@ const SellingPanel: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {/* Table Header */}
+                  <div className="min-w-0 border border-gray-200/80 dark:border-gray-600/80 rounded-b-lg overflow-hidden">
+                    {/* Table Header — grid lines match Purchasing Panel */}
                     {(() => {
                       const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
                       return (
-                    <div className="grid grid-cols-12 gap-1.5 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider">
+                    <div
+                      className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                    >
                       <div className="col-span-1">Sr#</div>
                       <div className="col-span-2">Product</div>
                       <div className="col-span-2">Company</div>
-                      <div className="col-span-1 text-center">Qty</div>
+                      <div className="col-span-1 text-center">Pill QTY</div>
                       {showRetCol && (
                         <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
                       )}
@@ -2501,7 +2503,7 @@ const SellingPanel: React.FC = () => {
                       return (
                       <div
                         key={item.medicine.id}
-                        className="grid grid-cols-12 gap-1.5 px-3 py-2.5 hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30"
+                        className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
                       >
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
@@ -2539,7 +2541,7 @@ const SellingPanel: React.FC = () => {
                               type="text"
                               inputMode="numeric"
                               autoComplete="off"
-                              aria-label="Quantity"
+                              aria-label="Pill quantity"
                               value={
                                 qtyInputDraft[item.medicine.id] ??
                                 (item.pills === 0 ? '' : String(item.pills))

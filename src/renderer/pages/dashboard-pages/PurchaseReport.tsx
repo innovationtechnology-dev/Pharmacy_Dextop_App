@@ -55,6 +55,26 @@ interface Supplier {
 
 const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
 
+/** SQLite/IPC often returns numeric columns as strings; never use `+` in reduce without coercing or values concatenate into a giant "number". */
+function sumPurchaseLinePills(
+  items: Array<
+    PurchaseItem & { total_pills?: unknown; packet_quantity?: unknown; pills_per_packet?: unknown }
+  >
+): number {
+  let sum = 0;
+  for (const i of items) {
+    const raw = i.totalPills ?? i.total_pills;
+    let n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      const pq = Number(i.packetQuantity ?? i.packet_quantity) || 0;
+      const ppp = Number(i.pillsPerPacket ?? i.pills_per_packet) || 0;
+      n = pq * ppp;
+    }
+    if (Number.isFinite(n) && n >= 0) sum += n;
+  }
+  return sum;
+}
+
 export default function Purchases() {
   const today = useMemo(() => {
     const d = new Date();
@@ -254,11 +274,26 @@ export default function Purchases() {
     return filteredPurchases.slice(start, start + pageSize);
   }, [filteredPurchases, page, pageSize]);
 
-  // Stats
-  const totalPurchaseAmount = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.grandTotal, 0), [filteredPurchases]);
-  const totalPaid = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.paymentAmount, 0), [filteredPurchases]);
-  const totalRemaining = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.remainingBalance, 0), [filteredPurchases]);
-  const totalItems = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.items.reduce((s, i) => s + i.totalPills, 0), 0), [filteredPurchases]);
+  // Stats — coerce with Number() so SQLite/IPC string values never string-concatenate in reduce (+).
+  const totalPurchaseAmount = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.grandTotal) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalPaid = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.paymentAmount) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalRemaining = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.remainingBalance) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalItems = useMemo(() => {
+    let sum = 0;
+    for (const p of filteredPurchases) {
+      if (Array.isArray(p.items)) sum += sumPurchaseLinePills(p.items);
+    }
+    return sum;
+  }, [filteredPurchases]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">

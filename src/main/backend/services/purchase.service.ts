@@ -2,6 +2,33 @@ import { getDatabaseService } from './database.service';
 
 const MIN_PURCHASE_EXPIRY_DAYS = 90;
 
+/** Normalize SQLite row so numeric fields are real numbers (avoids string-concat bugs in renderer reducers). */
+function mapPurchaseItemDbRow(item: any) {
+  const packetQuantity = Number(item.packet_quantity) || 0;
+  const pillsPerPacket = Number(item.pills_per_packet) || 0;
+  const totalPillsRaw = Number(item.total_pills);
+  const totalPills =
+    Number.isFinite(totalPillsRaw) && totalPillsRaw >= 0
+      ? totalPillsRaw
+      : Math.max(0, Math.round(packetQuantity * pillsPerPacket));
+  return {
+    id: item.id,
+    medicineId: item.medicine_id,
+    medicineName: item.medicine_name,
+    packetQuantity,
+    pillsPerPacket,
+    totalPills,
+    availablePills: Number(item.available_pills) || 0,
+    pricePerPacket: Number(item.price_per_packet) || 0,
+    pricePerPill: Number(item.price_per_pill) || 0,
+    discountAmount: Number(item.discount_amount) || 0,
+    taxAmount: Number(item.tax_amount) || 0,
+    lineSubtotal: Number(item.line_subtotal) || 0,
+    lineTotal: Number(item.line_total) || 0,
+    expiryDate: item.expiry_date,
+  };
+}
+
 export interface PurchaseItemInput {
   medicineId: number;
   medicineName: string;
@@ -434,22 +461,7 @@ export class PurchaseService {
       notes: purchase.notes,
       createdAt: purchase.created_at,
       updatedAt: purchase.updated_at,
-      items: (itemsMap.get(purchase.id) || []).map((item: any) => ({
-        id: item.id,
-        medicineId: item.medicine_id,
-        medicineName: item.medicine_name,
-        packetQuantity: item.packet_quantity,
-        pillsPerPacket: item.pills_per_packet,
-        totalPills: item.total_pills,
-        availablePills: item.available_pills,
-        pricePerPacket: item.price_per_packet,
-        pricePerPill: item.price_per_pill,
-        discountAmount: item.discount_amount,
-        taxAmount: item.tax_amount,
-        lineSubtotal: item.line_subtotal,
-        lineTotal: item.line_total,
-        expiryDate: item.expiry_date,
-      })),
+      items: (itemsMap.get(purchase.id) || []).map((item: any) => mapPurchaseItemDbRow(item)),
     }));
   }
 
@@ -490,22 +502,7 @@ export class PurchaseService {
       notes: purchase.notes || undefined,
       createdAt: purchase.created_at,
       updatedAt: purchase.updated_at,
-      items: items.map((item: any) => ({
-        id: item.id, // Include the purchase item ID
-        medicineId: item.medicine_id,
-        medicineName: item.medicine_name,
-        packetQuantity: item.packet_quantity,
-        pillsPerPacket: item.pills_per_packet,
-        totalPills: item.total_pills,
-        availablePills: item.available_pills,
-        pricePerPacket: item.price_per_packet,
-        pricePerPill: item.price_per_pill,
-        discountAmount: item.discount_amount,
-        taxAmount: item.tax_amount,
-        lineSubtotal: item.line_subtotal,
-        lineTotal: item.line_total,
-        expiryDate: item.expiry_date,
-      })),
+      items: items.map((item: any) => mapPurchaseItemDbRow(item)),
     };
   }
 
@@ -618,21 +615,49 @@ export class PurchaseService {
   }
 
   /**
-   * Delete a purchase and its items.
+   * Delete a purchase, all its lines, supplier payment rows, and any GRN rows.
+   * Blocks if any stock from this PO was already sold (pills were deducted for sales).
    */
   public async deletePurchase(purchaseId: number): Promise<void> {
-    // Check if purchase exists
     const purchase = await this.dbService.queryOne('SELECT id FROM purchases WHERE id = ?', [purchaseId]);
     if (!purchase) {
       throw new Error(`Purchase with id ${purchaseId} not found`);
     }
 
+    const oldItems = await this.dbService.query(
+      'SELECT medicine_id, total_pills, available_pills FROM purchase_items WHERE purchase_id = ?',
+      [purchaseId]
+    );
+
+    for (const row of oldItems) {
+      const total = Number(row.total_pills) || 0;
+      const avail = Number(row.available_pills) ?? 0;
+      if (avail < total) {
+        const sold = total - avail;
+        throw new Error(
+          `Cannot delete this purchase: ${sold} pill(s) from this order were already sold. Remove or adjust those sales before deleting the purchase.`
+        );
+      }
+    }
+
+    const hasGrn = await this.dbService.queryOne(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='goods_received_notes'"
+    );
+
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Delete purchase items first (CASCADE should handle this, but being explicit)
+      if (hasGrn) {
+        await this.dbService.execute(
+          `DELETE FROM grn_items WHERE grn_id IN (SELECT id FROM goods_received_notes WHERE purchase_id = ?)`,
+          [purchaseId]
+        );
+        await this.dbService.execute('DELETE FROM goods_received_notes WHERE purchase_id = ?', [purchaseId]);
+      }
+
+      await this.dbService.execute('DELETE FROM purchase_payments WHERE purchase_id = ?', [purchaseId]);
       await this.dbService.execute('DELETE FROM purchase_items WHERE purchase_id = ?', [purchaseId]);
-      // Delete the purchase
       await this.dbService.execute('DELETE FROM purchases WHERE id = ?', [purchaseId]);
+
       await this.dbService.execute('COMMIT');
     } catch (error) {
       await this.dbService.execute('ROLLBACK');

@@ -30,6 +30,8 @@ export interface MedicineWithInventory extends Medicine {
   manufacturer?: string;
   brandName?: string;
   minimumStockLevel: number;
+  /** True if any purchase, sale, or return line references this medicine (name/barcode edits blocked). */
+  hasTransactionHistory: boolean;
 }
 
 export interface LowStockAlert {
@@ -182,6 +184,12 @@ export class MedicineService {
         m.manufacturer,
         m.brand_name,
         COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM purchase_items WHERE medicine_id = m.id LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sale_items WHERE medicine_id = m.id LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sale_return_items WHERE medicine_id = m.id LIMIT 1)
+          THEN 1 ELSE 0
+        END AS has_transaction_history,
         COALESCE(SUM(pi.available_pills), 0) AS total_available_pills,
         -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
         COALESCE(
@@ -231,6 +239,7 @@ export class MedicineService {
       manufacturer: row.manufacturer || undefined,
       brandName: row.brand_name || undefined,
       minimumStockLevel: row.minimum_stock_level ?? 0,
+      hasTransactionHistory: Boolean(row.has_transaction_history),
       totalAvailablePills: row.total_available_pills ?? 0,
       sellablePills: row.sellable_pills ?? 0,
       normalExpiryPills: row.normal_expiry_pills ?? 0,
@@ -405,16 +414,15 @@ export class MedicineService {
     // Check if medicine has been used in transactions
     const hasTransactions = await this.hasMedicineBeenUsed(id);
     
-    // If medicine has transactions, only allow status updates
+    // If medicine has transactions, only block identity fields (name/barcode). Pack size and other fields may still be corrected.
     if (hasTransactions) {
-      // Check if trying to update anything other than status
-      const hasNonStatusUpdates = 
-        medicine.name !== undefined || 
-        medicine.barcode !== undefined || 
-        medicine.pillQuantity !== undefined;
-      
-      if (hasNonStatusUpdates) {
-        throw new Error('Cannot edit medicine details: This medicine has been used in transactions. You can only change its status (active/inactive/discontinued).');
+      const hasBlockedIdentityUpdates =
+        medicine.name !== undefined || medicine.barcode !== undefined;
+
+      if (hasBlockedIdentityUpdates) {
+        throw new Error(
+          'Cannot edit medicine name or barcode: This medicine has been used in transactions. You can update pills/packet, manufacturer, brand, min. stock level, and status.'
+        );
       }
     }
 

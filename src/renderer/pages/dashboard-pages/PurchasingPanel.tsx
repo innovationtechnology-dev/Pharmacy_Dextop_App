@@ -16,6 +16,15 @@ import {
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
+/** Avoid unreadable/overlapping UI when packet math produces huge or non-finite values. */
+function formatPurchaseQuantityDisplay(n: number): string {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return '—';
+  const ax = Math.abs(x);
+  if (ax >= 1e12) return x.toExponential(2);
+  return Math.round(x).toLocaleString();
+}
+
 interface Medicine {
   id: number;
   barcode?: string;
@@ -265,6 +274,8 @@ const PurchasingPanel: React.FC = () => {
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
+  /** Tracks cart length while editing a PO so we can detect “last line removed” vs DB. */
+  const prevCartLenWhileEditingRef = useRef(0);
   const minExpiryDate = useMemo(() => {
     const min = new Date();
     min.setDate(min.getDate() + MIN_EXPIRY_DAYS);
@@ -566,11 +577,15 @@ const PurchasingPanel: React.FC = () => {
 
   const handlePurchase = async () => {
     if (cart.length === 0) {
-      setValidationMessage('Cart is empty! Please add items to purchase.');
+      setValidationMessage(
+        editingPurchaseId
+          ? 'Add a line to update, or use Delete purchase below to remove this PO from the database.'
+          : 'Cart is empty! Please add items to purchase.'
+      );
       setShowValidationError(true);
       setTimeout(() => {
         setShowValidationError(false);
-      }, 3000);
+      }, 4000);
       return;
     }
 
@@ -793,29 +808,6 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const handleDeletePurchase = async (purchaseId: number) => {
-    if (!window.confirm(`Are you sure you want to delete purchase PO-${purchaseId}? This action cannot be undone.`)) {
-      return;
-    }
-
-    try {
-      window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
-        setDeleteConfirm(null);
-        if (response.success) {
-          loadPastPurchases();
-          success('Purchase deleted successfully!');
-        } else {
-          error('Error deleting purchase: ' + (response.error || 'Unknown error'));
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
-    } catch (err) {
-      setDeleteConfirm(null);
-      error('Error deleting purchase. Please try again.');
-    }
-  };
-
-
   const formatCurrency = useCallback((value: number) => {
     const currency = pharmacySettings.currency || 'USD';
     const symbol = getSymbol(currency);
@@ -906,6 +898,67 @@ const PurchasingPanel: React.FC = () => {
     setNotes('');
     setPaymentAmount(0);
   }, []);
+
+  const handleDeletePurchase = useCallback(
+    async (purchaseId: number, skipConfirm = false) => {
+      if (
+        !skipConfirm &&
+        !window.confirm(
+          `Permanently delete purchase PO-${purchaseId}? This removes the order from the database. This cannot be undone.`
+        )
+      ) {
+        return;
+      }
+
+      try {
+        window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
+          setDeleteConfirm(null);
+          if (response.success) {
+            cancelEdit();
+            setSelectedPurchaseId(null);
+            setCurrentPurchaseIndex(-1);
+            loadPastPurchases();
+            success('Purchase and related payments removed from the database.');
+          } else {
+            error('Error deleting purchase: ' + (response.error || 'Unknown error'));
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
+      } catch (err) {
+        setDeleteConfirm(null);
+        error('Error deleting purchase. Please try again.');
+      }
+    },
+    [cancelEdit, loadPastPurchases]
+  );
+
+  const afterLastLineRemovedWhileEditing = useCallback(
+    (purchaseId: number) => {
+      const del = window.confirm(
+        `Lines were removed from the screen only. PO-${purchaseId} is still in the database, so History still shows the old total until you change it.\n\nDelete PO-${purchaseId} from the database now?\n\nOK = remove this order and its payments\nCancel = reload the saved lines from the database`
+      );
+      if (del) {
+        void handleDeletePurchase(purchaseId, true);
+      } else {
+        void loadPurchaseForEdit(purchaseId);
+      }
+    },
+    [handleDeletePurchase, loadPurchaseForEdit]
+  );
+
+  useEffect(() => {
+    if (editingPurchaseId === null) {
+      prevCartLenWhileEditingRef.current = cart.length;
+      return;
+    }
+    const n = cart.length;
+    const prev = prevCartLenWhileEditingRef.current;
+    if (n === 0 && prev > 0) {
+      const pid = editingPurchaseId;
+      queueMicrotask(() => afterLastLineRemovedWhileEditing(pid));
+    }
+    prevCartLenWhileEditingRef.current = n;
+  }, [cart.length, editingPurchaseId, afterLastLineRemovedWhileEditing]);
 
   // Load purchase history on mount
   useEffect(() => {
@@ -1739,8 +1792,19 @@ const PurchasingPanel: React.FC = () => {
                           </div>
 
                           {/* Total pills = Pkt × Pills/Pkt (recalculated when Pkt changes) */}
-                          <div className="flex h-full min-h-0 items-center justify-center text-center text-[12px] font-bold text-indigo-700 dark:text-indigo-300 tabular-nums">
-                            {Math.max(0, Number(item.packetQuantity) || 0) * Math.max(1, item.pillsPerPacket || 1)}
+                          <div
+                            className="flex h-full min-h-0 min-w-0 items-center justify-center text-center text-[12px] font-bold text-indigo-700 dark:text-indigo-300 tabular-nums px-0.5 overflow-hidden"
+                            title={String(
+                              Math.max(0, Number(item.packetQuantity) || 0) *
+                                Math.max(1, item.pillsPerPacket || 1)
+                            )}
+                          >
+                            <span className="block max-w-full truncate">
+                              {formatPurchaseQuantityDisplay(
+                                Math.max(0, Number(item.packetQuantity) || 0) *
+                                  Math.max(1, item.pillsPerPacket || 1)
+                              )}
+                            </span>
                           </div>
 
                           {/* Price: per packet OR line total + amount input */}
@@ -2285,6 +2349,24 @@ const PurchasingPanel: React.FC = () => {
                     RESET
                   </button>
                 </div>
+                {editingPurchaseId !== null && (
+                  <button
+                    type="button"
+                    onClick={() => handleDeletePurchase(editingPurchaseId)}
+                    disabled={
+                      processing ||
+                      (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
+                    }
+                    title={
+                      isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)
+                        ? 'Cashiers can only change purchases within 24 hours. Ask an administrator.'
+                        : 'Removes this PO, lines, payments, and GRN data from the database (if nothing was sold from this order).'
+                    }
+                    className="w-full py-2 rounded-lg text-xs font-semibold border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Delete purchase PO-{editingPurchaseId} from database
+                  </button>
+                )}
               </div>
             </div>
 
