@@ -86,6 +86,11 @@ export interface Customer {
   notes?: string;
 }
 
+interface FefoBatch {
+  availablePills: number;
+  sellPrice: number;
+}
+
 interface CartItem {
   medicine: Medicine;
   pills: number;
@@ -96,6 +101,29 @@ interface CartItem {
   discountAmount?: number;
   taxAmount?: number;
   finalPrice: number;
+  /** FEFO batches loaded at add-to-cart time, used to compute blended price across batches */
+  fefoBatches?: FefoBatch[];
+}
+
+/**
+ * Walk the FEFO batches and compute a weighted average sell price for the given quantity.
+ * e.g. 10 pills @ Rs.10 + 5 pills @ Rs.20 → blended = Rs.13.33/pill (total Rs.200).
+ */
+function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
+  if (!batches || batches.length === 0 || qty <= 0) return 0;
+  let remaining = qty;
+  let totalCost = 0;
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const consume = Math.min(batch.availablePills, remaining);
+    totalCost += consume * batch.sellPrice;
+    remaining -= consume;
+  }
+  // If qty exceeds available stock, use the last batch's price for the overflow
+  if (remaining > 0) {
+    totalCost += remaining * batches[batches.length - 1].sellPrice;
+  }
+  return totalCost / qty;
 }
 
 
@@ -366,6 +394,20 @@ const SellingPanel: React.FC = () => {
     // Clear search after adding
     setSearchTerm('');
     setShowSearchResults(false);
+
+    // Background: fetch FEFO batch prices and apply blended price based on actual quantity
+    window.electron.ipcRenderer.invoke('medicine-get-fefo-sell-batches', medicine.id).then((resp: any) => {
+      if (!resp?.success || !Array.isArray(resp.data) || resp.data.length === 0) return;
+      const batches: FefoBatch[] = resp.data;
+      setCart((prev) =>
+        prev.map((item) => {
+          if (item.medicine.id !== medicine.id) return item;
+          const blended = computeBlendedPrice(batches, item.pills);
+          if (blended <= 0) return item;
+          return recalculateSaleItem({ ...item, unitPrice: blended, fefoBatches: batches });
+        })
+      );
+    }).catch(() => {/* silently ignore — default price remains */});
   }, [error, warning]);
 
   const handleSearch = useCallback(async (term: string) => {
@@ -1027,7 +1069,6 @@ const SellingPanel: React.FC = () => {
       return prevCart
         .map((item) => {
           if (item.medicine.id === medicineId) {
-            // sellablePills on the line is total sellable stock snapshot (not "remaining after cart")
             const available = item.medicine.sellablePills ?? Infinity;
             const newQuantity = item.pills + change;
             if (newQuantity <= 0) return null;
@@ -1035,11 +1076,12 @@ const SellingPanel: React.FC = () => {
               warning(`Only ${available} pills available in stock!`);
               return item;
             }
-            const updatedItem = recalculateSaleItem({
+            const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, newQuantity) : 0;
+            return recalculateSaleItem({
               ...item,
               pills: newQuantity,
+              ...(blended > 0 ? { unitPrice: blended } : {}),
             });
-            return updatedItem;
           }
           return item;
         })
@@ -1055,15 +1097,16 @@ const SellingPanel: React.FC = () => {
       return prevCart.map((item) => {
         if (item.medicine.id === medicineId) {
           const available = item.medicine.sellablePills ?? Infinity;
+          const clampedQty = finalQuantity > available ? available : finalQuantity;
           if (finalQuantity > available) {
             warning(`Only ${available} pills available in stock!`);
-            return recalculateSaleItem({ ...item, pills: available });
           }
-          const updatedItem = recalculateSaleItem({
+          const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, clampedQty) : 0;
+          return recalculateSaleItem({
             ...item,
-            pills: finalQuantity,
+            pills: clampedQty,
+            ...(blended > 0 ? { unitPrice: blended } : {}),
           });
-          return updatedItem;
         }
         return item;
       });

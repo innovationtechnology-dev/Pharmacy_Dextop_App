@@ -53,7 +53,7 @@ const MIN_EXPIRY_DAYS = 0;
 
 /** Same column template for cart header, item row, and insights line layer — keeps vertical borders aligned. */
 const PURCHASE_CART_GRID_TEMPLATE =
-  '40px minmax(140px, 1.35fr) 72px 64px 70px minmax(132px, 1.08fr) 58px 58px minmax(176px, 1.22fr) minmax(120px, 1fr)';
+  '40px minmax(140px, 1.35fr) 72px 64px 70px minmax(132px, 1.08fr) 58px 58px 64px minmax(176px, 1.22fr) minmax(120px, 1fr)';
 
 const purchaseCartGridStyle = { gridTemplateColumns: PURCHASE_CART_GRID_TEMPLATE };
 
@@ -77,6 +77,8 @@ interface PurchaseItem {
   batchNumber?: string;
   lineSubtotal: number;
   lineTotal: number;
+  /** Selling price per unit that the pharmacist sets at purchase time — stored per batch */
+  sellingPricePerPill: number;
 }
 
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
@@ -125,6 +127,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
     discountAmount,
     taxAmount,
     lineTotal,
+    sellingPricePerPill: Math.max(0, item.sellingPricePerPill || 0),
   };
 };
 
@@ -187,6 +190,8 @@ const PurchasingPanel: React.FC = () => {
   const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
   /** Draft tax while typing */
   const [taxInputDraft, setTaxInputDraft] = useState<Record<number, string>>({});
+  /** Draft sell price per unit while typing */
+  const [sellPriceInputDraft, setSellPriceInputDraft] = useState<Record<number, string>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
@@ -452,6 +457,7 @@ const PurchasingPanel: React.FC = () => {
         batchNumber: '',
         lineSubtotal: 0,
         lineTotal: 0,
+        sellingPricePerPill: 0,
       });
 
       return [...prevCart, baseItem];
@@ -657,6 +663,7 @@ const PurchasingPanel: React.FC = () => {
           taxAmount: item.taxAmount || 0,
           expiryDate: item.expiryDate,
           batchNumber: item.batchNumber?.trim() || undefined,
+          sellingPricePerPill: item.sellingPricePerPill || 0,
         })),
         paymentAmount: paymentAmount || 0,
         notes: notes || undefined,
@@ -845,6 +852,7 @@ const PurchasingPanel: React.FC = () => {
             const discountAmount = item.discountAmount || 0;
             const taxAmount = item.taxAmount || 0;
             const taxableBase = lineSubtotal - discountAmount;
+            const lineTotal = item.lineTotal || (taxableBase + taxAmount);
 
             // Calculate discount percentage
             const discountPercent = lineSubtotal > 0 ? (discountAmount / lineSubtotal) * 100 : 0;
@@ -852,8 +860,6 @@ const PurchasingPanel: React.FC = () => {
             // Calculate tax percentage (tax is applied to taxable base after discount)
             const taxPercent = taxableBase > 0 ? (taxAmount / taxableBase) * 100 : 0;
 
-            // Calculate totalAmount from existing data
-            // For old purchases, totalAmount = packetQuantity * pricePerPacket
             return recalculatePurchaseItem({
               medicine: {
                 id: item.medicineId,
@@ -875,7 +881,8 @@ const PurchasingPanel: React.FC = () => {
               totalPills: item.totalPills,
               pricePerPill: item.pricePerPill,
               lineSubtotal: lineSubtotal,
-              lineTotal: item.lineTotal,
+              lineTotal: lineTotal,
+              sellingPricePerPill: Number(item.sellingPricePerPill) || 0,
             });
           });
 
@@ -1694,7 +1701,7 @@ const PurchasingPanel: React.FC = () => {
                   <div className="w-full min-w-0 bg-white dark:bg-gray-800 rounded-xl border border-gray-300 dark:border-gray-600 overflow-x-auto shadow-sm">
                     {/* Table-style header: vertical grid lines between columns */}
                     <div
-                      className="grid w-full min-w-[960px] items-center gap-0 border-b-2 border-gray-300 dark:border-gray-500 bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                      className="grid w-full min-w-[1024px] items-center gap-0 border-b-2 border-gray-300 dark:border-gray-500 bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
                       style={purchaseCartGridStyle}
                     >
                       <div className="flex justify-center" title="Line number">
@@ -1730,6 +1737,9 @@ const PurchasingPanel: React.FC = () => {
                       <div className="text-center" title="Tax % on the discounted amount">
                         Tax %
                       </div>
+                      <div className="text-center leading-tight" title="Selling price per unit — what you charge the customer for this batch">
+                        Sell/Unit
+                      </div>
                       <div className="text-center leading-tight" title="Expiry date and optional batch number">
                         Expiry / batch
                       </div>
@@ -1742,7 +1752,7 @@ const PurchasingPanel: React.FC = () => {
                       {cart.map((item, index) => (
                         <div key={item.medicine.id} className="border-b border-gray-200 dark:border-gray-600 last:border-b-0 hover:bg-gray-50/80 dark:hover:bg-gray-700/25 transition-colors">
                           <div
-                            className="grid w-full min-w-[960px] gap-0 items-stretch [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
+                            className="grid w-full min-w-[1024px] gap-0 items-stretch [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
                             style={purchaseCartGridStyle}
                           >
                           {/* S.No */}
@@ -1994,6 +2004,48 @@ const PurchasingPanel: React.FC = () => {
                             />
                           </div>
 
+                          {/* Sell Price per unit */}
+                          <div className="flex h-full min-h-0 flex-col items-center justify-center gap-0.5">
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              autoComplete="off"
+                              aria-label="Selling price per unit"
+                              title="Enter the price you will charge the customer per unit for this batch"
+                              value={
+                                sellPriceInputDraft[item.medicine.id] ??
+                                (item.sellingPricePerPill === 0 ? '' : String(item.sellingPricePerPill))
+                              }
+                              onFocus={(e) => e.target.select()}
+                              onChange={(e) => {
+                                if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
+                                const v = e.target.value;
+                                const id = item.medicine.id;
+                                setSellPriceInputDraft((prev) => ({ ...prev, [id]: v }));
+                                const numVal = parseFloat(v);
+                                if (!Number.isNaN(numVal) && numVal >= 0) {
+                                  updateCartItemField(id, 'sellingPricePerPill', numVal);
+                                } else if (v === '') {
+                                  updateCartItemField(id, 'sellingPricePerPill', 0);
+                                }
+                              }}
+                              onBlur={() => {
+                                const id = item.medicine.id;
+                                const draft = sellPriceInputDraft[id];
+                                setSellPriceInputDraft((prev) => {
+                                  const next = { ...prev };
+                                  delete next[id];
+                                  return next;
+                                });
+                                if (draft === undefined) return;
+                                const val = parseFloat(draft.trim());
+                                updateCartItemField(id, 'sellingPricePerPill', Number.isNaN(val) || val < 0 ? 0 : val);
+                              }}
+                              className="w-full h-8 text-center text-[11px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-purple-500 outline-none transition-all dark:text-white shadow-sm"
+                              placeholder="0.00"
+                            />
+                          </div>
+
                           {/* Expiry */}
                           <div className="flex h-full min-h-0 min-w-0 flex-col justify-center gap-1">
                             <input
@@ -2039,37 +2091,49 @@ const PurchasingPanel: React.FC = () => {
                                 : 'text-red-600 dark:text-red-400';
 
                             return (
-                              <div className="min-w-[960px] w-full border-t border-gray-200 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-900/30 px-2 sm:px-4 py-2 pl-8 sm:pl-10 text-[9px] flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <div className="min-w-[1024px] w-full border-t border-gray-200 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-900/30 px-2 sm:px-4 py-2 pl-8 sm:pl-10 text-[9px] flex flex-wrap items-center gap-x-3 gap-y-1">
                                 {!pricing.hasEnteredPurchasePrice ? (
                                   <span className="text-gray-500 dark:text-gray-400 font-medium">
-                                    Enter Pkt/Price to see Sell/Pill (list), Buy/Pill (net), and savings.
+                                    Enter Buy price, then set Sell/Unit to see your profit.
                                   </span>
                                 ) : (
                                   <>
                                     <span
                                       className="font-bold text-blue-700 dark:text-blue-400"
-                                      title="List per pill from your Pkt/Price (before Disc% & Tax%). Stays the same when you only change discount or tax."
+                                      title="Gross purchase price per unit from Buy Price (before supplier Disc% and Tax%)"
                                     >
-                                      Sell/Pill: {symbol}{pricing.sellPerPill.toFixed(2)}
+                                      Buy/Unit: {symbol}{pricing.sellPerPill.toFixed(2)}
                                     </span>
                                     <span
                                       className="font-bold text-emerald-700 dark:text-emerald-400"
-                                      title="Net cost per pill after Disc% & Tax% — what you actually pay"
+                                      title="Your actual net cost per unit after supplier Disc% and Tax% — what you really pay"
                                     >
-                                      Buy/Pill: {symbol}{pricing.buyPerPill.toFixed(2)}
+                                      Cost/Unit: {symbol}{pricing.buyPerPill.toFixed(2)}
                                     </span>
-                                    <span
-                                      className={`font-bold ${profitTone}`}
-                                      title="Sell/Pill minus Buy/Pill (savings from supplier terms on this line)"
-                                    >
-                                      Profit/Pill: {symbol}{pricing.profitPerPill.toFixed(2)}
-                                    </span>
-                                    <span className={`font-semibold ${profitTone}`}>
-                                      Profit %: {pricing.profitPercent.toFixed(1)}%
-                                    </span>
-                                    {!pricing.hasDiscOrTax && (
-                                      <span className="text-[8px] text-gray-500 dark:text-gray-400 w-full basis-full">
-                                        Buy/Pill matches Sell/Pill until you enter Disc% or Tax%.
+                                    {item.sellingPricePerPill > 0 ? (
+                                      <>
+                                        <span
+                                          className="font-bold text-purple-700 dark:text-purple-400"
+                                          title="Selling price per unit for this batch — used automatically in the selling panel"
+                                        >
+                                          Sell/Unit: {symbol}{item.sellingPricePerPill.toFixed(2)}
+                                        </span>
+                                        <span
+                                          className={`font-bold ${item.sellingPricePerPill >= pricing.buyPerPill ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}
+                                          title="Profit per unit = Sell/Unit − Cost/Unit"
+                                        >
+                                          Profit/Unit: {symbol}{(item.sellingPricePerPill - pricing.buyPerPill).toFixed(2)}
+                                        </span>
+                                        {pricing.buyPerPill > 0 && (
+                                          <span className={`font-semibold ${item.sellingPricePerPill >= pricing.buyPerPill ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                            Profit%: {(((item.sellingPricePerPill - pricing.buyPerPill) / pricing.buyPerPill) * 100).toFixed(1)}%
+                                          </span>
+                                        )}
+                                      </>
+                                    ) : null}
+                                    {pricing.hasDiscOrTax && (
+                                      <span className="text-[8px] text-gray-500 dark:text-gray-400">
+                                        Supplier disc/tax saving: {symbol}{(pricing.sellPerPill - pricing.buyPerPill).toFixed(2)}/unit
                                       </span>
                                     )}
                                   </>

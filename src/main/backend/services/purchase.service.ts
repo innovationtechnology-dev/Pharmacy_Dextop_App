@@ -21,6 +21,7 @@ function mapPurchaseItemDbRow(item: any) {
     availablePills: Number(item.available_pills) || 0,
     pricePerPacket: Number(item.price_per_packet) || 0,
     pricePerPill: Number(item.price_per_pill) || 0,
+    sellingPricePerPill: Number(item.selling_price_per_pill) || 0,
     discountAmount: Number(item.discount_amount) || 0,
     taxAmount: Number(item.tax_amount) || 0,
     lineSubtotal: Number(item.line_subtotal) || 0,
@@ -39,6 +40,7 @@ export interface PurchaseItemInput {
   taxAmount?: number;
   expiryDate: string;
   batchNumber?: string;
+  sellingPricePerPill?: number;
 }
 
 export interface PurchaseItem extends PurchaseItemInput {
@@ -46,6 +48,7 @@ export interface PurchaseItem extends PurchaseItemInput {
   totalPills: number;
   availablePills?: number;
   pricePerPill: number;
+  sellingPricePerPill: number;
   lineSubtotal: number;
   lineTotal: number;
 }
@@ -136,6 +139,7 @@ export class PurchaseService {
         available_pills INTEGER NOT NULL,
         price_per_packet REAL NOT NULL,
         price_per_pill REAL NOT NULL,
+        selling_price_per_pill REAL NOT NULL DEFAULT 0,
         discount_amount REAL NOT NULL DEFAULT 0,
         tax_amount REAL NOT NULL DEFAULT 0,
         line_subtotal REAL NOT NULL,
@@ -152,6 +156,11 @@ export class PurchaseService {
     const hasBatchNumber = purchaseItemsInfo.some((col: any) => col.name === 'batch_number');
     if (!hasBatchNumber) {
       await this.dbService.execute(`ALTER TABLE purchase_items ADD COLUMN batch_number TEXT`);
+    }
+    // Add selling_price_per_pill column if it doesn't exist (migration for existing databases)
+    const hasSellingPrice = purchaseItemsInfo.some((col: any) => col.name === 'selling_price_per_pill');
+    if (!hasSellingPrice) {
+      await this.dbService.execute(`ALTER TABLE purchase_items ADD COLUMN selling_price_per_pill REAL NOT NULL DEFAULT 0`);
     }
 
     await this.dbService.execute(`
@@ -227,6 +236,7 @@ export class PurchaseService {
       ...item,
       totalPills,
       pricePerPill,
+      sellingPricePerPill: item.sellingPricePerPill ?? 0,
       lineSubtotal,
       lineTotal,
       discountAmount,
@@ -328,6 +338,7 @@ export class PurchaseService {
             available_pills,
             price_per_packet,
             price_per_pill,
+            selling_price_per_pill,
             discount_amount,
             tax_amount,
             line_subtotal,
@@ -335,7 +346,7 @@ export class PurchaseService {
             expiry_date,
             batch_number
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           purchaseId,
@@ -347,6 +358,7 @@ export class PurchaseService {
           item.totalPills,
           item.pricePerPacket,
           item.pricePerPill,
+          item.sellingPricePerPill ?? 0,
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.lineSubtotal,
@@ -954,6 +966,7 @@ export class PurchaseService {
             available_pills,
             price_per_packet,
             price_per_pill,
+            selling_price_per_pill,
             discount_amount,
             tax_amount,
             line_subtotal,
@@ -961,7 +974,7 @@ export class PurchaseService {
             expiry_date,
             batch_number
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           purchaseId,
@@ -973,6 +986,7 @@ export class PurchaseService {
           item.totalPills, // Start with all pills available
           item.pricePerPacket,
           item.pricePerPill,
+          item.sellingPricePerPill ?? 0,
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.lineSubtotal,

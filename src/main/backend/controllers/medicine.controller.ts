@@ -472,6 +472,21 @@ export class MedicineController {
     );
     console.log('[IPC] Registered handler: medicine-get-by-barcode');
 
+    // Get FEFO batch sell prices for blended price calculation in the selling panel
+    ipcMain.handle(
+      'medicine-get-fefo-sell-batches',
+      async (_event: IpcMainInvokeEvent, medicineId: unknown): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+        try {
+          const id = typeof medicineId === 'number' ? medicineId : Number(medicineId);
+          const batches = await this.medicineService.getFefoSellBatches(id);
+          return { success: true, data: batches };
+        } catch (error) {
+          console.error('Get FEFO sell batches error:', error);
+          return { success: false, error: String(error) };
+        }
+      }
+    );
+
     // Get medicine by ID
     ipcMain.on('medicine-get-by-id', async (event: IpcMainEvent, args: any[]) => {
       try {
