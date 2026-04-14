@@ -185,6 +185,7 @@ const PurchasingPanel: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
   /** Draft discount while typing */
@@ -226,6 +227,7 @@ const PurchasingPanel: React.FC = () => {
   const [recordingRefund, setRecordingRefund] = useState(false);
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
+  const [loadingPurchaseDetails, setLoadingPurchaseDetails] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPurchase, setViewPurchase] = useState<any | null>(null);
   const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
@@ -351,14 +353,17 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const loadSuppliers = useCallback(async () => {
+    setLoadingSuppliers(true);
     try {
       window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
+        setLoadingSuppliers(false);
         if (response.success) {
           setSuppliers(response.data || []);
         }
       });
       window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
     } catch (error) {
+      setLoadingSuppliers(false);
       console.error('Error loading suppliers:', error);
     }
   }, []);
@@ -1006,6 +1011,7 @@ const PurchasingPanel: React.FC = () => {
 
   // Load purchase details when selected
   const loadPurchaseDetails = useCallback((purchase: any, index: number) => {
+    setLoadingPurchaseDetails(true);
     setSelectedPurchaseId(purchase.id);
     setCurrentPurchaseIndex(index);
     setPurchaseOrderNumber(`PO-${purchase.id}`);
@@ -1027,6 +1033,11 @@ const PurchasingPanel: React.FC = () => {
       setCurrentDate(formattedDate);
       setCurrentTime(formattedTime);
     }
+    
+    // Simulate loading complete (in real app, this would be when data is fully loaded)
+    setTimeout(() => {
+      setLoadingPurchaseDetails(false);
+    }, 500);
     
     // Reload suppliers to ensure they're up to date
     loadSuppliers();
@@ -2366,7 +2377,15 @@ const PurchasingPanel: React.FC = () => {
               {/* Payment Input Section - Collapsible */}
               {showPaymentSection && (
                 <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                  <div className="bg-emerald-50/30 dark:bg-emerald-900/10 rounded-lg p-3 border border-emerald-100 dark:border-emerald-800/30 space-y-3">
+                  {loadingPurchaseDetails || loadingSuppliers ? (
+                    <div className="bg-emerald-50/30 dark:bg-emerald-900/10 rounded-lg p-6 border border-emerald-100 dark:border-emerald-800/30 flex flex-col items-center justify-center gap-3">
+                      <FiRefreshCw className="w-6 h-6 animate-spin text-emerald-500" />
+                      <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                        {loadingPurchaseDetails ? 'Loading payment details...' : 'Loading suppliers...'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="bg-emerald-50/30 dark:bg-emerald-900/10 rounded-lg p-3 border border-emerald-100 dark:border-emerald-800/30 space-y-3">
                     <div className="relative">
                       <label className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase mb-1.5 block">
                         Payment Amount
@@ -2435,6 +2454,7 @@ const PurchasingPanel: React.FC = () => {
                       </div>
                     </div>
                   </div>
+                  )}
                 </div>
               )}
 
@@ -2505,7 +2525,12 @@ const PurchasingPanel: React.FC = () => {
                 <FiClock className="text-gray-400 w-3.5 h-3.5" />
               </div>
               <div className="flex-1 overflow-y-auto p-2 space-y-2 min-h-0">
-                {purchaseHistoryList.length === 0 ? (
+                {loadingPurchases ? (
+                  <div className="py-8 text-center text-gray-400 text-xs flex flex-col items-center gap-2">
+                    <FiRefreshCw className="w-5 h-5 animate-spin text-emerald-500" />
+                    Loading purchases...
+                  </div>
+                ) : purchaseHistoryList.length === 0 ? (
                   <div className="py-8 text-center text-gray-400 text-xs">
                     No recent purchases
                   </div>

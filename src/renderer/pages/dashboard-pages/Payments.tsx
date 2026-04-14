@@ -178,6 +178,7 @@ const Payments: React.FC = () => {
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
   const [purchasePayments, setPurchasePayments] = useState<PaymentRecord[]>([]);
+  const [loadingPurchasePayments, setLoadingPurchasePayments] = useState(false);
   const [expandedAccount, setExpandedAccount] = useState<number | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportSupplierId, setExportSupplierId] = useState<number | null>(null);
@@ -227,156 +228,193 @@ const Payments: React.FC = () => {
 
   // Load data
   const loadPurchases = useCallback(async () => {
-    try {
-      // Build date filters for purchases
-      let fromDate: string | undefined;
-      let toDate: string | undefined;
-      
-      if (periodType !== 'all') {
-        const today = new Date();
-        toDate = toLocalIsoDate(today);
+    return new Promise<void>((resolve, reject) => {
+      try {
+        // Build date filters for purchases
+        let fromDate: string | undefined;
+        let toDate: string | undefined;
         
-        switch (periodType) {
-          case 'today':
-            fromDate = toDate;
-            break;
-          case 'week':
-            const weekAgo = new Date(today);
-            weekAgo.setDate(weekAgo.getDate() - 7);
-            fromDate = toLocalIsoDate(weekAgo);
-            break;
-          case 'month':
-            fromDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
-            break;
-          case 'year':
-            fromDate = `${today.getFullYear()}-01-01`;
-            break;
-          case 'custom':
-            if (customFromDate && customToDate) {
-              fromDate = customFromDate;
-            }
-            break;
+        if (periodType !== 'all') {
+          const today = new Date();
+          toDate = toLocalIsoDate(today);
+          
+          switch (periodType) {
+            case 'today':
+              fromDate = toDate;
+              break;
+            case 'week':
+              const weekAgo = new Date(today);
+              weekAgo.setDate(weekAgo.getDate() - 7);
+              fromDate = toLocalIsoDate(weekAgo);
+              break;
+            case 'month':
+              fromDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+              break;
+            case 'year':
+              fromDate = `${today.getFullYear()}-01-01`;
+              break;
+            case 'custom':
+              if (customFromDate && customToDate) {
+                fromDate = customFromDate;
+              }
+              break;
+          }
         }
-      }
 
-      window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
-        if (response.success) {
-          setPurchases(response.data || []);
-        } else {
-          console.error('Error loading purchases:', response.error);
-        }
-      });
-      // Pass date range to filter purchases
-      window.electron.ipcRenderer.sendMessage('purchase-get-all', [fromDate, toDate]);
-    } catch (err) {
-      console.error('Error loading purchases:', err);
-    }
+        window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
+          if (response.success) {
+            setPurchases(response.data || []);
+            resolve();
+          } else {
+            console.error('Error loading purchases:', response.error);
+            reject(response.error);
+          }
+        });
+        // Pass date range to filter purchases
+        window.electron.ipcRenderer.sendMessage('purchase-get-all', [fromDate, toDate]);
+      } catch (err) {
+        console.error('Error loading purchases:', err);
+        reject(err);
+      }
+    });
   }, [periodType, customFromDate, customToDate]);
 
   const loadSuppliers = useCallback(async () => {
-    try {
-      window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
-        if (response.success) {
-          setSuppliers(response.data || []);
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
-    } catch (err) {
-      console.error('Error loading suppliers:', err);
-    }
+    return new Promise<void>((resolve, reject) => {
+      try {
+        window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
+          if (response.success) {
+            setSuppliers(response.data || []);
+            resolve();
+          } else {
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
+      } catch (err) {
+        console.error('Error loading suppliers:', err);
+        reject(err);
+      }
+    });
   }, []);
 
   const loadPaymentRecords = useCallback(async () => {
-    try {
-      const filters: any = {
-        page: currentPage,
-        limit: recordsPerPage,
-      };
-      if (selectedSupplierId) filters.supplierId = selectedSupplierId;
-      if (selectedPaymentMethod) filters.paymentMethod = selectedPaymentMethod;
-      if (periodType !== 'all') {
-        filters.periodType = periodType;
-        if (periodType === 'custom' && customFromDate && customToDate) {
-          filters.fromDate = customFromDate;
-          filters.toDate = customToDate;
-        }
-      } else {
-        // If 'all' is selected, still apply default date range for performance
-        filters.fromDate = customFromDate;
-        filters.toDate = customToDate;
-        filters.periodType = 'custom';
-      }
-
-      window.electron.ipcRenderer.once('payment-get-all-reply' as any, (response: any) => {
-        if (response.success) {
-          if (response.data.data) {
-            // Paginated response
-            setPaymentRecords(response.data.data || []);
-            setTotalRecords(response.data.total || 0);
-            setTotalPages(response.data.totalPages || 1);
-          } else {
-            // Non-paginated response (fallback)
-            setPaymentRecords(response.data || []);
-            setTotalRecords(response.data?.length || 0);
-            setTotalPages(1);
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const filters: any = {
+          page: currentPage,
+          limit: recordsPerPage,
+        };
+        if (selectedSupplierId) filters.supplierId = selectedSupplierId;
+        if (selectedPaymentMethod) filters.paymentMethod = selectedPaymentMethod;
+        if (periodType !== 'all') {
+          filters.periodType = periodType;
+          if (periodType === 'custom' && customFromDate && customToDate) {
+            filters.fromDate = customFromDate;
+            filters.toDate = customToDate;
           }
         } else {
-          console.error('Error loading payment records:', response.error);
+          // If 'all' is selected, still apply default date range for performance
+          filters.fromDate = customFromDate;
+          filters.toDate = customToDate;
+          filters.periodType = 'custom';
         }
-      });
-      window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, true]); // true = paginated
-    } catch (err) {
-      console.error('Error loading payment records:', err);
-    }
+
+        window.electron.ipcRenderer.once('payment-get-all-reply' as any, (response: any) => {
+          if (response.success) {
+            if (response.data.data) {
+              // Paginated response
+              setPaymentRecords(response.data.data || []);
+              setTotalRecords(response.data.total || 0);
+              setTotalPages(response.data.totalPages || 1);
+            } else {
+              // Non-paginated response (fallback)
+              setPaymentRecords(response.data || []);
+              setTotalRecords(response.data?.length || 0);
+              setTotalPages(1);
+            }
+            resolve();
+          } else {
+            console.error('Error loading payment records:', response.error);
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, true]); // true = paginated
+      } catch (err) {
+        console.error('Error loading payment records:', err);
+        reject(err);
+      }
+    });
   }, [selectedSupplierId, selectedPaymentMethod, periodType, customFromDate, customToDate, currentPage, recordsPerPage]);
 
   const loadPaymentSummary = useCallback(async () => {
-    try {
-      const filters: any = {};
-      if (selectedSupplierId) filters.supplierId = selectedSupplierId;
-      if (periodType !== 'all') {
-        filters.periodType = periodType;
-        if (periodType === 'custom' && customFromDate && customToDate) {
-          filters.fromDate = customFromDate;
-          filters.toDate = customToDate;
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const filters: any = {};
+        if (selectedSupplierId) filters.supplierId = selectedSupplierId;
+        if (periodType !== 'all') {
+          filters.periodType = periodType;
+          if (periodType === 'custom' && customFromDate && customToDate) {
+            filters.fromDate = customFromDate;
+            filters.toDate = customToDate;
+          }
         }
-      }
 
-      window.electron.ipcRenderer.once('payment-get-summary-reply' as any, (response: any) => {
-        if (response.success) {
-          setPaymentSummary(response.data);
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('payment-get-summary' as any, [filters]);
-    } catch (err) {
-      console.error('Error loading payment summary:', err);
-    }
+        window.electron.ipcRenderer.once('payment-get-summary-reply' as any, (response: any) => {
+          if (response.success) {
+            setPaymentSummary(response.data);
+            resolve();
+          } else {
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-summary' as any, [filters]);
+      } catch (err) {
+        console.error('Error loading payment summary:', err);
+        reject(err);
+      }
+    });
   }, [selectedSupplierId, periodType, customFromDate, customToDate]);
 
   const loadSupplierAccounts = useCallback(async () => {
-    try {
-      window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply' as any, (response: any) => {
-        if (response.success) {
-          setSupplierAccounts(response.data || []);
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts' as any, []);
-    } catch (err) {
-      console.error('Error loading supplier accounts:', err);
-    }
+    return new Promise<void>((resolve, reject) => {
+      try {
+        window.electron.ipcRenderer.once('payment-get-supplier-accounts-reply' as any, (response: any) => {
+          if (response.success) {
+            setSupplierAccounts(response.data || []);
+            resolve();
+          } else {
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-supplier-accounts' as any, []);
+      } catch (err) {
+        console.error('Error loading supplier accounts:', err);
+        reject(err);
+      }
+    });
   }, []);
 
   const loadPurchasePayments = useCallback(async (purchaseId: number) => {
-    try {
-      window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
-        if (response.success) {
-          setPurchasePayments(response.data || []);
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
-    } catch (err) {
-      console.error('Error loading purchase payments:', err);
-    }
+    return new Promise<void>((resolve, reject) => {
+      setLoadingPurchasePayments(true);
+      try {
+        window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
+          setLoadingPurchasePayments(false);
+          if (response.success) {
+            setPurchasePayments(response.data || []);
+            resolve();
+          } else {
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
+      } catch (err) {
+        setLoadingPurchasePayments(false);
+        console.error('Error loading purchase payments:', err);
+        reject(err);
+      }
+    });
   }, []);
 
   const loadAllData = useCallback(async () => {
@@ -1802,7 +1840,12 @@ const Payments: React.FC = () => {
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              {purchasePayments.length === 0 ? (
+              {loadingPurchasePayments ? (
+                <div className="py-8 text-center text-gray-500 dark:text-gray-400 flex flex-col items-center gap-3">
+                  <FiRefreshCw className="w-6 h-6 animate-spin text-emerald-500" />
+                  <span className="text-sm font-medium">Loading payment history...</span>
+                </div>
+              ) : purchasePayments.length === 0 ? (
                 <div className="py-8 text-center text-gray-500 dark:text-gray-400">
                   <FiFileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
                   <p>No payment records found for this purchase</p>
