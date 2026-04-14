@@ -651,11 +651,10 @@ export class MedicineService {
           WHEN pi.packet_quantity > 0 THEN (pi.discount_amount / pi.packet_quantity)
           ELSE 0 
         END AS discountPerPacket,
-        COALESCE((
-          SELECT AVG(si.unit_price) 
-          FROM sale_items si 
-          WHERE si.medicine_id = m.id
-        ), 0) AS sellingPricePerPill
+        CASE 
+          WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
+          ELSE (pi.price_per_packet * 1.0 / NULLIF(pi.pills_per_packet, 0))
+        END AS sellingPricePerPill
       FROM purchase_items pi
       JOIN purchases p ON pi.purchase_id = p.id
       JOIN medicines m ON pi.medicine_id = m.id

@@ -548,6 +548,48 @@ export class PurchaseService {
   }
 
   /**
+   * Get the next batch number for a medicine
+   */
+  public async getNextBatchNumber(medicineId: number): Promise<string> {
+    // Get existing batch numbers for this medicine
+    const existingBatches = await this.dbService.query(
+      `SELECT DISTINCT batch_number 
+       FROM purchase_items 
+       WHERE medicine_id = ? AND batch_number IS NOT NULL AND batch_number != ''
+       ORDER BY batch_number DESC`,
+      [medicineId]
+    );
+
+    if (existingBatches.length === 0) {
+      // No existing batches, create first one
+      const medicine = await this.dbService.queryOne(
+        'SELECT name FROM medicines WHERE id = ?',
+        [medicineId]
+      );
+      const medicineName = medicine?.name || 'MED';
+      const date = new Date();
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+      const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+      return `${medicineAbbr}${dateStr}001`;
+    }
+
+    // Find the highest batch number and increment
+    const latestBatch = existingBatches[0].batch_number;
+    
+    // Extract numeric part and increment
+    const match = latestBatch.match(/(\d+)$/);
+    if (match) {
+      const numericPart = parseInt(match[1], 10);
+      const prefix = latestBatch.substring(0, latestBatch.length - match[1].length);
+      const nextNumeric = (numericPart + 1).toString().padStart(match[1].length, '0');
+      return prefix + nextNumeric;
+    }
+
+    // Fallback: append 001 to the latest batch
+    return latestBatch + '001';
+  }
+
+  /**
    * Get remaining payments by date range.
    */
   public async getRemainingPaymentsByDateRange(fromDate: string, toDate: string): Promise<number> {

@@ -36,6 +36,7 @@ type FinancialData = {
   saleTaxTotal: number;
   familyTotal: number;
   charityTotal: number;
+  employeeTotal: number;
   profit: number;
   trend: { date: string; sales: number; profit: number }[];
 };
@@ -63,6 +64,7 @@ const FinancialSummary = () => {
     saleTaxTotal: 0,
     familyTotal: 0,
     charityTotal: 0,
+    employeeTotal: 0,
     profit: 0,
     trend: [],
   });

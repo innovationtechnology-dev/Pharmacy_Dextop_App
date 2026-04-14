@@ -40,6 +40,25 @@ import {
   FiPhone
 } from 'react-icons/fi';
 
+interface PanelVisibilitySettings {
+  showSellingPanel: boolean;
+  showPurchasingPanel: boolean;
+}
+
+const defaultPanelVisibilitySettings: PanelVisibilitySettings = {
+  showSellingPanel: true,
+  showPurchasingPanel: true,
+};
+
+const getStoredPanelVisibilitySettings = (): PanelVisibilitySettings => {
+  try {
+    const stored = localStorage.getItem('panelVisibilitySettings');
+    return stored ? JSON.parse(stored) : defaultPanelVisibilitySettings;
+  } catch {
+    return defaultPanelVisibilitySettings;
+  }
+};
+
 interface MenuItem {
   id: string;
   title: string;
@@ -75,6 +94,9 @@ const MainMenu: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
+  const [panelVisibility, setPanelVisibility] = useState<PanelVisibilitySettings>(
+    getStoredPanelVisibilitySettings()
+  );
   const menuBarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +105,19 @@ const MainMenu: React.FC = () => {
       const timer = setTimeout(() => setShowWelcomeNotification(true), 500);
       return () => clearTimeout(timer);
     }
+  }, []);
+
+  // Listen for panel visibility changes
+  useEffect(() => {
+    const handlePanelVisibilityUpdate = (event: any) => {
+      setPanelVisibility(event.detail);
+    };
+
+    window.addEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
+    
+    return () => {
+      window.removeEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
+    };
   }, []);
 
   const handleCloseWelcomeNotification = () => {
@@ -145,7 +180,7 @@ const MainMenu: React.FC = () => {
       description: 'Point of Sale',
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
-      disabled: isAdmin,
+      disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
     },
     {
       id: 'medicines',
@@ -175,7 +210,7 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Management',
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
-      disabled: isAdmin,
+      disabled: isAdmin ? !panelVisibility.showPurchasingPanel : false,
     },
     {
       id: 'customers',

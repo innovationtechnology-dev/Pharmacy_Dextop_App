@@ -1346,8 +1346,8 @@ const SellingPanel: React.FC = () => {
 
   const grandTotal = useMemo(() => {
     const baseTotal = subtotalValue - discountValue + taxValue;
-    // Apply additional discount for Family/Relatives or Charity
-    if (saleType === 'Family/Relatives' || saleType === 'Charity') {
+    // Apply additional discount for Family/Relatives, Charity, or Employee
+    if (saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') {
       const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
       return baseTotal - additionalDiscountAmount;
     }
@@ -2209,6 +2209,12 @@ const SellingPanel: React.FC = () => {
                         >
                           Charity
                         </div>
+                        <div
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Employee'); setSaleType('Employee'); setShowCustomerDropdown(false); }}
+                        >
+                          Employee
+                        </div>
                         {customerName.trim() !== '' && customers.filter(c => c.name.toLowerCase().includes(customerName.toLowerCase())).map(customer => (
                           <div
                             key={customer.id}
@@ -2530,7 +2536,7 @@ const SellingPanel: React.FC = () => {
                       {showRetCol && (
                         <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
                       )}
-                      <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Price</div>
+                      <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-1 text-center">Amount</div>
@@ -2964,75 +2970,76 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         
-                        {/* ADDITIONAL DISCOUNT INPUT - Only show for Family/Relatives or Charity */}
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && (
-                          <div
-                            className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
-                              expandedSaleSummary
-                                ? 'pt-1.5 border-t-2'
-                                : 'pt-1.5 border-t'
-                            }`}
-                          >
+                        {/* SPECIAL DISCOUNT SECTION - Only show for Family/Relatives, Charity, or Employee */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
+                          <>
                             <div
-                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
-                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
+                                expandedSaleSummary
+                                  ? 'pt-1.5 border-t-2'
+                                  : 'pt-1.5 border-t'
                               }`}
                             >
-                              Extra Disc%
-                            </div>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              autoComplete="off"
-                              aria-label="Extra Discount"
-                              value={
-                                isEditingAdditionalDiscount
-                                  ? additionalDiscountDraft
-                                  : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
-                              }
-                              onFocus={(e) => {
-                                setIsEditingAdditionalDiscount(true);
-                                if (additionalDiscount === 0) {
-                                  setAdditionalDiscountDraft('');
-                                } else {
-                                  setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
+                              <div
+                                className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                  expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                                }`}
+                              >
+                                Exta Disc.%
+                              </div>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                aria-label="Extra Discount"
+                                value={
+                                  isEditingAdditionalDiscount
+                                    ? additionalDiscountDraft
+                                    : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
                                 }
-                                e.target.select();
-                              }}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                // Allow empty string or digits only, and check if value is <= 100
-                                if (v === '') {
-                                  setAdditionalDiscountDraft('');
-                                  setAdditionalDiscount(0);
-                                } else if (/^\d+$/.test(v)) {
-                                  const numVal = parseInt(v, 10);
-                                  if (numVal <= 100) {
-                                    setAdditionalDiscountDraft(v);
-                                    setAdditionalDiscount(numVal);
+                                onFocus={(e) => {
+                                  setIsEditingAdditionalDiscount(true);
+                                  if (additionalDiscount === 0) {
+                                    setAdditionalDiscountDraft('');
+                                  } else {
+                                    setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
                                   }
-                                }
-                              }}
-                              onBlur={() => {
-                                setIsEditingAdditionalDiscount(false);
-                                const draft = additionalDiscountDraft;
-                                setAdditionalDiscountDraft('');
-                                if (draft === undefined || draft === '') {
-                                  setAdditionalDiscount(0);
-                                  return;
-                                }
-                                const trimmed = draft.trim();
-                                let val = parseInt(trimmed, 10);
-                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
-                                  val = 0;
-                                }
-                                if (val > 100) val = 100;
-                                setAdditionalDiscount(val);
-                              }}
-                              placeholder="0"
-                              className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
-                            />
-                          </div>
+                                  e.target.select();
+                                }}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setAdditionalDiscountDraft('');
+                                    setAdditionalDiscount(0);
+                                  } else if (/^\d+$/.test(v)) {
+                                    const numVal = parseInt(v, 10);
+                                    if (numVal <= 100) {
+                                      setAdditionalDiscountDraft(v);
+                                      setAdditionalDiscount(numVal);
+                                    }
+                                  }
+                                }}
+                                onBlur={() => {
+                                  setIsEditingAdditionalDiscount(false);
+                                  const draft = additionalDiscountDraft;
+                                  setAdditionalDiscountDraft('');
+                                  if (draft === undefined || draft === '') {
+                                    setAdditionalDiscount(0);
+                                    return;
+                                  }
+                                  const trimmed = draft.trim();
+                                  let val = parseInt(trimmed, 10);
+                                  if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                    val = 0;
+                                  }
+                                  if (val > 100) val = 100;
+                                  setAdditionalDiscount(val);
+                                }}
+                                placeholder="0"
+                                className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
+                              />
+                            </div>
+                          </>
                         )}
                       </div>
 
@@ -3061,21 +3068,22 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount > 0 && (
+                        {/* Additional Discount Amount - Only show when discount is applied */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <div className="flex items-center justify-between gap-4">
                             <div
                               className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
                                 expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                               }`}
                             >
-                              Extra Disc
-                            </div>
+                              Exta % Amount
+                              </div>
                             <div
                               className={`font-bold text-amber-600 dark:text-amber-400 tabular-nums ${
                                 expandedSaleSummary ? 'text-sm' : 'text-sm'
                               }`}
                             >
-                              -{formatCurrency(((subtotalValue - discountValue + taxValue) * additionalDiscount) / 100)}
+                              -{formatCurrency((subtotalValue - discountValue + taxValue) * additionalDiscount / 100)}
                             </div>
                           </div>
                         )}
@@ -3449,7 +3457,7 @@ const SellingPanel: React.FC = () => {
                               {(sale.additionalDiscount ?? 0) > 0 && (
                                 <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded">
                                   <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400">
-                                    Special Disc. -{sale.additionalDiscount}%
+                                    Special Disc. -{sale.additionalDiscount}% ({symbol}{((sale.total + (sale.additionalDiscountAmount ?? 0)) * (sale.additionalDiscount ?? 0) / 100).toFixed(2)})
                                   </span>
                                 </div>
                               )}

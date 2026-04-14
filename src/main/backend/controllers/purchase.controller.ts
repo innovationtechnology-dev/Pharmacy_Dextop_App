@@ -1,4 +1,4 @@
-import { ipcMain, IpcMainEvent } from 'electron';
+import { ipcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { PurchaseService, Purchase } from '../services/purchase.service';
 import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 import { web } from 'webpack';
@@ -176,6 +176,17 @@ export class PurchaseController {
       } catch (error) {
         console.error('Delete purchase error:', error);
         event.reply('purchase-delete-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get next batch number for a medicine
+    ipcMain.handle('get-next-batch-number', async (event: IpcMainInvokeEvent, medicineId: number) => {
+      try {
+        const nextBatchNumber = await this.purchaseService.getNextBatchNumber(medicineId);
+        return { success: true, nextBatchNumber };
+      } catch (error) {
+        console.error('Get next batch number error:', error);
+        return { success: false, error: String(error) };
       }
     });
 

@@ -101,10 +101,14 @@ export class DatabaseController {
       }
     });
 
-    // Reset entire system - delete all data
-    ipcMain.on('system-reset-all-data', async (event: IpcMainEvent) => {
+    // Reset entire system - delete all data or selective data
+    ipcMain.on('system-reset-all-data', async (event: IpcMainEvent, args: any[]) => {
       try {
-        console.log('Starting system reset...');
+        // Get list of tables to delete (or use all if not specified)
+        const tablesToDelete = args[0] as string[] | undefined;
+        const deleteAll = !tablesToDelete || tablesToDelete.length === 0;
+        
+        console.log(`Starting system reset... Delete all: ${deleteAll}, Tables:`, tablesToDelete);
         
         // Helper function to safely delete from table
         const safeDelete = async (tableName: string) => {
@@ -119,22 +123,68 @@ export class DatabaseController {
           }
         };
         
-        // Delete all data from tables (in correct order to respect foreign keys)
-        await safeDelete('sale_return_items');
-        await safeDelete('sale_returns');
-        await safeDelete('sale_items');
-        await safeDelete('sales');
-        await safeDelete('purchase_payments');
-        await safeDelete('purchase_items');
-        await safeDelete('purchases');
-        await safeDelete('grn_items');
-        await safeDelete('goods_received_notes');
-        await safeDelete('medicines');
-        await safeDelete('customers');
-        await safeDelete('suppliers');
+        // Map selected tables to actual table names and dependencies
+        const tableMap: Record<string, string[]> = {
+          saleReturns: ['sale_return_items', 'sale_returns'],
+          sales: ['sale_items', 'sales'],
+          purchases: ['purchase_payments', 'purchase_items', 'purchases', 'grn_items', 'goods_received_notes'],
+          medicines: ['medicines'],
+          customers: ['customers'],
+          suppliers: ['suppliers'],
+        };
         
-        // Reset auto-increment counters
-        await safeDelete('sqlite_sequence');
+        // Collect tables to delete respecting foreign key order
+        const tablesToDeleteSet = new Set<string>();
+        
+        if (deleteAll || tablesToDelete?.includes('saleReturns')) {
+          tableMap.saleReturns.forEach(t => tablesToDeleteSet.add(t));
+        }
+        if (deleteAll || tablesToDelete?.includes('sales')) {
+          tableMap.sales.forEach(t => tablesToDeleteSet.add(t));
+        }
+        if (deleteAll || tablesToDelete?.includes('purchases')) {
+          tableMap.purchases.forEach(t => tablesToDeleteSet.add(t));
+        }
+        if (deleteAll || tablesToDelete?.includes('medicines')) {
+          tableMap.medicines.forEach(t => tablesToDeleteSet.add(t));
+        }
+        if (deleteAll || tablesToDelete?.includes('customers')) {
+          tableMap.customers.forEach(t => tablesToDeleteSet.add(t));
+        }
+        if (deleteAll || tablesToDelete?.includes('suppliers')) {
+          tableMap.suppliers.forEach(t => tablesToDeleteSet.add(t));
+        }
+        
+        // Delete in correct order to respect foreign keys
+        const deleteOrder = [
+          'sale_return_items',
+          'sale_returns',
+          'sale_items',
+          'sales',
+          'purchase_payments',
+          'purchase_items',
+          'purchases',
+          'grn_items',
+          'goods_received_notes',
+          'medicines',
+          'customers',
+          'suppliers',
+        ];
+        
+        for (const tableName of deleteOrder) {
+          if (tablesToDeleteSet.has(tableName)) {
+            await safeDelete(tableName);
+          }
+        }
+        
+        // Reset auto-increment counters if we deleted everything
+        if (tablesToDeleteSet.size > 0) {
+          try {
+            await safeDelete('sqlite_sequence');
+          } catch (e) {
+            // Ignore errors for sqlite_sequence
+          }
+        }
         
         // Force WAL checkpoint to ensure changes are written to main database file
         await this.databaseService.execute('PRAGMA wal_checkpoint(TRUNCATE)');
@@ -145,7 +195,7 @@ export class DatabaseController {
         console.log('Database vacuum completed');
         
         console.log('System reset completed successfully');
-        event.reply('system-reset-all-data-reply', { success: true, message: 'All data has been deleted successfully' });
+        event.reply('system-reset-all-data-reply', { success: true, message: `${tablesToDeleteSet.size} table(s) have been deleted successfully` });
       } catch (error) {
         console.error('System reset error:', error);
         event.reply('system-reset-all-data-reply', { success: false, error: String(error) });

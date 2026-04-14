@@ -426,7 +426,7 @@ export class SalesService {
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
     const baseTotal = subtotal - discountTotal + taxTotal;
     
-    // Apply additional discount for Family/Relatives or Charity
+    // Apply additional discount for Family/Relatives, Charity, or Employee
     const additionalDiscount = payload.additionalDiscount || 0;
     const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
     const total = baseTotal - additionalDiscountAmount;
@@ -934,6 +934,7 @@ export class SalesService {
     saleReturnsTotal: number;
     familyTotal: number;
     charityTotal: number;
+    employeeTotal: number;
     netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
@@ -949,7 +950,8 @@ export class SalesService {
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
         COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN additional_discount_amount ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Employee' THEN additional_discount_amount ELSE 0 END), 0) as employee_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
         AND datetime(created_at) <= datetime(?)
@@ -960,6 +962,7 @@ export class SalesService {
     const saleTaxTotal = salesResult?.sale_tax_total || 0;
     const familyTotal = salesResult?.family_total || 0;
     const charityTotal = salesResult?.charity_total || 0;
+    const employeeTotal = salesResult?.employee_total || 0;
 
     // Get sale returns total and their cost for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
@@ -1087,6 +1090,7 @@ export class SalesService {
       saleReturnsTotal,
       familyTotal,
       charityTotal,
+      employeeTotal,
       netRevenue,
       paymentTotal: sellingTotal, // Restore paymentTotal (assumed to be sellingTotal based on original SQL)
       remainingPayment,

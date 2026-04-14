@@ -51,6 +51,7 @@ interface Supplier {
 
 const MIN_EXPIRY_DAYS = 0;
 
+
 /** Same column template for cart header, item row, and insights line layer — keeps vertical borders aligned. */
 const PURCHASE_CART_GRID_TEMPLATE =
   '40px minmax(140px, 1.35fr) 72px 64px 70px minmax(132px, 1.08fr) 58px 58px 64px minmax(176px, 1.22fr) minmax(120px, 1fr)';
@@ -273,6 +274,33 @@ const PurchasingPanel: React.FC = () => {
     return purchaseHistoryList.find(p => p.id === selectedPurchaseId);
   }, [selectedPurchaseId, purchaseHistoryList]);
 
+  // Function to generate auto-increment batch number for a medicine
+  const generateAutoBatchNumber = useCallback(async (medicineId: number, medicineName: string): Promise<string> => {
+    try {
+      // Get the highest existing batch number for this medicine from purchase items
+      const response = await window.electron.ipcRenderer.invoke('get-next-batch-number', medicineId) as {
+        success: boolean;
+        nextBatchNumber?: string;
+        error?: string;
+      };
+      if (response.success && response.nextBatchNumber) {
+        return response.nextBatchNumber;
+      }
+      
+      // Fallback: generate batch number based on medicine name and current date
+      const date = new Date();
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+      const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+      return `${medicineAbbr}${dateStr}001`;
+    } catch (error) {
+      console.error('Error generating batch number:', error);
+      // Fallback to simple format
+      const date = new Date();
+      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+      return `BATCH${dateStr}001`;
+    }
+  }, []);
+
   const isSelectedUpdate = selectedPurchase?.updatedAt && selectedPurchase?.updatedAt !== selectedPurchase?.createdAt;
 
   const { setHeader, refreshExpiringAlerts } = useDashboardHeader();
@@ -425,8 +453,12 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const addToCart = useCallback((medicine: Medicine) => {
+  const addToCart = useCallback(async (medicine: Medicine) => {
     const mergedMedicine = mergeMedicineWithCatalog(medicine);
+    
+    // Generate auto batch number
+    const autoBatchNumber = await generateAutoBatchNumber(medicine.id, medicine.name);
+    
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
 
@@ -454,7 +486,7 @@ const PurchasingPanel: React.FC = () => {
         discount: 0,
         tax: 0,
         expiryDate: '',
-        batchNumber: '',
+        batchNumber: autoBatchNumber,
         lineSubtotal: 0,
         lineTotal: 0,
         sellingPricePerPill: 0,
@@ -466,7 +498,7 @@ const PurchasingPanel: React.FC = () => {
     setShowAddMedicineModal(false);
     setSearchTerm('');
     setShowSearchResults(false);
-  }, [mergeMedicineWithCatalog]);
+  }, [mergeMedicineWithCatalog, generateAutoBatchNumber]);
 
   const handleBarcodeScan = useCallback(
     async (code: string) => {
@@ -1738,7 +1770,7 @@ const PurchasingPanel: React.FC = () => {
                         Tax %
                       </div>
                       <div className="text-center leading-tight" title="Selling price per unit — what you charge the customer for this batch">
-                        Sell/Unit
+                        Sell Price/ Unit
                       </div>
                       <div className="text-center leading-tight" title="Expiry date and optional batch number">
                         Expiry / batch
@@ -1843,8 +1875,8 @@ const PurchasingPanel: React.FC = () => {
                               }}
                               className="w-full text-[9px] font-bold uppercase tracking-tight py-1 px-1 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200"
                             >
-                              <option value="per_packet">Per packet</option>
-                              <option value="line_total">Line total</option>
+                              <option value="per_packet">Enter Price Per Packet </option>
+                              <option value="line_total">Enter Price Total Packets </option>
                             </select>
                             <input
                               type="number"
@@ -2024,7 +2056,16 @@ const PurchasingPanel: React.FC = () => {
                                 setSellPriceInputDraft((prev) => ({ ...prev, [id]: v }));
                                 const numVal = parseFloat(v);
                                 if (!Number.isNaN(numVal) && numVal >= 0) {
-                                  updateCartItemField(id, 'sellingPricePerPill', numVal);
+                                  // Get cost per unit for validation
+                                  const pricing = getPricingInsights(item);
+                                  const adjustedPrice = Math.max(numVal, pricing.buyPerPill);
+                                  
+                                  // Show notification if price was auto-adjusted
+                                  if (numVal < pricing.buyPerPill && pricing.buyPerPill > 0) {
+                                    warning(`Sell price auto-adjusted from ${formatCurrency(numVal)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
+                                  }
+                                  
+                                  updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
                                 } else if (v === '') {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
                                 }
@@ -2039,7 +2080,20 @@ const PurchasingPanel: React.FC = () => {
                                 });
                                 if (draft === undefined) return;
                                 const val = parseFloat(draft.trim());
-                                updateCartItemField(id, 'sellingPricePerPill', Number.isNaN(val) || val < 0 ? 0 : val);
+                                if (!Number.isNaN(val) && val >= 0) {
+                                  // Get cost per unit for validation
+                                  const pricing = getPricingInsights(item);
+                                  const adjustedPrice = Math.max(val, pricing.buyPerPill);
+                                  
+                                  // Show notification if price was auto-adjusted
+                                  if (val < pricing.buyPerPill && pricing.buyPerPill > 0) {
+                                    warning(`Sell price auto-adjusted from ${formatCurrency(val)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
+                                  }
+                                  
+                                  updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
+                                } else {
+                                  updateCartItemField(id, 'sellingPricePerPill', 0);
+                                }
                               }}
                               className="w-full h-8 text-center text-[11px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-purple-500 outline-none transition-all dark:text-white shadow-sm"
                               placeholder="0.00"
@@ -2058,13 +2112,21 @@ const PurchasingPanel: React.FC = () => {
                               }}
                               className="w-full h-8 px-2 text-[10px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-emerald-500 outline-none transition-all dark:text-white shadow-sm"
                             />
-                            <input
-                              type="text"
-                              value={item.batchNumber || ''}
-                              onChange={(e) => updateCartItemField(item.medicine.id, 'batchNumber', e.target.value)}
-                              placeholder="Batch # (opt.)"
-                              className="w-full h-7 mt-1 px-2 text-[10px] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md focus:border-emerald-500 outline-none transition-all dark:text-white"
-                            />
+                            <div className="relative">
+                              <input
+                                type="text"
+                                readOnly
+                                value={`Batch # ${item.batchNumber || ''}`}
+                                onChange={(e) => updateCartItemField(item.medicine.id, 'batchNumber', e.target.value)}
+                                placeholder="Auto-generated"
+                                className="w-full h-7 mt-1 px-2 pr-6 text-[10px] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-md focus:border-emerald-500 outline-none transition-all dark:text-white"
+                              />
+                              {item.batchNumber && (
+                                <div className="absolute right-1 top-2 text-[8px] text-emerald-600 dark:text-emerald-400">
+                                  <FiPackage />
+                                </div>
+                              )}
+                            </div>
                           </div>
 
                           {/* Action / Trash */}
@@ -2094,7 +2156,7 @@ const PurchasingPanel: React.FC = () => {
                               <div className="min-w-[1024px] w-full border-t border-gray-200 dark:border-gray-600 bg-slate-50/50 dark:bg-gray-900/30 px-2 sm:px-4 py-2 pl-8 sm:pl-10 text-[9px] flex flex-wrap items-center gap-x-3 gap-y-1">
                                 {!pricing.hasEnteredPurchasePrice ? (
                                   <span className="text-gray-500 dark:text-gray-400 font-medium">
-                                    Enter Buy price, then set Sell/Unit to see your profit.
+                                    Enter Buy price, then set Sell Price/Unit to see your profit.
                                   </span>
                                 ) : (
                                   <>
