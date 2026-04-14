@@ -670,7 +670,8 @@ export class PurchaseService {
 
   /**
    * Delete a purchase, all its lines, supplier payment rows, and any GRN rows.
-   * Blocks if any stock from this PO was already sold (pills were deducted for sales).
+   * If any stock from this PO was already sold, those sale records are removed
+   * first and the inventory is restored before the purchase is deleted.
    */
   public async deletePurchase(purchaseId: number): Promise<void> {
     const purchase = await this.dbService.queryOne('SELECT id FROM purchases WHERE id = ?', [purchaseId]);
@@ -683,23 +684,53 @@ export class PurchaseService {
       [purchaseId]
     );
 
-    for (const row of oldItems) {
-      const total = Number(row.total_pills) || 0;
-      const avail = Number(row.available_pills) ?? 0;
-      if (avail < total) {
-        const sold = total - avail;
-        throw new Error(
-          `Cannot delete this purchase: ${sold} pill(s) from this order were already sold. Remove or adjust those sales before deleting the purchase.`
-        );
-      }
-    }
-
     const hasGrn = await this.dbService.queryOne(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='goods_received_notes'"
+    );
+    const hasSaleReturns = await this.dbService.queryOne(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='sale_returns'"
     );
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
+      for (const row of oldItems) {
+        const total = Number(row.total_pills) || 0;
+        const avail = Number(row.available_pills) ?? 0;
+        if (avail < total) {
+          const medicineId = row.medicine_id;
+
+          // Remove sale return items referencing this medicine first
+          if (hasSaleReturns) {
+            await this.dbService.execute(
+              `DELETE FROM sale_return_items WHERE medicine_id = ?`,
+              [medicineId]
+            );
+            await this.dbService.execute(
+              `DELETE FROM sale_returns WHERE id NOT IN (SELECT DISTINCT sale_return_id FROM sale_return_items)`
+            );
+          }
+
+          // Remove sale items for this medicine
+          await this.dbService.execute(
+            'DELETE FROM sale_items WHERE medicine_id = ?',
+            [medicineId]
+          );
+
+          // Remove sales that are now completely empty
+          await this.dbService.execute(
+            `DELETE FROM sales WHERE id NOT IN (SELECT DISTINCT sale_id FROM sale_items)`
+          );
+
+          // Restore available_pills for all other batches of this medicine
+          // (FEFO may have deducted from earlier batches belonging to other purchases)
+          await this.dbService.execute(
+            `UPDATE purchase_items SET available_pills = total_pills
+             WHERE medicine_id = ? AND purchase_id != ?`,
+            [medicineId, purchaseId]
+          );
+        }
+      }
+
       if (hasGrn) {
         await this.dbService.execute(
           `DELETE FROM grn_items WHERE grn_id IN (SELECT id FROM goods_received_notes WHERE purchase_id = ?)`,

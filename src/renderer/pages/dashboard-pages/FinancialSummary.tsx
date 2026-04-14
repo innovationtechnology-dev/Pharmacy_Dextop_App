@@ -205,7 +205,7 @@ const FinancialSummary = () => {
               {financialData.profit >= 0 ? 'Net Profit' : 'Net Loss'}
             </span>
             <span className={`text-xs font-bold ml-1 ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              {formatCurrency(Math.max(0, financialData.profit))}
+              {formatCurrency(Math.abs(financialData.profit))}
             </span>
           </div>
 
@@ -353,7 +353,7 @@ const FinancialSummary = () => {
                         {financialData.profit >= 0 ? 'Net Profit' : 'Net Loss'}
                       </p>
                       <p className={`text-2xl font-black ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {formatCurrency(Math.max(0, financialData.profit))}
+                        {formatCurrency(Math.abs(financialData.profit))}
                       </p>
                     </div>
                     <div className="text-right">
