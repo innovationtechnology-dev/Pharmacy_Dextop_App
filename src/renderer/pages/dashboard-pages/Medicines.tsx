@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, FormEvent } from 'react';
 import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
@@ -110,7 +110,7 @@ export default function MedicinesPage() {
   const { expiringAlerts, alertThresholdDays } = useDashboardHeader();
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [statusFilter, setStatusFilter] = useState<'all' | MedicineStatus>('all');
-  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [newMedicine, setNewMedicine] =
     useState<MedicineFormState>(emptyMedicineForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -311,12 +311,16 @@ export default function MedicinesPage() {
 
   const filteredMedicines = useMemo(() => {
     const normalizedTerm = searchTerm.trim().toLowerCase();
+    const searchWords = normalizedTerm.split(/\s+/).filter(word => word.length > 0);
+    
     return medicines.filter((medicine) => {
       const matchesSearch =
         normalizedTerm.length === 0 ||
-        medicine.name.toLowerCase().includes(normalizedTerm) ||
-        formatNumericId(medicine.id).toLowerCase().includes(normalizedTerm) ||
-        medicine.barcode?.toLowerCase().includes(normalizedTerm);
+        searchWords.every(word =>
+          medicine.name.toLowerCase().includes(word) ||
+          formatNumericId(medicine.id).toLowerCase().includes(word) ||
+          medicine.barcode?.toLowerCase().includes(word)
+        );
 
       const matchesStatus =
         statusFilter === 'all' || medicine.status === statusFilter;
@@ -961,7 +965,7 @@ export default function MedicinesPage() {
                   <input
                     id="medicine-search"
                     type="text"
-                    value={searchTerm}
+                    value={immediateSearchTerm}
                     onChange={handleSearchChange}
                     placeholder="Search by name, barcode, or ID..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"

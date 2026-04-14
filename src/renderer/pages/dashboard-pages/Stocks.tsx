@@ -33,7 +33,7 @@ const Stocks: React.FC = () => {
   const [medicines, setMedicines] = useState<MedicineStock[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | 'low' | 'out'>('all');
-  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [selectedMedicineForDetails, setSelectedMedicineForDetails] = useState<{ id: number; name: string } | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(getStoredPharmacySettings());
 
@@ -65,10 +65,15 @@ const Stocks: React.FC = () => {
   }, [loadStocks]);
 
   const filteredStocks = useMemo(() => {
+    const normalizedTerm = searchTerm.trim().toLowerCase();
+    const searchWords = normalizedTerm.split(/\s+/).filter(word => word.length > 0);
+    
     return medicines.filter(med => {
-      const matchesSearch = med.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                           (med.brandName && med.brandName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-                           (med.manufacturer && med.manufacturer.toLowerCase().includes(searchTerm.toLowerCase()));
+      const matchesSearch = normalizedTerm.length === 0 || searchWords.every(word =>
+        med.name.toLowerCase().includes(word) ||
+        (med.brandName && med.brandName.toLowerCase().includes(word)) ||
+        (med.manufacturer && med.manufacturer.toLowerCase().includes(word))
+      );
       
       const isLow = med.totalAvailablePills <= med.minimumStockLevel && med.totalAvailablePills > 0;
       const isOut = med.totalAvailablePills === 0;
@@ -156,7 +161,7 @@ const Stocks: React.FC = () => {
                 <input
                   type="text"
                   placeholder="Filter by name, brand, or manufacturer..."
-                  value={searchTerm}
+                  value={immediateSearchTerm}
                   onChange={handleSearchChange}
                   className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-gray-400 outline-none dark:text-white"
                 />

@@ -161,7 +161,7 @@ const Payments: React.FC = () => {
   const [customToDate, setCustomToDate] = useState<string>('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [purchaseFilter, setPurchaseFilter] = useState<'all' | 'pending' | 'paid'>('all');
-  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
 
   // Modal state
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
@@ -557,10 +557,13 @@ const Payments: React.FC = () => {
     }
     
     if (searchTerm) {
-      const term = searchTerm.toLowerCase();
+      const term = searchTerm.trim().toLowerCase();
+      const searchWords = term.split(/\s+/).filter(word => word.length > 0);
       filtered = filtered.filter(p => 
-        p.supplierName.toLowerCase().includes(term) ||
-        String(p.id).includes(term)
+        searchWords.every(word =>
+          p.supplierName.toLowerCase().includes(word) ||
+          String(p.id).includes(word)
+        )
       );
     }
     
@@ -569,13 +572,16 @@ const Payments: React.FC = () => {
 
   const filteredPaymentRecords = useMemo(() => {
     if (!searchTerm) return paymentRecords;
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
+    const searchWords = term.split(/\s+/).filter(word => word.length > 0);
     return paymentRecords.filter(r =>
-      r.supplierName.toLowerCase().includes(term) ||
-      r.companyName?.toLowerCase().includes(term) ||
-      r.referenceNumber?.toLowerCase().includes(term) ||
-      r.checkNumber?.toLowerCase().includes(term) ||
-      String(r.purchaseId).includes(term)
+      searchWords.every(word =>
+        r.supplierName.toLowerCase().includes(word) ||
+        r.companyName?.toLowerCase().includes(word) ||
+        r.referenceNumber?.toLowerCase().includes(word) ||
+        r.checkNumber?.toLowerCase().includes(word) ||
+        String(r.purchaseId).includes(word)
+      )
     );
   }, [paymentRecords, searchTerm]);
 
@@ -606,10 +612,13 @@ const Payments: React.FC = () => {
 
   const filteredSupplierAccounts = useMemo(() => {
     if (!searchTerm) return supplierAccounts;
-    const term = searchTerm.toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
+    const searchWords = term.split(/\s+/).filter(word => word.length > 0);
     return supplierAccounts.filter(a =>
-      a.supplierName.toLowerCase().includes(term) ||
-      a.companyName?.toLowerCase().includes(term)
+      searchWords.every(word =>
+        a.supplierName.toLowerCase().includes(word) ||
+        a.companyName?.toLowerCase().includes(word)
+      )
     );
   }, [supplierAccounts, searchTerm]);
 
@@ -1061,7 +1070,7 @@ const Payments: React.FC = () => {
             <input
               type="text"
               placeholder="Search supplier, PO#, reference..."
-              value={searchTerm}
+              value={immediateSearchTerm}
               onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 text-sm bg-gray-100/50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 rounded-lg focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500"
             />

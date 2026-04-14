@@ -42,7 +42,7 @@ const Suppliers: React.FC = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
-  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [formData, setFormData] = useState<Supplier>({
     name: '',
     companyName: '',
@@ -206,13 +206,19 @@ const Suppliers: React.FC = () => {
   };
 
   const filteredSuppliers = useMemo(() => {
+    const normalizedTerm = searchTerm.trim().toLowerCase();
+    const searchWords = normalizedTerm.split(/\s+/).filter(word => word.length > 0);
+    
     return suppliers.filter(
       (supplier) =>
-        supplier.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        supplier.companyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        supplier.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        supplier.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        supplier.contactPerson?.toLowerCase().includes(searchTerm.toLowerCase())
+        normalizedTerm.length === 0 ||
+        searchWords.every(word =>
+          supplier.name.toLowerCase().includes(word) ||
+          supplier.companyName?.toLowerCase().includes(word) ||
+          supplier.email?.toLowerCase().includes(word) ||
+          supplier.phone?.toLowerCase().includes(word) ||
+          supplier.contactPerson?.toLowerCase().includes(word)
+        )
     );
   }, [suppliers, searchTerm]);
 
@@ -571,7 +577,7 @@ const Suppliers: React.FC = () => {
                   <input
                     id="supplier-search"
                     type="text"
-                    value={searchTerm}
+                    value={immediateSearchTerm}
                     onChange={handleSearchChange}
                     placeholder="Search by name, company, email, phone..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"

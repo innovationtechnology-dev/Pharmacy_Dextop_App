@@ -50,5 +50,6 @@ export function useDebouncedSearch(initialValue: string = '', delay: number = 30
     searchTerm: debouncedSearchTerm,
     setSearchTerm,
     handleSearchChange,
+    immediateSearchTerm: searchTerm,
   };
 }

@@ -37,7 +37,7 @@ const Customers: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [formData, setFormData] = useState<Customer>({
     name: '',
     email: '',
@@ -213,12 +213,18 @@ const Customers: React.FC = () => {
   };
 
   const filteredCustomers = useMemo(() => {
+    const normalizedTerm = searchTerm.trim().toLowerCase();
+    const searchWords = normalizedTerm.split(/\s+/).filter(word => word.length > 0);
+    
     return customers.filter(
       (customer) =>
-        customer.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.phone?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        customer.city?.toLowerCase().includes(searchTerm.toLowerCase())
+        normalizedTerm.length === 0 ||
+        searchWords.every(word =>
+          customer.name.toLowerCase().includes(word) ||
+          customer.email?.toLowerCase().includes(word) ||
+          customer.phone?.toLowerCase().includes(word) ||
+          customer.city?.toLowerCase().includes(word)
+        )
     );
   }, [customers, searchTerm]);
 
@@ -536,7 +542,7 @@ const Customers: React.FC = () => {
                   <input
                     id="customer-search"
                     type="text"
-                    value={searchTerm}
+                    value={immediateSearchTerm}
                     onChange={handleSearchChange}
                     placeholder="Search by name, email, phone, city..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"

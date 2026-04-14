@@ -37,7 +37,7 @@ export default function SaleReturn() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const { searchTerm: searchQuery, setSearchTerm: setSearchQuery, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm: searchQuery, setSearchTerm: setSearchQuery, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
   const [exportFromDate, setExportFromDate] = useState<string>('');
@@ -217,13 +217,16 @@ export default function SaleReturn() {
 
     // Step 2: Filter based on search
     if (!searchQuery.trim()) return groupedData;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
+    const searchWords = q.split(/\s+/).filter(word => word.length > 0);
     return groupedData.filter(row =>
-      row.displayMedicineName.toLowerCase().includes(q) ||
-      (row.customerName && row.customerName.toLowerCase().includes(q)) ||
-      row.saleId.toString().includes(q) ||
-      row.saleReturnId.toString().includes(q) ||
-      (row.reason && row.reason.toLowerCase().includes(q))
+      searchWords.every(word =>
+        row.displayMedicineName.toLowerCase().includes(word) ||
+        (row.customerName && row.customerName.toLowerCase().includes(word)) ||
+        row.saleId.toString().includes(word) ||
+        row.saleReturnId.toString().includes(word) ||
+        (row.reason && row.reason.toLowerCase().includes(word))
+      )
     );
   }, [reportRows, searchQuery]);
 
@@ -443,7 +446,7 @@ export default function SaleReturn() {
                     </div>
                     <input
                       type="text"
-                      value={searchQuery}
+                      value={immediateSearchTerm}
                       onChange={handleSearchChange}
                       placeholder="Search by medicine, customer, sale ID, or reason..."
                       className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all bg-white"

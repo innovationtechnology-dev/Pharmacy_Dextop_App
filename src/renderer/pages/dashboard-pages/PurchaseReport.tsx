@@ -101,7 +101,7 @@ export default function Purchases() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  const { searchTerm: searchQuery, setSearchTerm: setSearchQuery, handleSearchChange } = useDebouncedSearch('', 300);
+  const { searchTerm: searchQuery, setSearchTerm: setSearchQuery, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
   const [exportSupplierId, setExportSupplierId] = useState<number | undefined>(undefined);
@@ -260,11 +260,14 @@ export default function Purchases() {
 
     // Filter by search query
     if (!searchQuery.trim()) return filtered;
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.trim().toLowerCase();
+    const searchWords = q.split(/\s+/).filter(word => word.length > 0);
     return filtered.filter(purchase =>
-      purchase.supplierName.toLowerCase().includes(q) ||
-      purchase.id.toString().includes(q) ||
-      purchase.items.some(item => item.medicineName.toLowerCase().includes(q))
+      searchWords.every(word =>
+        purchase.supplierName.toLowerCase().includes(word) ||
+        purchase.id.toString().includes(word) ||
+        purchase.items.some(item => item.medicineName.toLowerCase().includes(word))
+      )
     );
   }, [purchases, searchQuery]);
 
@@ -559,7 +562,7 @@ export default function Purchases() {
                     </div>
                     <input
                       type="text"
-                      value={searchQuery}
+                      value={immediateSearchTerm}
                       onChange={handleSearchChange}
                       placeholder="Search by supplier, medicine, or ID..."
                       className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none transition-all bg-white"
