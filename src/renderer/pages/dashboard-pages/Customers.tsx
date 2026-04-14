@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useDebouncedSearch } from '../../hooks/useDebounce';
 import {
   FiPlus,
   FiEdit2,
@@ -35,8 +36,8 @@ interface Customer {
 const Customers: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
   const [formData, setFormData] = useState<Customer>({
     name: '',
     email: '',
@@ -536,7 +537,7 @@ const Customers: React.FC = () => {
                     id="customer-search"
                     type="text"
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={handleSearchChange}
                     placeholder="Search by name, email, phone, city..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"
                   />

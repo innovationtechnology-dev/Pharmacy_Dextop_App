@@ -1,5 +1,6 @@
 
 import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { getSalesFlatRowsByRange, FlatSaleRow, exportSalesPdf, exportSalesCsvByRange } from '../../utils/sales';
 import { useDashboardHeader } from './useDashboardHeader';
 import { getAuthUser } from '../../utils/auth';
@@ -33,8 +34,8 @@ export default function SalesReport() {
   const [reportRows, setReportRows] = useState<FlatSaleRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
+  const { searchTerm: searchQuery, setSearchTerm: setSearchQuery, handleSearchChange } = useDebouncedSearch('', 300);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportFormat, setExportFormat] = useState<'pdf' | 'csv'>('pdf');
   const [exportFromDate, setExportFromDate] = useState<string>('');
@@ -444,7 +445,7 @@ export default function SalesReport() {
                     <input
                       type="text"
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={handleSearchChange}
                       placeholder="Search by medicine, customer, or ID..."
                       className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-green-500/30 focus:border-green-500 outline-none transition-all bg-white"
                     />

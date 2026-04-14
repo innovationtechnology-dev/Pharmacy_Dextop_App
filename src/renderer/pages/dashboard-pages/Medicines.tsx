@@ -1,4 +1,5 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { useDashboardHeader } from './useDashboardHeader';
 import {
   FiPlus,
@@ -108,8 +109,8 @@ const mapBackendMedicine = (record: BackendMedicine): Medicine => {
 export default function MedicinesPage() {
   const { expiringAlerts, alertThresholdDays } = useDashboardHeader();
   const [medicines, setMedicines] = useState<Medicine[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | MedicineStatus>('all');
+  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
   const [newMedicine, setNewMedicine] =
     useState<MedicineFormState>(emptyMedicineForm);
   const [formError, setFormError] = useState<string | null>(null);
@@ -961,7 +962,7 @@ export default function MedicinesPage() {
                     id="medicine-search"
                     type="text"
                     value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
+                    onChange={handleSearchChange}
                     placeholder="Search by name, barcode, or ID..."
                     className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all bg-white"
                   />

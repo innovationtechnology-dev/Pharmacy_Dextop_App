@@ -299,13 +299,13 @@ const PurchasingPanel: React.FC = () => {
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
       const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-      return `${medicineAbbr}${dateStr}001`;
+      return `${medicineAbbr}${dateStr}-01`;
     } catch (error) {
       console.error('Error generating batch number:', error);
       // Fallback to simple format
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      return `BATCH${dateStr}001`;
+      return `BATCH${dateStr}-01`;
     }
   }, []);
 

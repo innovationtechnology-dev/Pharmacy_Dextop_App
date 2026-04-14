@@ -600,7 +600,7 @@ export class PurchaseService {
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
       const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-      return `${medicineAbbr}${dateStr}001`;
+      return `${medicineAbbr}${dateStr}-01`;
     }
 
     // Find the highest batch number and increment

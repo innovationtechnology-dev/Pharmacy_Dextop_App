@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { 
   FiPackage, 
   FiSearch, 
@@ -31,8 +32,8 @@ interface MedicineStock {
 const Stocks: React.FC = () => {
   const [medicines, setMedicines] = useState<MedicineStock[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'low' | 'out'>('all');
+  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
   const [selectedMedicineForDetails, setSelectedMedicineForDetails] = useState<{ id: number; name: string } | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(getStoredPharmacySettings());
 
@@ -156,7 +157,7 @@ const Stocks: React.FC = () => {
                   type="text"
                   placeholder="Filter by name, brand, or manufacturer..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={handleSearchChange}
                   className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-gray-400 outline-none dark:text-white"
                 />
               </div>

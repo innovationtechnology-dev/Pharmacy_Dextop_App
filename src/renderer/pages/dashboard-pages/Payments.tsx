@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
+import { useDebouncedSearch } from '../../hooks/useDebounce';
 import {
   FiRefreshCw,
   FiCreditCard,
@@ -159,9 +160,9 @@ const Payments: React.FC = () => {
   const [customFromDate, setCustomFromDate] = useState<string>('');
   const [customToDate, setCustomToDate] = useState<string>('');
   const [showDatePicker, setShowDatePicker] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
   const [purchaseFilter, setPurchaseFilter] = useState<'all' | 'pending' | 'paid'>('all');
-  
+  const { searchTerm, setSearchTerm, handleSearchChange } = useDebouncedSearch('', 300);
+
   // Modal state
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
   const [paymentAmount, setPaymentAmount] = useState<string>('');
@@ -1061,7 +1062,7 @@ const Payments: React.FC = () => {
               type="text"
               placeholder="Search supplier, PO#, reference..."
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={handleSearchChange}
               className="w-full pl-10 pr-4 py-2 text-sm bg-gray-100/50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 rounded-lg focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500"
             />
           </div>
