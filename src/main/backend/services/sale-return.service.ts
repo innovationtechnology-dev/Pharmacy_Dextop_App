@@ -66,11 +66,22 @@ export class SaleReturnService {
         discount_amount REAL NOT NULL DEFAULT 0,
         tax_amount REAL NOT NULL DEFAULT 0,
         total REAL NOT NULL,
+        cost_price REAL NOT NULL DEFAULT 0,
+        cost_subtotal REAL NOT NULL DEFAULT 0,
         reason TEXT,
         FOREIGN KEY (sale_return_id) REFERENCES sale_returns(id) ON DELETE CASCADE,
         FOREIGN KEY (medicine_id) REFERENCES medicines(id)
       )
     `);
+
+    // Migration: add cost_price and cost_subtotal to sale_return_items if they don't exist
+    const columnInfo = await this.dbService.query(`PRAGMA table_info(sale_return_items)`);
+    if (!columnInfo.some((col: any) => col.name === 'cost_price')) {
+      await this.dbService.execute(`ALTER TABLE sale_return_items ADD COLUMN cost_price REAL NOT NULL DEFAULT 0`);
+    }
+    if (!columnInfo.some((col: any) => col.name === 'cost_subtotal')) {
+      await this.dbService.execute(`ALTER TABLE sale_return_items ADD COLUMN cost_subtotal REAL NOT NULL DEFAULT 0`);
+    }
 
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_return_items_sale_return_id ON sale_return_items(sale_return_id)
@@ -113,45 +124,67 @@ export class SaleReturnService {
 
   /**
    * Restore inventory by adding pills back to purchase_items
-   * Uses FIFO (First In First Out) - adds to the oldest batch first
+   * Restores to batches in FEFO order (earliest expiry first).
+   * Accepts even batches that are expired/expiring soon, as returned goods
+   * are being restocked for potential re-sale or destruction per protocol.
    */
   private async restoreInventory(medicineId: number, pillsToRestore: number): Promise<void> {
     // Get purchase items for this medicine, ordered by expiry date (oldest first)
+    // This includes expired batches - business decision to accept returns even if
+    // original batch has expired (e.g., warehouse found old stock, or customer dispute)
     const sql = `
       SELECT id, total_pills, available_pills
       FROM purchase_items
       WHERE medicine_id = ?
-        AND expiry_date >= date('now', '+30 days')
       ORDER BY expiry_date ASC, id ASC
     `;
     const batches = await this.dbService.query(sql, [medicineId]);
 
+    console.log(`[RESTORE] Query found ${batches?.length || 0} batches for medicine ${medicineId}`);
+
     if (batches.length === 0) {
-      // If no valid batches exist, we'll still allow the return but log a warning
-      console.warn(`No valid purchase batches found for medicine ${medicineId} to restore inventory`);
+      // If no batches exist at all, log warning but don't fail the return
+      console.warn(`No purchase batches found for medicine ${medicineId}. Return accepted but inventory could not be restored.`);
       return;
     }
 
     let remaining = pillsToRestore;
 
-    // Restore pills to batches, starting with the oldest
-    for (const batch of batches) {
-      if (remaining <= 0) break;
+    console.log(`[RESTORE] Starting restore of ${pillsToRestore} pills for medicine ${medicineId}. Found ${batches.length} batches.`);
 
-      const maxCanRestore = batch.total_pills - batch.available_pills;
-      if (maxCanRestore <= 0) continue; // This batch is already full
-
-      const restore = Math.min(maxCanRestore, remaining);
-      await this.dbService.execute(
+    // Strategy: Restore to the oldest batch first (FEFO), even if it means exceeding capacity temporarily.
+    // This can happen when returned items exceed what was originally in the batch but get restocked
+    // back into the system. The capacity is a "normal" limit, not a hard ceiling for returns.
+    if (batches.length > 0) {
+      const firstBatch = batches[0];
+      console.log(`[RESTORE] Restoring all ${remaining} pills to first batch (FEFO): batch ${firstBatch.id} (total_pills=${firstBatch.total_pills}, available=${firstBatch.available_pills})`);
+      
+      const result = await this.dbService.execute(
         'UPDATE purchase_items SET available_pills = available_pills + ? WHERE id = ?',
-        [restore, batch.id]
+        [remaining, firstBatch.id]
       );
-      remaining -= restore;
+      
+      // Verify the update worked
+      const verifyBatch = await this.dbService.queryOne(
+        'SELECT available_pills FROM purchase_items WHERE id = ?',
+        [firstBatch.id]
+      );
+      const newAvailable = verifyBatch?.available_pills ?? 0;
+      console.log(`[RESTORE] Update result: ${JSON.stringify(result)}. New available_pills for batch ${firstBatch.id}:`, newAvailable, `(was ${firstBatch.available_pills})`);
+      
+      if (newAvailable !== firstBatch.available_pills + remaining) {
+        console.error(`[RESTORE] ERROR: Update verification failed! Expected ${firstBatch.available_pills + remaining} but got ${newAvailable}`);
+      } else {
+        console.log(`[RESTORE] ✓ Successfully restored ${remaining} pills to batch ${firstBatch.id}`);
+      }
+      remaining = 0;
     }
 
-    // If we couldn't restore all pills (e.g., original batches were deleted), log a warning
+    console.log(`[RESTORE] Restore complete. Pills remaining to restore: ${remaining}`);
+
+    // This should now always be 0 since we restore to the first available batch
     if (remaining > 0) {
-      console.warn(`Could not restore ${remaining} pills for medicine ${medicineId} - original batches may have been deleted`);
+      console.error(`[RESTORE] ERROR: Could not restore ${remaining} pills for medicine ${medicineId} - no batches found`);
     }
   }
 
@@ -271,6 +304,14 @@ export class SaleReturnService {
       const saleReturnId = (saleReturnResult as any).lastID;
 
       for (const item of computedItems) {
+        // Get cost price for the return item (try to get it from sale_items first, else average)
+        const saleItemRecord = await this.dbService.queryOne(
+          'SELECT cost_price FROM sale_items WHERE sale_id = ? AND medicine_id = ? LIMIT 1',
+          [payload.saleId, item.medicineId]
+        );
+        const costPrice = saleItemRecord?.cost_price || 0;
+        const costSubtotal = costPrice * item.pills;
+
         const insertItemSql = `
           INSERT INTO sale_return_items (
             sale_return_id,
@@ -282,9 +323,11 @@ export class SaleReturnService {
             discount_amount,
             tax_amount,
             total,
+            cost_price,
+            cost_subtotal,
             reason
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         await this.dbService.execute(insertItemSql, [
           saleReturnId,
@@ -296,6 +339,8 @@ export class SaleReturnService {
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.total,
+          costPrice,
+          costSubtotal,
           item.reason || null,
         ]);
 
@@ -631,8 +676,8 @@ export class SaleReturnService {
         sri.reason
       FROM sale_return_items sri
       INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
-      WHERE date(sr.created_at, 'localtime') >= date(?)
-        AND date(sr.created_at, 'localtime') <= date(?)
+      WHERE date(sr.created_at) >= date(?)
+        AND date(sr.created_at) <= date(?)
       ORDER BY sr.created_at DESC, sr.id DESC, sri.id ASC
     `;
     const rows = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
@@ -680,6 +725,23 @@ export class SaleReturnService {
     `;
     const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
     return result?.total_returns || 0;
+  }
+
+  /**
+   * Get total cost of returned items by date range
+   */
+  public async getSaleReturnsCostByDateRange(fromDate: string, toDate: string): Promise<number> {
+    const fromDateTime = `${fromDate} 00:00:00`;
+    const toDateTime = `${toDate} 23:59:59`;
+    const sql = `
+      SELECT COALESCE(SUM(sri.cost_subtotal), 0) as total_return_cost
+      FROM sale_return_items sri
+      JOIN sale_returns sr ON sri.sale_return_id = sr.id
+      WHERE datetime(sr.created_at) >= datetime(?) 
+        AND datetime(sr.created_at) <= datetime(?)
+    `;
+    const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+    return result?.total_return_cost || 0;
   }
 }
 

@@ -30,6 +30,8 @@ export interface MedicineWithInventory extends Medicine {
   manufacturer?: string;
   brandName?: string;
   minimumStockLevel: number;
+  /** True if any purchase, sale, or return line references this medicine (name/barcode edits blocked). */
+  hasTransactionHistory: boolean;
 }
 
 export interface LowStockAlert {
@@ -182,6 +184,12 @@ export class MedicineService {
         m.manufacturer,
         m.brand_name,
         COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
+        CASE
+          WHEN EXISTS (SELECT 1 FROM purchase_items WHERE medicine_id = m.id LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sale_items WHERE medicine_id = m.id LIMIT 1)
+            OR EXISTS (SELECT 1 FROM sale_return_items WHERE medicine_id = m.id LIMIT 1)
+          THEN 1 ELSE 0
+        END AS has_transaction_history,
         COALESCE(SUM(pi.available_pills), 0) AS total_available_pills,
         -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
         COALESCE(
@@ -210,12 +218,22 @@ export class MedicineService {
         -- Next expiry date among unexpired batches (FEFO uses ordering anyway)
         MIN(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
                  THEN date(pi.expiry_date) ELSE NULL END) AS next_expiry_date,
-        CASE 
-          WHEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END) > 0
-            THEN SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN (pi.price_per_pill * pi.available_pills) ELSE 0 END) 
-                 / SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END)
-          ELSE NULL
-        END AS avg_sellable_price_per_pill
+        -- Selling price: always driven by the single FEFO batch (oldest expiry with stock > 0).
+        -- 1. If selling_price_per_pill was set at purchase time for that batch → use it.
+        -- 2. Otherwise fall back to that same batch's own gross price per pill (price_per_packet / pills_per_packet).
+        -- This ensures old stock always shows its own price, not a blend with newer batches.
+        (
+          SELECT CASE
+            WHEN pi2.selling_price_per_pill > 0 THEN pi2.selling_price_per_pill
+            ELSE (pi2.price_per_packet * 1.0 / pi2.pills_per_packet)
+          END
+          FROM purchase_items pi2
+          WHERE pi2.medicine_id = m.id
+            AND date(pi2.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+            AND pi2.available_pills > 0
+          ORDER BY date(pi2.expiry_date) ASC, pi2.id ASC
+          LIMIT 1
+        ) AS avg_sellable_price_per_pill
       FROM medicines m
       LEFT JOIN purchase_items pi ON pi.medicine_id = m.id
     `;
@@ -231,6 +249,7 @@ export class MedicineService {
       manufacturer: row.manufacturer || undefined,
       brandName: row.brand_name || undefined,
       minimumStockLevel: row.minimum_stock_level ?? 0,
+      hasTransactionHistory: Boolean(row.has_transaction_history),
       totalAvailablePills: row.total_available_pills ?? 0,
       sellablePills: row.sellable_pills ?? 0,
       normalExpiryPills: row.normal_expiry_pills ?? 0,
@@ -405,16 +424,15 @@ export class MedicineService {
     // Check if medicine has been used in transactions
     const hasTransactions = await this.hasMedicineBeenUsed(id);
     
-    // If medicine has transactions, only allow status updates
+    // If medicine has transactions, only block identity fields (name/barcode). Pack size and other fields may still be corrected.
     if (hasTransactions) {
-      // Check if trying to update anything other than status
-      const hasNonStatusUpdates = 
-        medicine.name !== undefined || 
-        medicine.barcode !== undefined || 
-        medicine.pillQuantity !== undefined;
-      
-      if (hasNonStatusUpdates) {
-        throw new Error('Cannot edit medicine details: This medicine has been used in transactions. You can only change its status (active/inactive/discontinued).');
+      const hasBlockedIdentityUpdates =
+        medicine.name !== undefined || medicine.barcode !== undefined;
+
+      if (hasBlockedIdentityUpdates) {
+        throw new Error(
+          'Cannot edit medicine name or barcode: This medicine has been used in transactions. You can update pills/packet, manufacturer, brand, min. stock level, and status.'
+        );
       }
     }
 
@@ -612,6 +630,58 @@ export class MedicineService {
       minimumStockLevel: row.minimum_stock_level ?? 0,
       deficit: (row.minimum_stock_level ?? 0) - (row.sellable_pills ?? 0),
     }));
+  }
+  /**
+   * Get detailed inventory information (batches) for a specific medicine.
+   */
+  public async getMedicineInventoryDetails(medicineId: number): Promise<any[]> {
+    const sql = `
+      SELECT 
+        pi.purchase_id AS purchaseId,
+        m.name AS medicineName,
+        m.pill_quantity AS pillQuantity,
+        pi.total_pills AS totalPills,
+        pi.available_pills AS availablePills,
+        (pi.total_pills - pi.available_pills) AS soldPills,
+        p.created_at AS purchaseDate,
+        p.supplier_name AS supplierName,
+        pi.expiry_date AS expiryDate,
+        pi.price_per_packet AS originalPricePerPacket,
+        CASE 
+          WHEN pi.packet_quantity > 0 THEN (pi.discount_amount / pi.packet_quantity)
+          ELSE 0 
+        END AS discountPerPacket,
+        CASE 
+          WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
+          ELSE (pi.price_per_packet * 1.0 / NULLIF(pi.pills_per_packet, 0))
+        END AS sellingPricePerPill
+      FROM purchase_items pi
+      JOIN purchases p ON pi.purchase_id = p.id
+      JOIN medicines m ON pi.medicine_id = m.id
+      WHERE pi.medicine_id = ?
+      ORDER BY p.created_at DESC
+    `;
+    return await this.dbService.query(sql, [medicineId]);
+  }
+
+  /**
+   * Return FEFO-ordered unexpired batches with their effective sell price per pill.
+   * Used by the selling panel to compute a blended price when a quantity spans multiple batches.
+   */
+  public async getFefoSellBatches(medicineId: number): Promise<Array<{ availablePills: number; sellPrice: number }>> {
+    const sql = `
+      SELECT
+        available_pills AS availablePills,
+        CASE WHEN selling_price_per_pill > 0 THEN selling_price_per_pill
+             ELSE (price_per_packet * 1.0 / pills_per_packet)
+        END AS sellPrice
+      FROM purchase_items
+      WHERE medicine_id = ?
+        AND date(expiry_date) >= date('now')
+        AND available_pills > 0
+      ORDER BY date(expiry_date) ASC, id ASC
+    `;
+    return this.dbService.query(sql, [medicineId]);
   }
 }
 

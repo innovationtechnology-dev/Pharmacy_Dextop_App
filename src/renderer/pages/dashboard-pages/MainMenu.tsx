@@ -40,6 +40,25 @@ import {
   FiPhone
 } from 'react-icons/fi';
 
+interface PanelVisibilitySettings {
+  showSellingPanel: boolean;
+  showPurchasingPanel: boolean;
+}
+
+const defaultPanelVisibilitySettings: PanelVisibilitySettings = {
+  showSellingPanel: true,
+  showPurchasingPanel: true,
+};
+
+const getStoredPanelVisibilitySettings = (): PanelVisibilitySettings => {
+  try {
+    const stored = localStorage.getItem('panelVisibilitySettings');
+    return stored ? JSON.parse(stored) : defaultPanelVisibilitySettings;
+  } catch {
+    return defaultPanelVisibilitySettings;
+  }
+};
+
 interface MenuItem {
   id: string;
   title: string;
@@ -75,6 +94,9 @@ const MainMenu: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
+  const [panelVisibility, setPanelVisibility] = useState<PanelVisibilitySettings>(
+    getStoredPanelVisibilitySettings()
+  );
   const menuBarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -83,6 +105,19 @@ const MainMenu: React.FC = () => {
       const timer = setTimeout(() => setShowWelcomeNotification(true), 500);
       return () => clearTimeout(timer);
     }
+  }, []);
+
+  // Listen for panel visibility changes
+  useEffect(() => {
+    const handlePanelVisibilityUpdate = (event: any) => {
+      setPanelVisibility(event.detail);
+    };
+
+    window.addEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
+    
+    return () => {
+      window.removeEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
+    };
   }, []);
 
   const handleCloseWelcomeNotification = () => {
@@ -145,7 +180,7 @@ const MainMenu: React.FC = () => {
       description: 'Point of Sale',
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
-      disabled: isAdmin,
+      disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
     },
     {
       id: 'medicines',
@@ -158,6 +193,15 @@ const MainMenu: React.FC = () => {
       shortcut: 'Ctrl+M',
     },
     {
+      id: 'stocks',
+      title: 'Stocks',
+      icon: <FiLayers className="w-5 h-5" />,
+      color: 'from-emerald-500 to-emerald-600',
+      gradient: 'bg-gradient-to-br from-emerald-500/10 to-emerald-600/10',
+      description: 'Stock Monitoring',
+      route: '/stocks',
+    },
+    {
       id: 'purchasing-panel',
       title: 'Purchasing Panel',
       icon: <FiPackage className="w-5 h-5" />,
@@ -166,7 +210,7 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Management',
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
-      disabled: isAdmin,
+      disabled: isAdmin ? !panelVisibility.showPurchasingPanel : false,
     },
     {
       id: 'customers',
@@ -485,6 +529,14 @@ const MainMenu: React.FC = () => {
           title="Medicines (Ctrl+M)"
         >
           <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+        </button>
+        <button
+          type="button"
+          onClick={() => navigate('/stocks')}
+          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+          title="Stocks"
+        >
+          <FiLayers className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         {!isCashier && (
           <button

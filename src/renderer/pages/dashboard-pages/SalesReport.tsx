@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { getSalesFlatRowsByRange, FlatSaleRow, exportSalesPdf, exportSalesCsvByRange } from '../../utils/sales';
 import { useDashboardHeader } from './useDashboardHeader';
 import { getAuthUser } from '../../utils/auth';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiUser, FiPhone, FiFileText } from 'react-icons/fi';
 import { FaArrowDown, FaCreditCard, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaUndo, FaArrowLeft } from 'react-icons/fa';
-import ReportDetailModal from '../../components/common/DetailModal';
 import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
@@ -62,17 +62,15 @@ export default function SalesReport() {
     return () => setHeader(null);
   }, [setHeader]);
 
-  const fetchReport = useCallback(async () => {
+  const fetchReport = useCallback(async (overrideFrom?: string, overrideTo?: string) => {
     setLoading(true);
     setError(null);
     try {
-      // Simulate a small delay for the animation effect if the fetch is too fast
       await new Promise(resolve => setTimeout(resolve, 500));
-
-      const res = await getSalesFlatRowsByRange(fromDate, toDate);
+      const res = await getSalesFlatRowsByRange(overrideFrom || fromDate, overrideTo || toDate);
       if (res.success && res.data) {
         setReportRows(res.data);
-        setPage(1); // Reset to first page on new fetch
+        setPage(1);
       } else {
         setError(res.error || 'Failed to fetch sales data');
         setReportRows([]);
@@ -85,10 +83,35 @@ export default function SalesReport() {
     }
   }, [fromDate, toDate]);
 
-  // Initial fetch
+  const handleTodayFilter = () => {
+    setFromDate(today);
+    setToDate(today);
+    fetchReport(today, today);
+  };
+
+  const handleMonthFilter = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const mm = String(firstDay.getMonth() + 1).padStart(2, '0');
+    const dd = String(firstDay.getDate()).padStart(2, '0');
+    const fDate = `${firstDay.getFullYear()}-${mm}-${dd}`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchReport(fDate, today);
+  };
+
+  const handleYearFilter = () => {
+    const now = new Date();
+    const fDate = `${now.getFullYear()}-01-01`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchReport(fDate, today);
+  };
+
   useEffect(() => {
     fetchReport();
-  }, []); // Run once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleDownloadPdf = async () => {
     setExporting(true);
@@ -175,12 +198,14 @@ export default function SalesReport() {
         existing.subtotal += row.subtotal;
         existing.discountAmount += row.discountAmount;
         existing.taxAmount += row.taxAmount;
+        (existing as any).returnedPills = ((existing as any).returnedPills || 0) + (row.returnedPills || 0);
       }
     });
 
     const groupedData = Array.from(map.values()).map(row => {
-      // Subtract additional discount from the total (it's applied at sale level, not item level)
-      const finalTotal = row.total - (row.additionalDiscountAmount || 0);
+      // Calculate net additional discount based on percentage, not fixed original amount
+      const extraDisc = (row.total * (row.additionalDiscount || 0)) / 100;
+      const finalTotal = row.total - extraDisc;
       return {
         ...row,
         total: finalTotal,
@@ -286,23 +311,27 @@ export default function SalesReport() {
         </div>
 
 
-        {/* Back to Selling Button */}
-        <button
-          onClick={() => window.location.hash = '#/selling-panel'}
-          className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <FaArrowLeft className="w-3.5 h-3.5" />
-          Back to Selling
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Back to Selling Button */}
+          {isCashier && (
+            <button
+              onClick={() => window.location.hash = '#/selling-panel'}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+            >
+              <FaArrowLeft className="w-3.5 h-3.5" />
+              Back to Selling
+            </button>
+          )}
 
-        {/* Refresh Button */}
-        <button
-          onClick={fetchReport}
-          className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchReport()}
+            className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          >
+            <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Main Content: Vertical Layout */}
@@ -350,14 +379,49 @@ export default function SalesReport() {
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                 />
               </div>
-              <button
-                onClick={fetchReport}
-                disabled={loading}
-                className="w-full sm:w-auto px-4 py-1.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded hover:from-green-700 hover:to-green-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
-                Fetch Reports
-              </button>
+              <div className="flex-1 flex gap-2 sm:justify-end">
+                <button
+                  onClick={() => handleTodayFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === today && toDate === today
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => handleMonthFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01` && toDate === today
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                  }`}
+                >
+                  Month
+                </button>
+                {!isCashier && (
+                  <button
+                    onClick={() => handleYearFilter()}
+                    className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                      fromDate === `${new Date().getFullYear()}-01-01` && toDate === today
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                    }`}
+                  >
+                    Year
+                  </button>
+                )}
+                <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+                <button
+                  onClick={() => fetchReport()}
+                  disabled={loading}
+                  className="flex-1 sm:flex-none px-4 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
+                  Fetch Reports
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -426,10 +490,10 @@ export default function SalesReport() {
                   No sales found for the selected range.
                 </div>
               ) : (
-                pagedRows.map((row) => (
-                  <div key={row.saleId} className="contents border-b border-gray-100 dark:border-gray-700">
+                (selectedSale ? pagedRows.filter(r => r.saleId === selectedSale.saleId) : pagedRows).map((row) => (
+                  <React.Fragment key={row.saleId}>
                     <div 
-                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
+                      className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b transition-all duration-200 ${selectedSale?.saleId === row.saleId ? 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-emerald-50/20 dark:hover:bg-emerald-900/5'}`}
                     >
                       <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                         <div className="text-[11px] text-gray-500 dark:text-gray-400 font-bold">Sale #{row.saleId}</div>
@@ -456,9 +520,16 @@ export default function SalesReport() {
                         )}
                       </div>
                       <div className="col-span-1 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
-                          {row.pills}
-                        </span>
+                        <div className="flex flex-col items-center">
+                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
+                            {row.pills}
+                          </span>
+                          {((row as any).returnedPills > 0) && (
+                            <span className="text-[8px] font-black text-rose-500 mt-0.5 uppercase tracking-tighter">
+                              { (row as any).returnedPills } Ret.
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="col-span-2 text-right">
                         <div className="font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -466,17 +537,111 @@ export default function SalesReport() {
                       <div className="col-span-1 text-center">
                         <button
                           onClick={() => {
-                            setSelectedSale(row);
-                            setShowDetailModal(true);
+                            if (selectedSale?.saleId === row.saleId) {
+                              setSelectedSale(null);
+                            } else {
+                              setSelectedSale(row);
+                            }
                           }}
-                          className="px-2.5 py-1.5 bg-blue-400 dark:bg-blue-900/20 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
-                          title="View Details"
+                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedSale?.saleId === row.saleId ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
+                          title={selectedSale?.saleId === row.saleId ? "Close Details" : "View Details"}
                         >
-                          View
+                          {selectedSale?.saleId === row.saleId ? "Close" : "View"}
                         </button>
                       </div>
                     </div>
-                  </div>
+
+                    {/* Inline Details expansion */}
+                    {selectedSale?.saleId === row.saleId && (
+                      <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200 bg-gray-50/50 dark:bg-gray-800/30 shadow-inner w-full flex flex-col">
+                        
+                        {/* Inline header info */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-3 bg-white dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Customer</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerName || 'Walk-in Customer'}</span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Sale Info</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{new Date(row.createdAt).toLocaleDateString()}</span>
+                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 bg-emerald-100 dark:bg-emerald-900/40 border border-emerald-300 dark:border-emerald-700 rounded text-[8px] font-bold text-emerald-700 dark:text-emerald-400 whitespace-nowrap">
+                                {(row as any).paymentMethod || 'CASH'}
+                              </span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Contact</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerPhone || 'N/A'}</span>
+                           </div>
+                           {(row as any).notes && (
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Remarks</span>
+                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-400 italic line-clamp-2" title={(row as any).notes}>{(row as any).notes}</span>
+                           </div>
+                           )}
+                        </div>
+
+                        {/* Inline Table Header */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100/50 dark:bg-gray-800 text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest border-y border-gray-200 dark:border-gray-700">
+                          <div className="col-span-1 text-center font-bold">#</div>
+                          <div className="col-span-5 font-bold">Medicine Product</div>
+                          <div className="col-span-2 text-center font-bold">Qty</div>
+                          <div className="col-span-2 text-right font-bold">Price / Disc.</div>
+                          <div className="col-span-2 text-right font-bold">Subtotal</div>
+                        </div>
+
+                        {/* Inline Table Body */}
+                        <div className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900/40">
+                           {row.children?.map((item: any, idx: number) => (
+                             <div key={idx} className="grid grid-cols-12 gap-3 px-8 py-3 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all">
+                                <div className="col-span-1 text-center text-[10px] text-gray-400">
+                                   {(idx + 1).toString().padStart(2, '0')}
+                                </div>
+                                <div className="col-span-5">
+                                   <div className="text-[11px] font-semibold text-gray-800 dark:text-gray-200">{item.medicineName}</div>
+                                   <div className="text-[9px] text-gray-500">ID: #{item.medicineId}</div>
+                                </div>
+                                 <div className="col-span-2 text-center text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                                    <div className="flex flex-col items-center">
+                                      <span>{item.pills}</span>
+                                      {item.returnedPills > 0 && (
+                                        <span className="text-[9px] text-gray-400 line-through decoration-red-400">Orig: {item.originalPills}</span>
+                                      )}
+                                    </div>
+                                 </div>
+                                <div className="col-span-2 text-right">
+                                   <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                                      {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                   </div>
+                                   {item.discountAmount > 0 && (
+                                     <div className="text-[9px] text-red-500">
+                                        -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                     </div>
+                                   )}
+                                </div>
+                                <div className="col-span-2 text-right text-[11px] font-bold text-gray-900 dark:text-white">
+                                   {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                             </div>
+                           ))}
+                        </div>
+
+                        {/* Inline Footer */}
+                        <div className="px-8 py-3 bg-emerald-50/80 dark:bg-emerald-900/10 border-b border-emerald-100/50 dark:border-emerald-900/30 flex flex-wrap justify-between gap-6 text-[10px] text-emerald-800 dark:text-emerald-400 tracking-wide">
+                            <div className="flex flex-wrap gap-6 items-center">
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Subtotal:</span> {getCurrencySymbol()}{(row.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Tax:</span> +{getCurrencySymbol()}{(row.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Discount:</span> -{getCurrencySymbol()}{(row.discountAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              {(row.additionalDiscountAmount ?? 0) > 0 && (
+                                <div><span className="font-bold opacity-70 uppercase mr-1">Extra Disc:</span> -{getCurrencySymbol()}{row.additionalDiscountAmount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 ml-auto">
+                              <div className="text-xs"><span className="font-bold opacity-70 uppercase mr-1">Net Total:</span> <span className="font-black">{getCurrencySymbol()}{(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                            </div>
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
                 ))
               )}
             </div>
@@ -520,99 +685,7 @@ export default function SalesReport() {
         </div>
       </div>
 
-      {/* Detail Modal */}
-      <ReportDetailModal
-        isOpen={showDetailModal && !!selectedSale}
-        onClose={() => setShowDetailModal(false)}
-        title="Sale Transaction"
-        icon={FaShoppingCart}
-        colorTheme="emerald"
-        headerBadges={[
-          { label: 'Transaction #', value: String(selectedSale?.saleId || '') },
-          { label: 'Pharmacy Records', value: '', isItalic: true }
-        ]}
-        infoCards={[
-          { 
-            title: 'Customer', 
-            value: selectedSale?.customerName || 'Walk-in Customer', 
-            icon: FiUser, 
-            theme: 'blue' 
-          },
-          { 
-            title: 'Sale Info', 
-            value: selectedSale?.createdAt ? new Date(selectedSale.createdAt).toLocaleDateString() : 'N/A', 
-            icon: FiCalendar, 
-            theme: 'emerald',
-            badge: {
-              label: selectedSale?.paymentMethod || 'Cash',
-              color: 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300'
-            }
-          },
-          { 
-            title: 'Contact Detail', 
-            value: selectedSale?.customerPhone || 'N/A', 
-            icon: FiPhone, 
-            theme: 'purple' 
-          }
-        ]}
-        tableTitle="Sold Products"
-        tableItemsCount={selectedSale?.children.length || 0}
-        tableHeaders={['#', 'Medicine Product', 'Qty', 'Unit Price', 'Disc.', 'Subtotal']}
-        items={selectedSale?.children || []}
-        renderTableRow={(item: any, idx: number) => (
-          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
-            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
-              {String(idx + 1).padStart(2, '0')}
-            </div>
-            <div className="col-span-5 translate-x-1">
-              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{item.medicineName}</div>
-              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal italic">ID: #{item.medicineId}</div>
-            </div>
-            <div className="col-span-1 text-right">
-              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {item.pills}
-              </span>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="col-span-1 text-right">
-              <div className="text-[11px] font-normal text-red-500">
-                -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
-                {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-          </div>
-        )}
-        remarks={{
-          title: 'Remarks',
-          content: (
-            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
-              {selectedSale?.notes || 'No customer remarks recorded.'}
-            </p>
-          )
-        }}
-        summaryItems={[
-          { label: 'Subtotal', value: `${getCurrencySymbol()}${selectedSale?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Discount', type: 'discount' as const, value: `${getCurrencySymbol()}${selectedSale?.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Tax', type: 'tax' as const, value: `${getCurrencySymbol()}${selectedSale?.taxAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          ...((selectedSale?.additionalDiscountAmount ?? 0) > 0 
-            ? [{ label: 'Extra Discount', type: 'discount' as const, value: `${getCurrencySymbol()}${selectedSale.additionalDiscountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }]
-            : []
-          ),
-          { label: 'Net Amount', type: 'total' as const, value: `${getCurrencySymbol()}${selectedSale?.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
-        ]}
-        footerStatus={{
-          label: 'Transaction Finalized',
-          color: 'emerald'
-        }}
-      />
+      {/* Detail Modal removed in favor of Inline expansion */}
 
       {/* Export Dialog */}
       {showExportDialog && (

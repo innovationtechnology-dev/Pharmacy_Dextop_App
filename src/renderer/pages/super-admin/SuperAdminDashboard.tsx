@@ -123,6 +123,9 @@ const SuperAdminDashboard: React.FC = () => {
     suppliers: 0,
     saleReturns: 0,
   });
+  const [selectedTablesToDelete, setSelectedTablesToDelete] = useState<Set<string>>(
+    new Set(['sales', 'purchases', 'medicines', 'customers', 'suppliers', 'saleReturns'])
+  );
 
   const loadUsers = useCallback(async () => {
     if (isLoadingRef.current || document.hidden) return;
@@ -280,7 +283,30 @@ const SuperAdminDashboard: React.FC = () => {
     setShowResetModal(true);
   };
 
+  const toggleTableSelection = (tableName: string) => {
+    const newSelected = new Set(selectedTablesToDelete);
+    if (newSelected.has(tableName)) {
+      newSelected.delete(tableName);
+    } else {
+      newSelected.add(tableName);
+    }
+    setSelectedTablesToDelete(newSelected);
+  };
+
+  const toggleSelectAllTables = () => {
+    if (selectedTablesToDelete.size === 6) {
+      setSelectedTablesToDelete(new Set());
+    } else {
+      setSelectedTablesToDelete(new Set(['sales', 'purchases', 'medicines', 'customers', 'suppliers', 'saleReturns']));
+    }
+  };
+
   const confirmResetSystem = async () => {
+    if (selectedTablesToDelete.size === 0) {
+      error('Please select at least one table to delete');
+      return;
+    }
+
     if (resetConfirmText !== 'DELETE ALL DATA') {
       error('You must type "DELETE ALL DATA" exactly to confirm.');
       return;
@@ -298,7 +324,7 @@ const SuperAdminDashboard: React.FC = () => {
     setShowOverlay(true);
     setLoadingText('Resetting system data...');
     
-    console.log('Sending system-reset-all-data message...');
+    console.log('Sending system-reset-all-data message with tables:', Array.from(selectedTablesToDelete));
     
     try {
       // Set up the listener first
@@ -307,7 +333,7 @@ const SuperAdminDashboard: React.FC = () => {
         
         if (response.success) {
           setLoadingText('Reset complete! Reloading...');
-          success('System reset successfully! All data has been deleted. The page will now reload.');
+          success('System reset successfully! Selected data has been deleted. The page will now reload.');
           // Keep overlay visible so user sees the toast
           await new Promise(resolve => setTimeout(resolve, 2000));
           window.location.reload();
@@ -320,8 +346,8 @@ const SuperAdminDashboard: React.FC = () => {
         }
       });
       
-      // Then send the message
-      window.electron.ipcRenderer.sendMessage('system-reset-all-data', []);
+      // Then send the message with selected tables
+      window.electron.ipcRenderer.sendMessage('system-reset-all-data', [Array.from(selectedTablesToDelete)]);
       console.log('Message sent successfully');
     } catch (err) {
       console.error('Error in confirmResetSystem:', err);
@@ -1755,55 +1781,66 @@ const SuperAdminDashboard: React.FC = () => {
             <div className="p-6 space-y-4">
               <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
                 <p className="text-sm font-semibold text-red-800 mb-3">
-                  WARNING: This will permanently delete ALL data including:
+                  WARNING: This will permanently delete selected data:
                 </p>
+                
+                {/* Select All / Deselect All */}
+                <div className="mb-3 pb-3 border-b border-red-200">
+                  <label className="flex items-center gap-2 cursor-pointer hover:bg-red-100 p-2 rounded">
+                    <input
+                      type="checkbox"
+                      checked={selectedTablesToDelete.size === 6}
+                      onChange={toggleSelectAllTables}
+                      className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                    />
+                    <span className="text-xs font-bold text-red-800">Select / Deselect All</span>
+                  </label>
+                </div>
+
+                {/* Individual table selections */}
                 <ul className="space-y-1.5 text-xs text-red-700">
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Sales Records
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.sales.toLocaleString()})</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Purchases
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.purchases.toLocaleString()})</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Medicines
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.medicines.toLocaleString()})</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Customers
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.customers.toLocaleString()})</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Suppliers
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.suppliers.toLocaleString()})</span>
-                  </li>
-                  <li className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 bg-red-500 rounded-full"></span>
-                      All Sale Returns
-                    </div>
-                    <span className="font-semibold text-red-800">({tableCounts.saleReturns.toLocaleString()})</span>
-                  </li>
+                  {[
+                    { key: 'sales', label: 'All Sales Records' },
+                    { key: 'purchases', label: 'All Purchases' },
+                    { key: 'medicines', label: 'All Medicines' },
+                    { key: 'customers', label: 'All Customers' },
+                    { key: 'suppliers', label: 'All Suppliers' },
+                    { key: 'saleReturns', label: 'All Sale Returns' },
+                  ].map((table) => (
+                    <li key={table.key} className="flex items-center justify-between gap-2 p-2 hover:bg-red-100 rounded cursor-pointer">
+                      <label className="flex items-center gap-2 cursor-pointer flex-1">
+                        <input
+                          type="checkbox"
+                          checked={selectedTablesToDelete.has(table.key)}
+                          onChange={() => toggleTableSelection(table.key)}
+                          className="w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                        />
+                        <span>{table.label}</span>
+                      </label>
+                      <span className="font-semibold text-red-800">
+                        {table.key === 'saleReturns'
+                          ? `(${tableCounts.saleReturns.toLocaleString()})`
+                          : table.key === 'sales'
+                          ? `(${tableCounts.sales.toLocaleString()})`
+                          : table.key === 'purchases'
+                          ? `(${tableCounts.purchases.toLocaleString()})`
+                          : table.key === 'medicines'
+                          ? `(${tableCounts.medicines.toLocaleString()})`
+                          : table.key === 'customers'
+                          ? `(${tableCounts.customers.toLocaleString()})`
+                          : `(${tableCounts.suppliers.toLocaleString()})`}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
                 <p className="text-xs text-red-600 mt-3 font-medium">
                   User accounts will NOT be deleted.
                 </p>
+                <div className="mt-3 p-2 bg-red-100 rounded border border-red-300">
+                  <p className="text-xs font-semibold text-red-800">
+                    Selected: {selectedTablesToDelete.size} table(s) for deletion
+                  </p>
+                </div>
               </div>
 
               <div>
@@ -1834,7 +1871,7 @@ const SuperAdminDashboard: React.FC = () => {
               </button>
               <button
                 onClick={confirmResetSystem}
-                disabled={resetConfirmText !== 'DELETE ALL DATA'}
+                disabled={resetConfirmText !== 'DELETE ALL DATA' || selectedTablesToDelete.size === 0}
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FiTrash2 className="w-4 h-4" />

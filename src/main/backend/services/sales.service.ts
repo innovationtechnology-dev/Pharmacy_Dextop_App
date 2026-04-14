@@ -72,14 +72,34 @@ export class SalesService {
           s.additional_discount_amount AS additionalDiscountAmount,
           si.medicine_id AS medicineId,
           si.medicine_name AS medicineName,
-          si.pills,
+          si.pills AS originalPills,
+          COALESCE(returns.returned_pills, 0) AS returnedPills,
+          (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
           si.unit_price AS unitPrice,
-          si.subtotal,
-          si.discount_amount AS discountAmount,
-          si.tax_amount AS taxAmount,
-          si.total
+          si.subtotal AS originalSubtotal,
+          (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
+          si.discount_amount AS originalDiscountAmount,
+          (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
+          si.tax_amount AS originalTaxAmount,
+          (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
+          si.total AS originalTotal,
+          COALESCE(returns.returned_total, 0) AS returnedTotal,
+          (si.total - COALESCE(returns.returned_total, 0)) AS total
         FROM sale_items si
         INNER JOIN sales s ON s.id = si.sale_id
+        LEFT JOIN (
+          SELECT 
+            sr.sale_id, 
+            sri.medicine_id,
+            SUM(sri.pills) as returned_pills,
+            SUM(sri.total) as returned_total,
+            SUM(sri.subtotal) as returned_subtotal,
+            SUM(sri.discount_amount) as returned_discount,
+            SUM(sri.tax_amount) as returned_tax
+          FROM sale_return_items sri
+          INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+          GROUP BY sr.sale_id, sri.medicine_id
+        ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
         ORDER BY s.created_at DESC, s.id DESC, si.id ASC
       `;
       const rows = await this.dbService.query(sql, []);
@@ -99,15 +119,35 @@ export class SalesService {
         s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
-        si.pills,
+        si.pills AS originalPills,
+        COALESCE(returns.returned_pills, 0) AS returnedPills,
+        (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
         si.unit_price AS unitPrice,
-        si.subtotal,
-        si.discount_amount AS discountAmount,
-        si.tax_amount AS taxAmount,
-        si.total
+        si.subtotal AS originalSubtotal,
+        (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
+        si.discount_amount AS originalDiscountAmount,
+        (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
+        si.tax_amount AS originalTaxAmount,
+        (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
+        si.total AS originalTotal,
+        COALESCE(returns.returned_total, 0) AS returnedTotal,
+        (si.total - COALESCE(returns.returned_total, 0)) AS total
       FROM sale_items si
       INNER JOIN sales s ON s.id = si.sale_id
-      WHERE date(s.created_at, 'localtime') >= date(?) AND date(s.created_at, 'localtime') <= date(?)
+      LEFT JOIN (
+        SELECT 
+          sr.sale_id, 
+          sri.medicine_id,
+          SUM(sri.pills) as returned_pills,
+          SUM(sri.total) as returned_total,
+          SUM(sri.subtotal) as returned_subtotal,
+          SUM(sri.discount_amount) as returned_discount,
+          SUM(sri.tax_amount) as returned_tax
+        FROM sale_return_items sri
+        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        GROUP BY sr.sale_id, sri.medicine_id
+      ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
+      WHERE date(s.created_at) >= date(?) AND date(s.created_at) <= date(?)
       ORDER BY s.created_at DESC, s.id DESC, si.id ASC
     `;
     const rows = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
@@ -127,8 +167,8 @@ export class SalesService {
         COALESCE(SUM(si.total), 0) AS revenue
       FROM sale_items si
       INNER JOIN sales s ON s.id = si.sale_id
-      WHERE date(s.created_at, 'localtime') >= date(?)
-        AND date(s.created_at, 'localtime') <= date(?)
+      WHERE date(s.created_at) >= date(?)
+        AND date(s.created_at) <= date(?)
       GROUP BY si.medicine_name
       ORDER BY unitsSold DESC
     `;
@@ -167,14 +207,34 @@ export class SalesService {
         s.additional_discount_amount AS additionalDiscountAmount,
         si.medicine_id AS medicineId,
         si.medicine_name AS medicineName,
-        si.pills,
+        si.pills AS originalPills,
+        COALESCE(returns.returned_pills, 0) AS returnedPills,
+        (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
         si.unit_price AS unitPrice,
-        si.subtotal,
-        si.discount_amount AS discountAmount,
-        si.tax_amount AS taxAmount,
-        si.total
+        si.subtotal AS originalSubtotal,
+        (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
+        si.discount_amount AS originalDiscountAmount,
+        (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
+        si.tax_amount AS originalTaxAmount,
+        (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
+        si.total AS originalTotal,
+        COALESCE(returns.returned_total, 0) AS returnedTotal,
+        (si.total - COALESCE(returns.returned_total, 0)) AS total
       FROM sale_items si
       INNER JOIN sales s ON s.id = si.sale_id
+      LEFT JOIN (
+        SELECT 
+          sr.sale_id, 
+          sri.medicine_id,
+          SUM(sri.pills) as returned_pills,
+          SUM(sri.total) as returned_total,
+          SUM(sri.subtotal) as returned_subtotal,
+          SUM(sri.discount_amount) as returned_discount,
+          SUM(sri.tax_amount) as returned_tax
+        FROM sale_return_items sri
+        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        GROUP BY sr.sale_id, sri.medicine_id
+      ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
       ORDER BY s.created_at DESC, s.id DESC, si.id ASC
     `;
     const rows = await this.dbService.query(sql, []);
@@ -248,6 +308,15 @@ export class SalesService {
     `);
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)
+    `);
+
+    // One-time migration to update sale_items cost_price from corrected purchase_items
+    await this.dbService.execute(`
+      UPDATE sale_items 
+      SET 
+        cost_price = (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id),
+        cost_subtotal = pills * (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)
+      WHERE cost_price = 0 OR ABS(cost_price - (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)) > 0.001
     `);
   }
 
@@ -357,7 +426,7 @@ export class SalesService {
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
     const baseTotal = subtotal - discountTotal + taxTotal;
     
-    // Apply additional discount for Family/Relatives or Charity
+    // Apply additional discount for Family/Relatives, Charity, or Employee
     const additionalDiscount = payload.additionalDiscount || 0;
     const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
     const total = baseTotal - additionalDiscountAmount;
@@ -865,6 +934,7 @@ export class SalesService {
     saleReturnsTotal: number;
     familyTotal: number;
     charityTotal: number;
+    employeeTotal: number;
     netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
@@ -880,7 +950,8 @@ export class SalesService {
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
         COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN additional_discount_amount ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity' THEN additional_discount_amount ELSE 0 END), 0) as charity_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Employee' THEN additional_discount_amount ELSE 0 END), 0) as employee_total
       FROM sales 
       WHERE datetime(created_at) >= datetime(?) 
         AND datetime(created_at) <= datetime(?)
@@ -891,12 +962,13 @@ export class SalesService {
     const saleTaxTotal = salesResult?.sale_tax_total || 0;
     const familyTotal = salesResult?.family_total || 0;
     const charityTotal = salesResult?.charity_total || 0;
+    const employeeTotal = salesResult?.employee_total || 0;
 
-    // Get sale returns total for this date range
+    // Get sale returns total and their cost for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
+    const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
     
     // Get total COGS (Cost of Goods Sold)
-    // We sum cost_subtotal, but for legacy rows where it might be 0, we fallback to medicine buy_price * quantity
     const cogsSql = `
       SELECT COALESCE(SUM(
         CASE 
@@ -909,10 +981,12 @@ export class SalesService {
       WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)
     `;
     const cogsResult = await this.dbService.queryOne(cogsSql, [fromDateTime, toDateTime]);
-    const totalCogs = cogsResult?.total_cogs || 0;
+    const grossCogs = cogsResult?.total_cogs || 0;
     
     // Calculate net revenue (sales - returns)
     const netRevenue = sellingTotal - saleReturnsTotal;
+    // Calculate net COGS (COGS - cost of returns)
+    const netCogs = grossCogs - saleReturnsCost;
 
     // Get purchase totals with discount and tax breakdown
     const purchasingSql = `
@@ -940,8 +1014,8 @@ export class SalesService {
     const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDateTime, toDateTime]);
     const remainingPayment = remainingPaymentResult?.total_remaining || 0;
 
-    // Calculate profit as margin: Net Revenue - COGS
-    const profit = netRevenue - totalCogs;
+    // Calculate profit as margin: Net Revenue - Net COGS
+    const profit = netRevenue - netCogs;
 
     // Trend calculation
     const salesTrendSql = `
@@ -960,9 +1034,21 @@ export class SalesService {
       WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)
       GROUP BY date(created_at)
     `;
+    // Step 2: Get return data and subtract costs from trend cost
+    const returnsTrendSql = `
+      SELECT 
+        date(sr.created_at) as date, 
+        SUM(sri.total) as return_amount,
+        SUM(CASE WHEN sri.cost_subtotal > 0 THEN sri.cost_subtotal ELSE 0 END) as return_cost
+      FROM sale_returns sr
+      JOIN sale_return_items sri ON sr.id = sri.sale_return_id
+      WHERE datetime(sr.created_at) >= datetime(?) AND datetime(sr.created_at) <= datetime(?)
+      GROUP BY date(sr.created_at)
+    `;
 
     const salesTrend = await this.dbService.query(salesTrendSql, [fromDateTime, toDateTime]);
     const purchasesTrend = await this.dbService.query(purchasesTrendSql, [fromDateTime, toDateTime]);
+    const returnsTrend = await this.dbService.query(returnsTrendSql, [fromDateTime, toDateTime]);
 
     const trendMap = new Map<string, { sales: number; purchases: number; cost: number }>();
 
@@ -971,6 +1057,13 @@ export class SalesService {
       const current = trendMap.get(r.date)!;
       current.sales = r.amount;
       current.cost = r.cost;
+    });
+
+    returnsTrend.forEach((r: any) => {
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
+      const current = trendMap.get(r.date)!;
+      current.sales -= r.return_amount; // Net sales for the day
+      current.cost -= r.return_cost;   // Net cost for the day
     });
 
     purchasesTrend.forEach((r: any) => {
@@ -983,7 +1076,7 @@ export class SalesService {
         date,
         sales: data.sales,
         purchases: data.purchases,
-        profit: data.sales - (data as any).cost
+        profit: data.sales - data.cost
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -997,6 +1090,7 @@ export class SalesService {
       saleReturnsTotal,
       familyTotal,
       charityTotal,
+      employeeTotal,
       netRevenue,
       paymentTotal: sellingTotal, // Restore paymentTotal (assumed to be sellingTotal based on original SQL)
       remainingPayment,

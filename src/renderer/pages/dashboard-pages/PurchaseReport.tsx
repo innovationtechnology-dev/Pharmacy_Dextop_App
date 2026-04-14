@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { useDashboardHeader } from './useDashboardHeader';
 import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText, FiTruck } from 'react-icons/fi';
 import { FaArrowDown, FaCreditCard, FaShoppingBag, FaList, FaExclamationTriangle, FaFileInvoiceDollar, FaFilePdf, FaFileExcel, FaArrowLeft, FaUndo } from 'react-icons/fa';
@@ -55,6 +55,26 @@ interface Supplier {
 
 const renderIcon = (Icon: any, props: any) => <Icon {...props} />;
 
+/** SQLite/IPC often returns numeric columns as strings; never use `+` in reduce without coercing or values concatenate into a giant "number". */
+function sumPurchaseLinePills(
+  items: Array<
+    PurchaseItem & { total_pills?: unknown; packet_quantity?: unknown; pills_per_packet?: unknown }
+  >
+): number {
+  let sum = 0;
+  for (const i of items) {
+    const raw = i.totalPills ?? i.total_pills;
+    let n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      const pq = Number(i.packetQuantity ?? i.packet_quantity) || 0;
+      const ppp = Number(i.pillsPerPacket ?? i.pills_per_packet) || 0;
+      n = pq * ppp;
+    }
+    if (Number.isFinite(n) && n >= 0) sum += n;
+  }
+  return sum;
+}
+
 export default function Purchases() {
   const today = useMemo(() => {
     const d = new Date();
@@ -90,7 +110,6 @@ export default function Purchases() {
   const [showPreview, setShowPreview] = useState(false);
   const [pdfHtmlContent, setPdfHtmlContent] = useState<string | null>(null);
   const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
-  const [showDetailModal, setShowDetailModal] = useState(false);
   const [showPdfOptions, setShowPdfOptions] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | undefined>(undefined);
   const pageSize = 10;
@@ -98,7 +117,6 @@ export default function Purchases() {
   const { setHeader } = useDashboardHeader();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const isCashier = getAuthUser()?.role === 'cashier';
-
   // Get currency symbol
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'PKR');
   // Set header
@@ -110,7 +128,32 @@ export default function Purchases() {
     return () => setHeader(null);
   }, [setHeader]);
 
-  const fetchPurchases = useCallback(async () => {
+  const handleTodayFilter = () => {
+    setFromDate(today);
+    setToDate(today);
+    fetchPurchases(today, today);
+  };
+
+  const handleMonthFilter = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const mm = String(firstDay.getMonth() + 1).padStart(2, '0');
+    const dd = String(firstDay.getDate()).padStart(2, '0');
+    const fDate = `${firstDay.getFullYear()}-${mm}-${dd}`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchPurchases(fDate, today);
+  };
+
+  const handleYearFilter = () => {
+    const now = new Date();
+    const fDate = `${now.getFullYear()}-01-01`;
+    setFromDate(fDate);
+    setToDate(today);
+    fetchPurchases(fDate, today);
+  };
+
+  const fetchPurchases = useCallback(async (overrideFrom?: string, overrideTo?: string) => {
     setLoading(true);
     setError(null);
     try {
@@ -127,13 +170,14 @@ export default function Purchases() {
           setPurchases([]);
         }
       });
-      window.electron.ipcRenderer.sendMessage('purchase-get-all', []);
+      // Pass the date range to the backend
+      window.electron.ipcRenderer.sendMessage('purchase-get-all', [overrideFrom || fromDate, overrideTo || toDate]);
     } catch (err) {
       setError('An unexpected error occurred');
       console.error(err);
       setLoading(false);
     }
-  }, []);
+  }, [fromDate, toDate]);
 
   // Initial fetch
   useEffect(() => {
@@ -145,6 +189,7 @@ export default function Purchases() {
       }
     });
     window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
 
   const handleDownloadPdf = async () => {
@@ -208,27 +253,9 @@ export default function Purchases() {
     }
   };
 
-  // Filter purchases based on search and date range
+  // Filter purchases based on search query only (dates are handled by backend fetch)
   const filteredPurchases = useMemo(() => {
     let filtered = purchases;
-
-    // Filter by date range
-    if (fromDate || toDate) {
-      filtered = filtered.filter(purchase => {
-        if (!purchase.createdAt) return true;
-        const purchaseDate = new Date(purchase.createdAt);
-        const from = fromDate ? new Date(fromDate) : null;
-        const to = toDate ? new Date(toDate) : null;
-
-        if (from && purchaseDate < from) return false;
-        if (to) {
-          const toEnd = new Date(to);
-          toEnd.setHours(23, 59, 59, 999);
-          if (purchaseDate > toEnd) return false;
-        }
-        return true;
-      });
-    }
 
     // Filter by search query
     if (!searchQuery.trim()) return filtered;
@@ -247,11 +274,26 @@ export default function Purchases() {
     return filteredPurchases.slice(start, start + pageSize);
   }, [filteredPurchases, page, pageSize]);
 
-  // Stats
-  const totalPurchaseAmount = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.grandTotal, 0), [filteredPurchases]);
-  const totalPaid = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.paymentAmount, 0), [filteredPurchases]);
-  const totalRemaining = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.remainingBalance, 0), [filteredPurchases]);
-  const totalItems = useMemo(() => filteredPurchases.reduce((sum, p) => sum + p.items.reduce((s, i) => s + i.totalPills, 0), 0), [filteredPurchases]);
+  // Stats — coerce with Number() so SQLite/IPC string values never string-concatenate in reduce (+).
+  const totalPurchaseAmount = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.grandTotal) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalPaid = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.paymentAmount) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalRemaining = useMemo(
+    () => filteredPurchases.reduce((sum, p) => sum + (Number(p.remainingBalance) || 0), 0),
+    [filteredPurchases]
+  );
+  const totalItems = useMemo(() => {
+    let sum = 0;
+    for (const p of filteredPurchases) {
+      if (Array.isArray(p.items)) sum += sumPurchaseLinePills(p.items);
+    }
+    return sum;
+  }, [filteredPurchases]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -384,23 +426,27 @@ export default function Purchases() {
           </div>
         </div>
 
-        {/* Back to Purchasing Button */}
-        <button
-          onClick={() => window.location.hash = '#/purchasing-panel'}
-          className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <FaArrowLeft className="w-3.5 h-3.5" />
-          Back to Purchasing
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          {/* Back to Purchasing Button */}
+          {isCashier && (
+            <button
+              onClick={() => window.location.hash = '#/purchasing-panel'}
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 border border-emerald-500 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+            >
+              <FaArrowLeft className="w-3.5 h-3.5" />
+              Back to Purchasing
+            </button>
+          )}
 
-        {/* Refresh Button */}
-        <button
-          onClick={fetchPurchases}
-          className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          {renderIcon(FiRefreshCw, { className: `w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}` })}
-          Refresh
-        </button>
+          {/* Refresh Button */}
+          <button
+            onClick={() => fetchPurchases()}
+            className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          >
+            {renderIcon(FiRefreshCw, { className: `w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}` })}
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Main Content: Vertical Layout */}
@@ -448,14 +494,49 @@ export default function Purchases() {
                   className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
                 />
               </div>
-              <button
-                onClick={fetchPurchases}
-                disabled={loading}
-                className="w-full sm:w-auto px-4 py-1.5 bg-gradient-to-r from-green-600 to-green-500 text-white rounded hover:from-green-700 hover:to-green-600 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {loading ? renderIcon(FiRefreshCw, { className: "animate-spin" }) : renderIcon(FiSearch, {})}
-                Fetch Records
-              </button>
+              <div className="flex-1 flex gap-2 sm:justify-end">
+                <button
+                  onClick={() => handleTodayFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === today && toDate === today
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => handleMonthFilter()}
+                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                    fromDate === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01` && toDate === today
+                      ? 'bg-emerald-600 text-white border-emerald-600'
+                      : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                  }`}
+                >
+                  Month
+                </button>
+                {!isCashier && (
+                  <button
+                    onClick={() => handleYearFilter()}
+                    className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
+                      fromDate === `${new Date().getFullYear()}-01-01` && toDate === today
+                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        : 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+                    }`}
+                  >
+                    Year
+                  </button>
+                )}
+                <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+                <button
+                  onClick={() => fetchPurchases()}
+                  disabled={loading}
+                  className="flex-1 sm:flex-none px-4 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {loading ? renderIcon(FiRefreshCw, { className: "animate-spin" }) : renderIcon(FiSearch, {})}
+                  Fetch Records
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -526,10 +607,10 @@ export default function Purchases() {
                   No purchase records found for the selected range.
                 </div>
               ) : (
-                pagedPurchases.map((purchase) => (
-                  <div key={purchase.id} className="contents border-b border-gray-100 dark:border-gray-700">
+                (selectedPurchase ? pagedPurchases.filter(p => p.id === selectedPurchase.id) : pagedPurchases).map((purchase) => (
+                  <React.Fragment key={purchase.id}>
                     <div 
-                      className="grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-all duration-200"
+                      className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b transition-all duration-200 ${selectedPurchase?.id === purchase.id ? 'border-emerald-200 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-emerald-50/20 dark:hover:bg-emerald-900/5'}`}
                     >
                       <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
                         <div className="text-[11px] text-gray-500 dark:text-gray-400">#{purchase.id}</div>
@@ -580,17 +661,138 @@ export default function Purchases() {
                       <div className="col-span-1 text-center">
                         <button
                           onClick={() => {
-                            setSelectedPurchase(purchase);
-                            setShowDetailModal(true);
+                            if (selectedPurchase?.id === purchase.id) {
+                              setSelectedPurchase(null);
+                            } else {
+                              setSelectedPurchase(purchase);
+                            }
                           }}
-                          className="px-2.5 py-1.5 bg-blue-400 dark:bg-blue-900 text-white rounded-md hover:bg-blue-600 dark:hover:bg-blue-600 transition-colors shadow-sm"
-                          title="View Details"
+                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedPurchase?.id === purchase.id ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
+                          title={selectedPurchase?.id === purchase.id ? "Close Details" : "View Details"}
                         >
-                          View                       
+                          {selectedPurchase?.id === purchase.id ? "Close" : "View"}
                         </button>
                       </div>
                     </div>
-                  </div>
+
+                    {/* Inline Details expansion */}
+                    {selectedPurchase?.id === purchase.id && (
+                      <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200 bg-gray-50/50 dark:bg-gray-800/30 shadow-inner w-full flex flex-col">
+                        
+                        {/* Header info */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-3 bg-white dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Supplier</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{purchase.supplierName || 'Unknown Supplier'}</span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">PO & Date</span>
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">PO #{purchase.id}</span>
+                              <span className="ml-2 text-[9px] text-gray-500">{new Date(purchase.createdAt || '').toLocaleDateString()}</span>
+                           </div>
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Status</span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wider
+                                ${purchase.status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' :
+                                  purchase.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' :
+                                  'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'}`}>
+                                {purchase.status || 'Ordered'}
+                              </span>
+                           </div>
+                           {purchase.notes && (
+                           <div className="col-span-3">
+                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Internal Notes</span>
+                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-400 italic line-clamp-2" title={purchase.notes}>{purchase.notes}</span>
+                           </div>
+                           )}
+                        </div>
+
+                        {/* Payment Progress inline */}
+                        <div className="px-8 py-2 bg-gray-50/50 dark:bg-gray-900/20 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-6">
+                           <div className="flex-1 flex flex-col justify-center">
+                              <div className="flex justify-between text-[8px] font-medium text-blue-500 dark:text-blue-400 uppercase tracking-widest mb-1">
+                                <span>Payment Progress</span>
+                                <span className="italic">{purchase.remainingBalance === 0 ? 'Fully Paid' : 'Pending'}</span>
+                              </div>
+                              <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden w-full max-w-sm">
+                                <div 
+                                  className="h-full bg-blue-500 transition-all duration-500"
+                                  style={{ width: `${Math.min(100, ((purchase.paymentAmount || 0) / (purchase.grandTotal || 1)) * 100)}%` }}
+                                ></div>
+                              </div>
+                           </div>
+                           <div className="flex gap-4 items-center">
+                              <div className="text-right">
+                                <span className="text-[8px] font-medium text-gray-400 uppercase leading-none block">Paid</span>
+                                <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{getCurrencySymbol()}{(purchase.paymentAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              </div>
+                              <div className="w-px h-6 bg-gray-200 dark:bg-gray-700"></div>
+                              <div className="text-left">
+                                <span className="text-[8px] font-medium text-gray-400 uppercase leading-none block">Due</span>
+                                <span className="text-[10px] font-medium text-orange-600 dark:text-orange-400">{getCurrencySymbol()}{(purchase.remainingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                              </div>
+                           </div>
+                        </div>
+
+                        {/* Inner Table Header */}
+                        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100/50 dark:bg-gray-800 text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest border-b border-gray-200 dark:border-gray-700">
+                          <div className="col-span-1 text-center font-bold">#</div>
+                          <div className="col-span-5 font-bold">Medicine Product</div>
+                          <div className="col-span-2 text-center font-bold">Pack Info</div>
+                          <div className="col-span-1 text-right font-bold">Qty</div>
+                          <div className="col-span-1 text-right font-bold">Unit Price</div>
+                          <div className="col-span-2 text-right font-bold">Subtotal</div>
+                        </div>
+
+                        {/* Inner Table Body */}
+                        <div className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900/40">
+                           {purchase.items?.map((item: any, idx: number) => (
+                             <div key={idx} className="grid grid-cols-12 gap-3 px-8 py-3 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all">
+                                <div className="col-span-1 text-center text-[10px] text-gray-400">
+                                   {(idx + 1).toString().padStart(2, '0')}
+                                </div>
+                                <div className="col-span-5">
+                                   <div className="text-[11px] font-semibold text-gray-800 dark:text-gray-200">{item.medicineName}</div>
+                                   <div className="text-[9px] text-gray-500 flex flex-wrap gap-2 items-center">
+                                     <span>ID: #{item.medicineId}</span>
+                                     <span className="w-0.5 h-0.5 rounded-full bg-gray-300 dark:bg-gray-600"></span>
+                                     <span className="text-orange-500/80 italic">Exp: {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'N/A'}</span>
+                                   </div>
+                                </div>
+                                <div className="col-span-2 text-center">
+                                   <span className="inline-block px-1.5 py-0.5 bg-gray-50/50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded text-[9px] font-normal text-gray-500 dark:text-gray-400">
+                                     {item.pillsPerPacket} pills/pack
+                                   </span>
+                                </div>
+                                <div className="col-span-1 text-right text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                                   {item.packetQuantity}
+                                </div>
+                                <div className="col-span-1 text-right">
+                                   <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                                      {getCurrencySymbol()}{item.pricePerPacket.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                   </div>
+                                </div>
+                                <div className="col-span-2 text-right text-[11px] font-bold text-gray-900 dark:text-white">
+                                   {getCurrencySymbol()}{item.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                             </div>
+                           ))}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-8 py-3 bg-emerald-50/80 dark:bg-emerald-900/10 border-t border-b border-emerald-100/50 dark:border-emerald-900/30 flex flex-wrap justify-between gap-6 text-[10px] text-emerald-800 dark:text-emerald-400 tracking-wide">
+                            <div className="flex flex-wrap gap-6 items-center">
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Gross Total:</span> {getCurrencySymbol()}{(purchase.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Discount:</span> -{getCurrencySymbol()}{(purchase.discountTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              <div><span className="font-bold opacity-70 uppercase mr-1">Tax:</span> +{getCurrencySymbol()}{(purchase.taxTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                            </div>
+                            <div className="flex items-center gap-4 ml-auto">
+                              <div className="text-xs"><span className="font-bold opacity-70 uppercase mr-1">Net Total:</span> <span className="font-black">{getCurrencySymbol()}{(purchase.grandTotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
+                            </div>
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
                 ))
               )}
             </div>
@@ -641,128 +843,7 @@ export default function Purchases() {
       </div>
 
       {/* Detail Modal */}
-      <ReportDetailModal
-        isOpen={showDetailModal && !!selectedPurchase}
-        onClose={() => setShowDetailModal(false)}
-        title="Purchase Record"
-        icon={FaShoppingBag}
-        colorTheme="emerald"
-        headerBadges={[
-          { label: 'PO #', value: String(selectedPurchase?.id || '') },
-          { label: 'Invoice', value: selectedPurchase?.invoiceNumber || 'N/A', isItalic: true }
-        ]}
-        infoCards={[
-          { 
-            title: 'Supplier Details', 
-            value: selectedPurchase?.supplierName || 'N/A', 
-            icon: FiTruck, 
-            theme: 'emerald' 
-          },
-          { 
-            title: 'Date & Status', 
-            value: selectedPurchase?.createdAt ? new Date(selectedPurchase.createdAt).toLocaleDateString() : 'N/A', 
-            icon: FiCalendar, 
-            theme: 'blue',
-            badge: {
-              label: selectedPurchase?.status || 'Ordered',
-              color: selectedPurchase?.status === 'received' ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' :
-                     selectedPurchase?.status === 'completed' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' :
-                     'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300'
-            }
-          },
-          { 
-            title: 'Internal Notes', 
-            value: selectedPurchase?.notes || 'No notes provided.', 
-            icon: FiFileText, 
-            theme: 'purple' 
-          }
-        ]}
-        tableTitle="Medicines Breakdown"
-        tableItemsCount={selectedPurchase?.items.length || 0}
-        tableHeaders={['#', 'Medicine Name', 'Pack Info', 'Qty', 'Unit Price', 'Subtotal']}
-        items={selectedPurchase?.items || []}
-        renderTableRow={(item, idx) => (
-          <div key={idx} className="grid grid-cols-12 gap-3 px-5 py-3.5 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all group">
-            <div className="col-span-1 text-center font-normal text-gray-300 dark:text-gray-600">
-              {String(idx + 1).padStart(2, '0')}
-            </div>
-            <div className="col-span-4 translate-x-1">
-              <div className="text-[11px] font-normal text-gray-700 dark:text-gray-100 group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">{item.medicineName}</div>
-              <div className="text-[9px] text-gray-400 dark:text-gray-500 mt-0.5 font-normal flex items-center gap-2">
-                 <span>ID: #{item.medicineId}</span>
-                 <span className="w-0.5 h-0.5 rounded-full bg-gray-300 dark:bg-gray-600"></span>
-                 <span className="text-orange-500/80 italic">Exp: {item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : 'N/A'}</span>
-              </div>
-            </div>
-            <div className="col-span-2 text-center">
-              <div className="inline-block px-1.5 py-0.5 bg-gray-50/50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 rounded text-[9px] font-normal text-gray-500 dark:text-gray-400">
-                {item.pillsPerPacket} pills/pack
-              </div>
-            </div>
-            <div className="col-span-1 text-right">
-              <span className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {item.packetQuantity}
-              </span>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-normal text-gray-600 dark:text-gray-300">
-                {getCurrencySymbol()}{item.pricePerPacket.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-            <div className="col-span-2 text-right">
-              <div className="text-[11px] font-medium text-gray-900 dark:text-white">
-                {getCurrencySymbol()}{item.lineTotal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-          </div>
-        )}
-        remarks={{
-          title: 'Remarks',
-          content: (
-            <p className="text-[10px] leading-relaxed text-gray-500 dark:text-gray-400">
-              Verified purchase record. Refer to PO# {selectedPurchase?.id} for any discrepancies.
-            </p>
-          )
-        }}
-        summaryItems={[
-          { label: 'Gross Total', value: `${getCurrencySymbol()}${selectedPurchase?.subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Discount', type: 'discount', value: `${getCurrencySymbol()}${selectedPurchase?.discountTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Tax', type: 'tax', value: `${getCurrencySymbol()}${selectedPurchase?.taxTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` },
-          { label: 'Net Total', type: 'total', value: `${getCurrencySymbol()}${selectedPurchase?.grandTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` }
-        ]}
-        footerStatus={{
-          label: 'System Record Verified',
-          color: 'blue'
-        }}
-      >
-        {/* Payment Progress */}
-        <div className="p-4 rounded-2xl border border-blue-50 dark:border-blue-900/20 bg-blue-50/10 dark:bg-blue-900/5 mt-3">
-          <div className="flex items-center justify-between gap-3 mb-3 px-1">
-            <div className="flex-1">
-              <div className="flex justify-between text-[8px] font-medium text-blue-400 uppercase tracking-widest mb-1.5">
-                <span>Progress</span>
-                <span className="italic">{selectedPurchase?.remainingBalance === 0 ? 'Fully Paid' : 'Pending'}</span>
-              </div>
-              <div className="h-1 bg-white dark:bg-gray-800 rounded-full overflow-hidden border border-blue-50 dark:border-blue-900/10">
-                <div 
-                  className="h-full bg-blue-400 transition-all duration-500"
-                   style={{ width: `${Math.min(100, ((selectedPurchase?.paymentAmount || 0) / (selectedPurchase?.grandTotal || 1)) * 100)}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <div className="flex-1 bg-white/50 dark:bg-gray-800/50 p-2 rounded-lg border border-blue-50 dark:border-gray-700/30">
-              <div className="text-[8px] font-medium text-gray-400 uppercase leading-none mb-1">Paid</div>
-              <div className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{getCurrencySymbol()}{(selectedPurchase?.paymentAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-            </div>
-            <div className="flex-1 bg-white/50 dark:bg-gray-800/50 p-2 rounded-lg border border-orange-50 dark:border-gray-700/30">
-              <div className="text-[8px] font-medium text-gray-400 uppercase leading-none mb-1">Due</div>
-              <div className="text-[10px] font-medium text-orange-600 dark:text-orange-400">{getCurrencySymbol()}{(selectedPurchase?.remainingBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-            </div>
-          </div>
-        </div>
-      </ReportDetailModal>
+      {/* Detail Modal removed in favor of Inline expansion */}
 
       {/* Export Dialog */}
       {showExportDialog && (

@@ -69,6 +69,7 @@ const PURCHASE_ITEM_ORDERED_COLS = [
   'available_pills',
   'price_per_packet',
   'price_per_pill',
+  'selling_price_per_pill',
   'discount_amount',
   'tax_amount',
   'line_subtotal',
@@ -123,6 +124,7 @@ async function rebuildPurchaseItems(db: DatabaseService): Promise<void> {
   const oldSet = new Set(existing.map((r: any) => r.name));
   const nullOk = new Set<string>(['batch_number']);
   const textDefaults = new Set<string>(['medicine_name', 'expiry_date']);
+  // selling_price_per_pill defaults to 0 when missing from old databases (handled by selectExprForColumn returning '0')
   const selectList = PURCHASE_ITEM_ORDERED_COLS.map((c) =>
     selectExprForColumn(c, oldSet, nullOk, textDefaults)
   ).join(', ');
@@ -140,6 +142,7 @@ async function rebuildPurchaseItems(db: DatabaseService): Promise<void> {
       available_pills INTEGER NOT NULL,
       price_per_packet REAL NOT NULL,
       price_per_pill REAL NOT NULL,
+      selling_price_per_pill REAL NOT NULL DEFAULT 0,
       discount_amount REAL NOT NULL DEFAULT 0,
       tax_amount REAL NOT NULL DEFAULT 0,
       line_subtotal REAL NOT NULL,

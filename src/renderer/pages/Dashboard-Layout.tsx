@@ -30,6 +30,25 @@ import { PageHeader } from '../components/common/PageHeader';
 
 const ALERT_THRESHOLD_DAYS = 30;
 
+interface PanelVisibilitySettings {
+  showSellingPanel: boolean;
+  showPurchasingPanel: boolean;
+}
+
+const defaultPanelVisibilitySettings: PanelVisibilitySettings = {
+  showSellingPanel: true,
+  showPurchasingPanel: true,
+};
+
+const getStoredPanelVisibilitySettings = (): PanelVisibilitySettings => {
+  try {
+    const stored = localStorage.getItem('panelVisibilitySettings');
+    return stored ? JSON.parse(stored) : defaultPanelVisibilitySettings;
+  } catch {
+    return defaultPanelVisibilitySettings;
+  }
+};
+
 const Dashboard_Layout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -59,6 +78,7 @@ const Dashboard_Layout: React.FC = () => {
     '/alerts': 'Alerts Center',
     '/payments': 'Payments',
     '/financial-summary': 'Financial Summary',
+    '/stocks': 'Inventory Stocks',
     '/license': 'License Management',
     '/settings': 'Settings',
   };
@@ -101,12 +121,17 @@ const Dashboard_Layout: React.FC = () => {
 
     // Route Guarding
     const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
-    const adminProhibitedRoutes = ['/selling-panel', '/purchasing-panel'];
+    const panelVisibility = getStoredPanelVisibilitySettings();
     
     if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
       navigate('/main-menu');
-    } else if (authUser.role === 'admin' && adminProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
-      navigate('/main-menu');
+    } else if (authUser.role === 'admin') {
+      // For admin users, check if they're trying to access a disabled panel
+      if (location.pathname.startsWith('/selling-panel') && !panelVisibility.showSellingPanel) {
+        navigate('/main-menu');
+      } else if (location.pathname.startsWith('/purchasing-panel') && !panelVisibility.showPurchasingPanel) {
+        navigate('/main-menu');
+      }
     }
   }, [navigate, location.pathname]);
 
@@ -125,6 +150,27 @@ const Dashboard_Layout: React.FC = () => {
       window.removeEventListener('user-profile-updated', handleProfileUpdate as EventListener);
     };
   }, []);
+
+  // Listen for panel visibility updates
+  useEffect(() => {
+    const handlePanelVisibilityUpdate = (event: CustomEvent) => {
+      const settings = event.detail as PanelVisibilitySettings;
+      // If current location is a disabled panel, redirect to main-menu
+      if (user?.role === 'admin') {
+        if (location.pathname.startsWith('/selling-panel') && !settings.showSellingPanel) {
+          navigate('/main-menu');
+        } else if (location.pathname.startsWith('/purchasing-panel') && !settings.showPurchasingPanel) {
+          navigate('/main-menu');
+        }
+      }
+    };
+
+    window.addEventListener('panel-visibility-updated', handlePanelVisibilityUpdate as EventListener);
+    
+    return () => {
+      window.removeEventListener('panel-visibility-updated', handlePanelVisibilityUpdate as EventListener);
+    };
+  }, [user, location.pathname, navigate]);
 
   const handleLogout = () => {
     authLogout();
@@ -255,6 +301,7 @@ const Dashboard_Layout: React.FC = () => {
             location.pathname.includes('/purchases') ||
             location.pathname.includes('/sale-return') ||
             location.pathname.includes('/financial-summary') ||
+            location.pathname.includes('/stocks') ||
             location.pathname.includes('/alerts') ||
             location.pathname.includes('/dashboard')
 
@@ -280,6 +327,7 @@ const Dashboard_Layout: React.FC = () => {
                 location.pathname.includes('/alerts') ||
                 location.pathname.includes('/sale-return') ||
                 location.pathname.includes('/financial-summary') ||
+                location.pathname.includes('/stocks') ||
                 location.pathname.includes('/dashboard')
                 ? 'p-0 flex-1 flex flex-col min-h-0 overflow-hidden h-full'
                 : 'p-6 md:p-8 flex-1'
@@ -304,6 +352,7 @@ const Dashboard_Layout: React.FC = () => {
                   location.pathname.includes('/alerts') ||
                   location.pathname.includes('/sale-return') ||
                   location.pathname.includes('/financial-summary') ||
+                  location.pathname.includes('/stocks') ||
                   location.pathname.includes('/dashboard')
 
                   ? 'py-2 mb-1'
@@ -329,6 +378,7 @@ const Dashboard_Layout: React.FC = () => {
                     !location.pathname.includes('/alerts') &&
                     !location.pathname.includes('/financial-summary') &&
                     !location.pathname.includes('/sale-return') &&
+                    !location.pathname.includes('/stocks') &&
                     !location.pathname.includes('/dashboard') &&
                     (
                       <PageHeader
@@ -508,6 +558,18 @@ const Dashboard_Layout: React.FC = () => {
 
 
 
+                  {/* Compact header for stocks */}
+                  {location.pathname.includes('/stocks') && (
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Inventory Stocks'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        compact
+                      />
+                    </div>
+                  )}
+
                   <div
                     className={`flex flex-wrap items-center gap-3 justify-end ${location.pathname.includes('/selling-panel') ||
                       location.pathname.includes('/purchasing-panel') ||
@@ -522,6 +584,7 @@ const Dashboard_Layout: React.FC = () => {
                       location.pathname.includes('/alerts') ||
                       location.pathname.includes('/sale-return') ||
                       location.pathname.includes('/financial-summary') ||
+                      location.pathname.includes('/stocks') ||
                       location.pathname.includes('/dashboard')
                       ? 'gap-2'
                       : ''
@@ -558,6 +621,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/alerts') ||
                           location.pathname.includes('/sale-return') ||
                           location.pathname.includes('/financial-summary') ||
+                          location.pathname.includes('/stocks') ||
                           location.pathname.includes('/dashboard')
                           ? 'p-2.5 rounded-lg'
                           : 'p-3 rounded-xl'
@@ -579,6 +643,7 @@ const Dashboard_Layout: React.FC = () => {
                             location.pathname.includes('/alerts') ||
                             location.pathname.includes('/financial-summary') ||
                             location.pathname.includes('/sale-return') ||
+                            location.pathname.includes('/stocks') ||
                             location.pathname.includes('/dashboard')
                             ? 'w-4 h-4'
                             : 'w-5 h-5'

@@ -86,6 +86,11 @@ export interface Customer {
   notes?: string;
 }
 
+interface FefoBatch {
+  availablePills: number;
+  sellPrice: number;
+}
+
 interface CartItem {
   medicine: Medicine;
   pills: number;
@@ -96,6 +101,29 @@ interface CartItem {
   discountAmount?: number;
   taxAmount?: number;
   finalPrice: number;
+  /** FEFO batches loaded at add-to-cart time, used to compute blended price across batches */
+  fefoBatches?: FefoBatch[];
+}
+
+/**
+ * Walk the FEFO batches and compute a weighted average sell price for the given quantity.
+ * e.g. 10 pills @ Rs.10 + 5 pills @ Rs.20 → blended = Rs.13.33/pill (total Rs.200).
+ */
+function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
+  if (!batches || batches.length === 0 || qty <= 0) return 0;
+  let remaining = qty;
+  let totalCost = 0;
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const consume = Math.min(batch.availablePills, remaining);
+    totalCost += consume * batch.sellPrice;
+    remaining -= consume;
+  }
+  // If qty exceeds available stock, use the last batch's price for the overflow
+  if (remaining > 0) {
+    totalCost += remaining * batches[batches.length - 1].sellPrice;
+  }
+  return totalCost / qty;
 }
 
 
@@ -366,6 +394,20 @@ const SellingPanel: React.FC = () => {
     // Clear search after adding
     setSearchTerm('');
     setShowSearchResults(false);
+
+    // Background: fetch FEFO batch prices and apply blended price based on actual quantity
+    window.electron.ipcRenderer.invoke('medicine-get-fefo-sell-batches', medicine.id).then((resp: any) => {
+      if (!resp?.success || !Array.isArray(resp.data) || resp.data.length === 0) return;
+      const batches: FefoBatch[] = resp.data;
+      setCart((prev) =>
+        prev.map((item) => {
+          if (item.medicine.id !== medicine.id) return item;
+          const blended = computeBlendedPrice(batches, item.pills);
+          if (blended <= 0) return item;
+          return recalculateSaleItem({ ...item, unitPrice: blended, fefoBatches: batches });
+        })
+      );
+    }).catch(() => {/* silently ignore — default price remains */});
   }, [error, warning]);
 
   const handleSearch = useCallback(async (term: string) => {
@@ -1027,7 +1069,6 @@ const SellingPanel: React.FC = () => {
       return prevCart
         .map((item) => {
           if (item.medicine.id === medicineId) {
-            // sellablePills on the line is total sellable stock snapshot (not "remaining after cart")
             const available = item.medicine.sellablePills ?? Infinity;
             const newQuantity = item.pills + change;
             if (newQuantity <= 0) return null;
@@ -1035,11 +1076,12 @@ const SellingPanel: React.FC = () => {
               warning(`Only ${available} pills available in stock!`);
               return item;
             }
-            const updatedItem = recalculateSaleItem({
+            const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, newQuantity) : 0;
+            return recalculateSaleItem({
               ...item,
               pills: newQuantity,
+              ...(blended > 0 ? { unitPrice: blended } : {}),
             });
-            return updatedItem;
           }
           return item;
         })
@@ -1055,15 +1097,16 @@ const SellingPanel: React.FC = () => {
       return prevCart.map((item) => {
         if (item.medicine.id === medicineId) {
           const available = item.medicine.sellablePills ?? Infinity;
+          const clampedQty = finalQuantity > available ? available : finalQuantity;
           if (finalQuantity > available) {
             warning(`Only ${available} pills available in stock!`);
-            return recalculateSaleItem({ ...item, pills: available });
           }
-          const updatedItem = recalculateSaleItem({
+          const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, clampedQty) : 0;
+          return recalculateSaleItem({
             ...item,
-            pills: finalQuantity,
+            pills: clampedQty,
+            ...(blended > 0 ? { unitPrice: blended } : {}),
           });
-          return updatedItem;
         }
         return item;
       });
@@ -1278,43 +1321,41 @@ const SellingPanel: React.FC = () => {
   // Memoize cart totals to prevent recalculation on every render
   const subtotalValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
-      return sum + (item.unitPrice * netPills);
+      // item.pills = originalPills when viewing history; net pills for new bills
+      return sum + (item.unitPrice * item.pills);
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const discountValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const netPills = item.pills;
       const itemSubtotal = item.unitPrice * netPills;
       return sum + ((itemSubtotal * item.discount) / 100);
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const taxValue = useMemo(() => {
     return cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
-      const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+      const netPills = item.pills;
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;
       const discountedAmount = itemSubtotal - itemDiscount;
       return sum + ((discountedAmount * item.tax) / 100); // Tax on discounted amount
     }, 0);
-  }, [cart, returnedQuantities, currentBillIndex]);
+  }, [cart]);
 
   const grandTotal = useMemo(() => {
     const baseTotal = subtotalValue - discountValue + taxValue;
-    // Apply additional discount for Family/Relatives or Charity
-    if (saleType === 'Family/Relatives' || saleType === 'Charity') {
+    // Apply additional discount for Family/Relatives, Charity, or Employee
+    if (saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') {
       const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
       return baseTotal - additionalDiscountAmount;
     }
     return baseTotal;
   }, [subtotalValue, discountValue, taxValue, saleType, additionalDiscount]);
 
-  // Memoize net payable to avoid recalculation
+  // Memoize net payable: grandTotal holds original total (based on originalPills),
+  // so we subtract the returned amount to get the true net payable.
   const netPayable = useMemo(() => {
     return Math.max(0, grandTotal - currentSaleReturnTotal);
   }, [grandTotal, currentSaleReturnTotal]);
@@ -1399,26 +1440,38 @@ const SellingPanel: React.FC = () => {
             averageSellablePricePerPill: item.unitPrice,
           };
 
-          // Calculate discount percentage from discount amount
-          const subtotal = item.unitPrice * item.pills;
-          const discountPercent =
-            subtotal > 0 ? (item.discountAmount / subtotal) * 100 : 0;
+          // Use ORIGINAL quantities so QTY column shows what was actually sold (e.g. 10)
+          // The RET. column shows how many were returned (e.g. 8)
+          // Amount column computes net: (origPills - returnedQty) × unitPrice
+          const origPills = item.originalPills || item.pills;
+          const origDiscountAmt = item.originalDiscountAmount ?? item.discountAmount;
+          const origTaxAmt = item.originalTaxAmount ?? item.taxAmount;
+          const origTotal = item.originalTotal ?? item.total;
 
-          // Calculate tax percentage from tax amount
-          const taxableBase = subtotal - item.discountAmount;
+          // The user specifically requested that historical bills show the PRE-DISCOUNT
+          // original per-pill price, even if the database occasionally stores it as a net value.
+          // By reversing the subtotal, we guarantee the display matches the original sale expectation.
+          const originalSubtotal = item.originalSubtotal || item.subtotal;
+          const derivedUnitPrice = origPills > 0 ? Number((originalSubtotal / origPills).toFixed(2)) : item.unitPrice;
+
+          const subtotal = derivedUnitPrice * origPills;
+          const discountPercent =
+            subtotal > 0 ? (origDiscountAmt / subtotal) * 100 : 0;
+
+          const taxableBase = subtotal - origDiscountAmt;
           const taxPercent =
-            taxableBase > 0 ? (item.taxAmount / taxableBase) * 100 : 0;
+            taxableBase > 0 ? (origTaxAmt / taxableBase) * 100 : 0;
 
           const cartItem: CartItem = {
             medicine: medicineObj,
-            pills: item.pills,
-            unitPrice: item.unitPrice,
+            pills: origPills,
+            unitPrice: derivedUnitPrice,
             discount: discountPercent,
             tax: taxPercent,
             subtotal,
-            discountAmount: item.discountAmount,
-            taxAmount: item.taxAmount,
-            finalPrice: item.total,
+            discountAmount: origDiscountAmt,
+            taxAmount: origTaxAmt,
+            finalPrice: origTotal,
           };
 
           return recalculateSaleItem(cartItem);
@@ -2156,6 +2209,12 @@ const SellingPanel: React.FC = () => {
                         >
                           Charity
                         </div>
+                        <div
+                          className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('Employee'); setSaleType('Employee'); setShowCustomerDropdown(false); }}
+                        >
+                          Employee
+                        </div>
                         {customerName.trim() !== '' && customers.filter(c => c.name.toLowerCase().includes(customerName.toLowerCase())).map(customer => (
                           <div
                             key={customer.id}
@@ -2448,7 +2507,7 @@ const SellingPanel: React.FC = () => {
                   )}
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto min-h-0 overscroll-contain">
+              <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 overscroll-contain">
                 {cart.length === 0 ? (
                   <div className="p-12 text-center">
                     <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 mb-4">
@@ -2462,26 +2521,38 @@ const SellingPanel: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {/* Table Header */}
-                    <div className="grid grid-cols-12 gap-1.5 px-3 py-2.5 bg-gradient-to-r from-gray-50/80 to-gray-100/50 dark:from-gray-700/40 dark:to-gray-700/20 border-b-2 border-gray-200/60 dark:border-gray-600/60 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider">
+                  <div className="min-w-0 border border-gray-200/80 dark:border-gray-600/80 rounded-b-lg overflow-hidden">
+                    {/* Table Header — grid lines match Purchasing Panel */}
+                    {(() => {
+                      const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
+                      return (
+                    <div
+                      className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                    >
                       <div className="col-span-1">Sr#</div>
                       <div className="col-span-2">Product</div>
                       <div className="col-span-2">Company</div>
-                      <div className="col-span-1 text-center">Qty</div>
-                      <div className="col-span-2 text-center">Price</div>
+                      <div className="col-span-1 text-center">Pill QTY</div>
+                      {showRetCol && (
+                        <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
+                      )}
+                      <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-1 text-center">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
+                      );
+                    })()}
                     {/* Cart Items */}
                     {cart.map((item, index) => {
                       const companyLabel = medicineCompanyLine(item.medicine);
+                      const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
+                      const returnedQty = returnedQuantities.get(item.medicine.id) || 0;
                       return (
                       <div
                         key={item.medicine.id}
-                        className="grid grid-cols-12 gap-1.5 px-3 py-2.5 hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30"
+                        className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
                       >
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
@@ -2519,7 +2590,7 @@ const SellingPanel: React.FC = () => {
                               type="text"
                               inputMode="numeric"
                               autoComplete="off"
-                              aria-label="Quantity"
+                              aria-label="Pill quantity"
                               value={
                                 qtyInputDraft[item.medicine.id] ??
                                 (item.pills === 0 ? '' : String(item.pills))
@@ -2591,16 +2662,23 @@ const SellingPanel: React.FC = () => {
                                   : false)
                               }
                             >
-                              <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <FiPlus className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                             </button>
                           </div>
-                          {returnedQuantities.get(item.medicine.id) && returnedQuantities.get(item.medicine.id)! > 0 && (
-                            <div className="text-[9px] text-red-600 dark:text-red-400 font-semibold text-center mt-1">
-                              {returnedQuantities.get(item.medicine.id)} returned
-                            </div>
-                          )}
                         </div>
-                        <div className="col-span-2 text-center min-w-0">
+                        {/* RET. column — dedicated returned qty cell */}
+                        {showRetCol && (
+                          <div className="col-span-1 text-center">
+                            {returnedQty > 0 ? (
+                              <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400 border border-rose-300 dark:border-rose-700">
+                                -{returnedQty}
+                              </span>
+                            ) : (
+                              <span className="text-gray-300 dark:text-gray-600 text-[10px]">—</span>
+                            )}
+                          </div>
+                        )}
+                        <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
 
                           <input
                             type="number"
@@ -2719,8 +2797,8 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
                           {symbol}{(() => {
-                            const returned = returnedQuantities.get(item.medicine.id) || 0;
-                            const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
+                            // Backend already provides net pillars and total
+                            const netPills = item.pills;
                             const itemSubtotal = item.unitPrice * netPills;
                             const itemDiscount = (itemSubtotal * item.discount) / 100;
                             const discountedAmount = itemSubtotal - itemDiscount;
@@ -2806,6 +2884,11 @@ const SellingPanel: React.FC = () => {
                         {cart.length} {cart.length === 1 ? 'Item' : 'Items'}
                       </span>
                     </div>
+                    {currentSaleReturnTotal > 0 && (
+                      <div className="ml-2 px-2 py-0.5 bg-rose-500 text-white text-[10px] font-black rounded border border-white/40 animate-pulse shadow-sm">
+                        HAS RETURNS
+                      </div>
+                    )}
                   </div>
                   <div
                     className={`font-bold text-white tracking-tight ${
@@ -2814,23 +2897,20 @@ const SellingPanel: React.FC = () => {
                   >
                     {formatCurrency(netPayable)}
                   </div>
-                  {currentSaleReturnTotal > 0 && (
+                  {currentSaleReturnTotal > 0 && selectedSale && (
                     <div className="mt-2 pt-2 border-t border-white/20">
                       <div className="flex items-center justify-between text-xs">
                         <span className="text-white/80">Original Total:</span>
-                        <span className="text-white/90 font-semibold">{formatCurrency(grandTotal)}</span>
+                        <span className="text-white/90 font-semibold">{formatCurrency(selectedSale.items.reduce((sum, i) => sum + (i.originalTotal || 0), 0))}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1">
                         <span className="text-white/80">Returned:</span>
-                        <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
+                        <span className="text-red-200 font-semibold">-{formatCurrency(selectedSale.items.reduce((sum, i) => sum + (i.returnedTotal || 0), 0))}</span>
                       </div>
-                      {grandTotal < currentSaleReturnTotal && (
-                        <div className="mt-2 pt-2 border-t border-red-300/30">
-                          <p className="text-xs text-red-200">
-                            ⚠️ Data inconsistency detected
-                          </p>
-                        </div>
-                      )}
+                      <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
+                        <span className="text-white/80 font-semibold">Net Total:</span>
+                        <span className="text-white font-bold">{formatCurrency(netPayable)}</span>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -2890,75 +2970,76 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         
-                        {/* ADDITIONAL DISCOUNT INPUT - Only show for Family/Relatives or Charity */}
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && (
-                          <div
-                            className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
-                              expandedSaleSummary
-                                ? 'pt-1.5 border-t-2'
-                                : 'pt-1.5 border-t'
-                            }`}
-                          >
+                        {/* SPECIAL DISCOUNT SECTION - Only show for Family/Relatives, Charity, or Employee */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
+                          <>
                             <div
-                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
-                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                              className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
+                                expandedSaleSummary
+                                  ? 'pt-1.5 border-t-2'
+                                  : 'pt-1.5 border-t'
                               }`}
                             >
-                              Extra Disc%
-                            </div>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              autoComplete="off"
-                              aria-label="Extra Discount"
-                              value={
-                                isEditingAdditionalDiscount
-                                  ? additionalDiscountDraft
-                                  : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
-                              }
-                              onFocus={(e) => {
-                                setIsEditingAdditionalDiscount(true);
-                                if (additionalDiscount === 0) {
-                                  setAdditionalDiscountDraft('');
-                                } else {
-                                  setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
+                              <div
+                                className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
+                                  expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
+                                }`}
+                              >
+                                Exta Disc.%
+                              </div>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoComplete="off"
+                                aria-label="Extra Discount"
+                                value={
+                                  isEditingAdditionalDiscount
+                                    ? additionalDiscountDraft
+                                    : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
                                 }
-                                e.target.select();
-                              }}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                // Allow empty string or digits only, and check if value is <= 100
-                                if (v === '') {
-                                  setAdditionalDiscountDraft('');
-                                  setAdditionalDiscount(0);
-                                } else if (/^\d+$/.test(v)) {
-                                  const numVal = parseInt(v, 10);
-                                  if (numVal <= 100) {
-                                    setAdditionalDiscountDraft(v);
-                                    setAdditionalDiscount(numVal);
+                                onFocus={(e) => {
+                                  setIsEditingAdditionalDiscount(true);
+                                  if (additionalDiscount === 0) {
+                                    setAdditionalDiscountDraft('');
+                                  } else {
+                                    setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
                                   }
-                                }
-                              }}
-                              onBlur={() => {
-                                setIsEditingAdditionalDiscount(false);
-                                const draft = additionalDiscountDraft;
-                                setAdditionalDiscountDraft('');
-                                if (draft === undefined || draft === '') {
-                                  setAdditionalDiscount(0);
-                                  return;
-                                }
-                                const trimmed = draft.trim();
-                                let val = parseInt(trimmed, 10);
-                                if (trimmed === '' || Number.isNaN(val) || val < 0) {
-                                  val = 0;
-                                }
-                                if (val > 100) val = 100;
-                                setAdditionalDiscount(val);
-                              }}
-                              placeholder="0"
-                              className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
-                            />
-                          </div>
+                                  e.target.select();
+                                }}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v === '') {
+                                    setAdditionalDiscountDraft('');
+                                    setAdditionalDiscount(0);
+                                  } else if (/^\d+$/.test(v)) {
+                                    const numVal = parseInt(v, 10);
+                                    if (numVal <= 100) {
+                                      setAdditionalDiscountDraft(v);
+                                      setAdditionalDiscount(numVal);
+                                    }
+                                  }
+                                }}
+                                onBlur={() => {
+                                  setIsEditingAdditionalDiscount(false);
+                                  const draft = additionalDiscountDraft;
+                                  setAdditionalDiscountDraft('');
+                                  if (draft === undefined || draft === '') {
+                                    setAdditionalDiscount(0);
+                                    return;
+                                  }
+                                  const trimmed = draft.trim();
+                                  let val = parseInt(trimmed, 10);
+                                  if (trimmed === '' || Number.isNaN(val) || val < 0) {
+                                    val = 0;
+                                  }
+                                  if (val > 100) val = 100;
+                                  setAdditionalDiscount(val);
+                                }}
+                                placeholder="0"
+                                className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
+                              />
+                            </div>
+                          </>
                         )}
                       </div>
 
@@ -2987,21 +3068,22 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
                         
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount > 0 && (
+                        {/* Additional Discount Amount - Only show when discount is applied */}
+                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <div className="flex items-center justify-between gap-4">
                             <div
                               className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
                                 expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
                               }`}
                             >
-                              Extra Disc
-                            </div>
+                              Exta % Amount
+                              </div>
                             <div
                               className={`font-bold text-amber-600 dark:text-amber-400 tabular-nums ${
                                 expandedSaleSummary ? 'text-sm' : 'text-sm'
                               }`}
                             >
-                              -{formatCurrency(((subtotalValue - discountValue + taxValue) * additionalDiscount) / 100)}
+                              -{formatCurrency((subtotalValue - discountValue + taxValue) * additionalDiscount / 100)}
                             </div>
                           </div>
                         )}
@@ -3375,7 +3457,15 @@ const SellingPanel: React.FC = () => {
                               {(sale.additionalDiscount ?? 0) > 0 && (
                                 <div className="flex items-center gap-1 px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded">
                                   <span className="text-[9px] font-bold text-amber-700 dark:text-amber-400">
-                                    Special Disc. -{sale.additionalDiscount}%
+                                    Special Disc. -{sale.additionalDiscount}% ({symbol}{((sale.total + (sale.additionalDiscountAmount ?? 0)) * (sale.additionalDiscount ?? 0) / 100).toFixed(2)})
+                                  </span>
+                                </div>
+                              )}
+                              {/* Return Status Badge */}
+                              {(saleReturnsMap.get(sale.saleId) || 0) > 0 && (
+                                <div className="flex items-center gap-1 px-1.5 py-0.5 bg-rose-100 dark:bg-rose-900/30 border border-rose-300 dark:border-rose-700 rounded animate-pulse">
+                                  <span className="text-[9px] font-black text-rose-700 dark:text-rose-400 uppercase tracking-tighter">
+                                    Item Returned
                                   </span>
                                 </div>
                               )}
@@ -3396,7 +3486,7 @@ const SellingPanel: React.FC = () => {
                                   }`}
                               >
                                 {symbol}
-                                {Math.max(0, sale.total - (saleReturnsMap.get(sale.saleId) || 0)).toFixed(2)}
+                                {sale.total.toFixed(2)}
                               </span>
                             </div>
                           </div>

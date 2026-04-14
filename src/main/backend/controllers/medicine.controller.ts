@@ -472,6 +472,21 @@ export class MedicineController {
     );
     console.log('[IPC] Registered handler: medicine-get-by-barcode');
 
+    // Get FEFO batch sell prices for blended price calculation in the selling panel
+    ipcMain.handle(
+      'medicine-get-fefo-sell-batches',
+      async (_event: IpcMainInvokeEvent, medicineId: unknown): Promise<{ success: boolean; data?: unknown; error?: string }> => {
+        try {
+          const id = typeof medicineId === 'number' ? medicineId : Number(medicineId);
+          const batches = await this.medicineService.getFefoSellBatches(id);
+          return { success: true, data: batches };
+        } catch (error) {
+          console.error('Get FEFO sell batches error:', error);
+          return { success: false, error: String(error) };
+        }
+      }
+    );
+
     // Get medicine by ID
     ipcMain.on('medicine-get-by-id', async (event: IpcMainEvent, args: any[]) => {
       try {
@@ -553,6 +568,18 @@ export class MedicineController {
       } catch (error) {
         console.error('Delete medicine error:', error);
         event.reply('medicine-delete-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get detailed inventory for a medicine
+    ipcMain.on('medicine-get-inventory-details', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const medicineId = args[0] as number;
+        const details = await this.medicineService.getMedicineInventoryDetails(medicineId);
+        event.reply('medicine-get-inventory-details-reply', { success: true, data: details });
+      } catch (error) {
+        console.error('Get medicine inventory details error:', error);
+        event.reply('medicine-get-inventory-details-reply', { success: false, error: String(error) });
       }
     });
 

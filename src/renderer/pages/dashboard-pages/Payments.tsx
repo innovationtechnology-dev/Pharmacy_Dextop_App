@@ -126,6 +126,13 @@ const getPaymentMethodLabel = (method: string) => {
   return paymentMethodLabels[method] || method;
 };
 
+const toLocalIsoDate = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const Payments: React.FC = () => {
   const { setHeader } = useDashboardHeader();
 
@@ -227,7 +234,7 @@ const Payments: React.FC = () => {
       
       if (periodType !== 'all') {
         const today = new Date();
-        toDate = today.toISOString().split('T')[0];
+        toDate = toLocalIsoDate(today);
         
         switch (periodType) {
           case 'today':
@@ -236,7 +243,7 @@ const Payments: React.FC = () => {
           case 'week':
             const weekAgo = new Date(today);
             weekAgo.setDate(weekAgo.getDate() - 7);
-            fromDate = weekAgo.toISOString().split('T')[0];
+            fromDate = toLocalIsoDate(weekAgo);
             break;
           case 'month':
             fromDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
@@ -529,7 +536,7 @@ const Payments: React.FC = () => {
     setBankName('');
     setAccountNumber('');
     setPaymentNotes('');
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(toLocalIsoDate(new Date()));
   };
 
   const handleViewPaymentHistory = (purchase: Purchase) => {
@@ -546,7 +553,7 @@ const Payments: React.FC = () => {
     setBankName('');
     setAccountNumber('');
     setPaymentNotes('');
-    setPaymentDate(new Date().toISOString().split('T')[0]);
+    setPaymentDate(toLocalIsoDate(new Date()));
   };
 
   const handleSubmitPayment = async () => {
@@ -744,47 +751,68 @@ const Payments: React.FC = () => {
       )}
 
       {/* Stats Header - Matching Sales Report Design */}
-      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
-        <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-          <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
-          <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-            {formatCurrency(paymentSummary?.totalPurchases || 0)}
-          </span>
+      {loading ? (
+        <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
+          {/* Skeleton loaders for stats */}
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-700 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 shadow-sm animate-pulse">
+              <div className="w-3.5 h-3.5 bg-gray-300 dark:bg-gray-600 rounded" />
+              <div className="w-16 h-3 bg-gray-300 dark:bg-gray-600 rounded mr-2" />
+              <div className="w-24 h-3 bg-gray-300 dark:bg-gray-600 rounded" />
+            </div>
+          ))}
+          <button
+            onClick={loadAllData}
+            disabled
+            className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md uppercase tracking-wide flex items-center gap-1.5 shadow-sm opacity-50 cursor-not-allowed"
+          >
+            <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
+            Refresh
+          </button>
         </div>
+      ) : (
+        <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {formatCurrency(paymentSummary?.totalPurchases || 0)}
+            </span>
+          </div>
 
-        <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
-          <FiTrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Paid</span>
-          <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-            {formatCurrency(paymentSummary?.totalPaid || 0)}
-          </span>
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiTrendingUp className="w-3.5 h-3.5 text-emerald-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Paid</span>
+            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
+              {formatCurrency(paymentSummary?.totalPaid || 0)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiTrendingDown className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Outstanding</span>
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+              {formatCurrency(paymentSummary?.totalRemaining || 0)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-900/20 px-2.5 py-1.5 rounded-md border border-green-200 dark:border-green-600/50 shadow-sm">
+            <FiDollarSign className="w-3.5 h-3.5 text-green-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Cash</span>
+            <span className="text-xs font-bold text-green-600 dark:text-green-400 ml-1">
+              {formatCurrency(paymentSummary?.cashPayments || 0)}
+            </span>
+          </div>
+
+          <button
+            onClick={loadAllData}
+            className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          >
+            <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
-
-        <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
-          <FiTrendingDown className="w-3.5 h-3.5 text-orange-500" />
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Outstanding</span>
-          <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-            {formatCurrency(paymentSummary?.totalRemaining || 0)}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-900/20 px-2.5 py-1.5 rounded-md border border-green-200 dark:border-green-600/50 shadow-sm">
-          <FiDollarSign className="w-3.5 h-3.5 text-green-500" />
-          <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Cash</span>
-          <span className="text-xs font-bold text-green-600 dark:text-green-400 ml-1">
-            {formatCurrency(paymentSummary?.cashPayments || 0)}
-          </span>
-        </div>
-
-        <button
-          onClick={loadAllData}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-        >
-          <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
-      </div>
+      )}
 
 
       {/* Date Selection - Prominent */}
@@ -981,7 +1009,7 @@ const Payments: React.FC = () => {
 
       {/* Make Payments Tab */}
       {activeTab === 'payments' && (
-        <>
+        <div className="overflow-y-auto">
           {/* Status Filter Tabs */}
           <div className="flex gap-2 m-2">
             <button
@@ -1104,12 +1132,12 @@ const Payments: React.FC = () => {
               </div>
             )}
           </div>
-        </>
+        </div>
       )}
 
       {/* Payment Records Tab */}
       {activeTab === 'records' && (
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto">
           {/* View Mode Toggle */}
           <div className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
             <div className="flex items-center gap-2">
@@ -1406,7 +1434,7 @@ const Payments: React.FC = () => {
 
       {/* Supplier Accounts Tab */}
       {activeTab === 'accounts' && (
-        <div className="space-y-3">
+        <div className="space-y-3 overflow-y-auto">
           {loading ? (
             <div className="flex items-center justify-center py-12 bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700">
               <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">

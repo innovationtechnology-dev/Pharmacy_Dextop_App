@@ -19,7 +19,6 @@ import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
-
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
 interface Medicine {
@@ -34,6 +33,8 @@ interface Medicine {
   manufacturer?: string;
   brandName?: string;
   minimumStockLevel: number;
+  /** Purchase/sale/return rows exist — name & barcode cannot be changed. */
+  hasTransactionHistory: boolean;
 }
 
 type BackendMedicine = {
@@ -48,6 +49,7 @@ type BackendMedicine = {
   manufacturer?: string;
   brandName?: string;
   minimumStockLevel?: number;
+  hasTransactionHistory?: boolean;
 };
 
 type IpcResponse<T> = {
@@ -99,6 +101,7 @@ const mapBackendMedicine = (record: BackendMedicine): Medicine => {
     manufacturer: record.manufacturer ?? undefined,
     brandName: record.brandName ?? undefined,
     minimumStockLevel: record.minimumStockLevel ?? 0,
+    hasTransactionHistory: record.hasTransactionHistory === true,
   };
 };
 
@@ -214,15 +217,27 @@ export default function MedicinesPage() {
       return;
     }
 
-    const payload = {
-      name: newMedicine.name.trim(),
-      pillQuantity,
-      barcode: newMedicine.barcode.trim(),
-      status: newMedicine.status,
-      manufacturer: newMedicine.manufacturer.trim() || undefined,
-      brandName: newMedicine.brandName.trim() || undefined,
-      minimumStockLevel: parseInt(newMedicine.minimumStockLevel, 10) || 0,
-    };
+    const displayName = newMedicine.name.trim();
+
+    /** Full update; omit name/barcode when locked so backend does not reject unchanged identity fields. */
+    const payload =
+      editingMedicineId && lockNameAndBarcode
+        ? {
+            pillQuantity,
+            status: newMedicine.status,
+            manufacturer: newMedicine.manufacturer.trim() || undefined,
+            brandName: newMedicine.brandName.trim() || undefined,
+            minimumStockLevel: parseInt(newMedicine.minimumStockLevel, 10) || 0,
+          }
+        : {
+            name: displayName,
+            pillQuantity,
+            barcode: newMedicine.barcode.trim(),
+            status: newMedicine.status,
+            manufacturer: newMedicine.manufacturer.trim() || undefined,
+            brandName: newMedicine.brandName.trim() || undefined,
+            minimumStockLevel: parseInt(newMedicine.minimumStockLevel, 10) || 0,
+          };
 
     setIsSubmitting(true);
 
@@ -240,9 +255,9 @@ export default function MedicinesPage() {
             return;
           }
 
-          setFormSuccess(`${payload.name} has been updated.`);
+          setFormSuccess(`${displayName} has been updated.`);
           setTimeout(() => setFormSuccess(null), 3000);
-          setFeedbackMessage(`${payload.name} updated successfully.`);
+          setFeedbackMessage(`${displayName} updated successfully.`);
           setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           setEditingMedicineId(null);
@@ -265,9 +280,9 @@ export default function MedicinesPage() {
             return;
           }
 
-          setFormSuccess(`${payload.name} has been added.`);
+          setFormSuccess(`${displayName} has been added.`);
           setTimeout(() => setFormSuccess(null), 3000);
-          setFeedbackMessage(`${payload.name} saved to inventory.`);
+          setFeedbackMessage(`${displayName} saved to inventory.`);
           setTimeout(() => setFeedbackMessage(null), 3000);
           setNewMedicine(emptyMedicineForm);
           loadMedicines();
@@ -361,28 +376,28 @@ export default function MedicinesPage() {
     barcodeInputRef.current?.focus();
   }, []);
 
-  // Check if editing medicine has been used in transactions
-  const isEditingMedicineUsed = useMemo(() => {
+  /** Name and barcode are locked when any purchase/sale/return line exists (matches backend). */
+  const lockNameAndBarcode = useMemo(() => {
     if (!editingMedicine) return false;
-    return editingMedicine.totalAvailablePills > 0 || editingMedicine.sellablePills > 0;
+    return editingMedicine.hasTransactionHistory === true;
   }, [editingMedicine]);
 
   // F2 — focus barcode field (same idea as Selling/Purchasing Product F2)
   useEffect(() => {
     const onF2 = (event: KeyboardEvent) => {
       if (event.key !== 'F2') return;
-      if (isEditingMedicineUsed) return;
+      if (lockNameAndBarcode) return;
       event.preventDefault();
       barcodeInputRef.current?.focus();
       barcodeInputRef.current?.select();
     };
     window.addEventListener('keydown', onF2, true);
     return () => window.removeEventListener('keydown', onF2, true);
-  }, [isEditingMedicineUsed]);
+  }, [lockNameAndBarcode]);
 
   // Global wedge scanner → New Medicine barcode (capture phase). Typing stays normal inside [data-wedge-typing].
   useEffect(() => {
-    if (isEditingMedicineUsed) {
+    if (lockNameAndBarcode) {
       globalBarcodeBufferRef.current = '';
       if (globalBarcodeTimerRef.current) {
         clearTimeout(globalBarcodeTimerRef.current);
@@ -474,11 +489,11 @@ export default function MedicinesPage() {
       }
       globalBarcodeBufferRef.current = '';
     };
-  }, [isEditingMedicineUsed]);
+  }, [lockNameAndBarcode]);
 
   // Live duplicate check: scanners send long GS1-style strings; backend resolves like selling/purchasing.
   useEffect(() => {
-    if (isEditingMedicineUsed) {
+    if (lockNameAndBarcode) {
       setBarcodeDuplicate(null);
       return;
     }
@@ -536,7 +551,7 @@ export default function MedicinesPage() {
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [newMedicine.barcode, editingMedicineId, isEditingMedicineUsed]);
+  }, [newMedicine.barcode, editingMedicineId, lockNameAndBarcode]);
 
   const handleDelete = async (medicineId: number, medicineName: string) => {
     try {
@@ -710,12 +725,14 @@ export default function MedicinesPage() {
             {/* Form Content */}
             <form onSubmit={handleAddMedicine} className="flex-1 overflow-y-auto p-4 space-y-4">
               {/* Warning for editing used medicine */}
-              {isEditingMedicineUsed && (
+              {lockNameAndBarcode && (
                 <div className="p-3 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 text-xs rounded border border-orange-200 dark:border-orange-800 flex items-start gap-2">
                   <FiAlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
                   <div>
-                    <div className="font-semibold mb-1">Limited Editing</div>
-                    <div>This medicine has been used in transactions. You can only change its status. Name, barcode, and pills/packet are read-only to preserve data integrity.</div>
+                    <div className="font-semibold mb-1">Name &amp; barcode locked</div>
+                    <div>
+                      This medicine appears in purchase, sale, or return records, so the name and barcode cannot be changed. You can still update pills/packet, manufacturer, brand, min. stock level, and status.
+                    </div>
                   </div>
                 </div>
               )}
@@ -738,7 +755,7 @@ export default function MedicinesPage() {
                   className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                 >
                   Barcode (F2) <span className="text-red-500">*</span>
-                  {isEditingMedicineUsed && (
+                  {lockNameAndBarcode && (
                     <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
                   )}
                 </label>
@@ -748,9 +765,9 @@ export default function MedicinesPage() {
                   ref={barcodeInputRef}
                   value={newMedicine.barcode}
                   onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
-                  disabled={isEditingMedicineUsed}
+                  disabled={lockNameAndBarcode}
                   className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
-                    isEditingMedicineUsed
+                    lockNameAndBarcode
                       ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                       : barcodeDuplicate
                         ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-400 dark:border-amber-600'
@@ -783,7 +800,7 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Medicine Name <span className="text-red-500">*</span>
-                    {isEditingMedicineUsed && (
+                    {lockNameAndBarcode && (
                       <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only - used in transactions)</span>
                     )}
                   </label>
@@ -792,9 +809,9 @@ export default function MedicinesPage() {
                     type="text"
                     value={newMedicine.name}
                     onChange={(e) => handleNewMedicineChange('name', e.target.value)}
-                    disabled={isEditingMedicineUsed}
+                    disabled={lockNameAndBarcode}
                     className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
-                      isEditingMedicineUsed
+                      lockNameAndBarcode
                         ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                         : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
                     }`}
@@ -808,21 +825,13 @@ export default function MedicinesPage() {
                     className="block text-xs font-bold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide"
                   >
                     Pills/Packet <span className="text-red-500">*</span>
-                    {isEditingMedicineUsed && (
-                      <span className="ml-2 text-[10px] text-orange-600 dark:text-orange-400 font-normal">(Read-only)</span>
-                    )}
                   </label>
                   <input
                     id="medicine-pill-quantity"
                     type="number"
                     value={newMedicine.pillQuantity}
                     onChange={(e) => handleNewMedicineChange('pillQuantity', e.target.value)}
-                    disabled={isEditingMedicineUsed}
-                    className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
-                      isEditingMedicineUsed
-                        ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                        : 'bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600'
-                    }`}
+                    className="w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600"
                     placeholder="e.g. 10"
                     required
                   />
@@ -1027,11 +1036,10 @@ export default function MedicinesPage() {
                   {/* Table Header */}
                   <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border-b-2 border-gray-200 dark:border-gray-600 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 uppercase tracking-wider z-10">
                     <div className="col-span-1">#</div>
-                    <div className="col-span-3">Medicine</div>
+                    <div className="col-span-4">Medicine</div>
                     <div className="col-span-2">Barcode</div>
                     <div className="col-span-1 text-center">Pills/Pack</div>
-                    <div className="col-span-2 text-center">Stock</div>
-                    <div className="col-span-2 text-center">Status</div>
+                    <div className="col-span-3 text-center">Status</div>
                     <div className="col-span-1 text-center">Actions</div>
                   </div>
 
@@ -1048,7 +1056,7 @@ export default function MedicinesPage() {
                       <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                         {index + 1}
                       </div>
-                      <div className="col-span-3">
+                      <div className="col-span-4">
                         <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
                           {medicine.name}
                         </div>
@@ -1069,15 +1077,7 @@ export default function MedicinesPage() {
                           {medicine.pillQuantity}
                         </span>
                       </div>
-                      <div className="col-span-2 text-center">
-                        <div className="text-base font-bold text-emerald-600 dark:text-emerald-400">
-                          {medicine.sellablePills.toLocaleString()}
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500">
-                          Total: {medicine.totalAvailablePills.toLocaleString()}
-                        </div>
-                      </div>
-                      <div className="col-span-2 text-center">
+                      <div className="col-span-3 text-center">
                         <select
                           data-wedge-typing="true"
                           value={medicine.status}
@@ -1097,28 +1097,14 @@ export default function MedicinesPage() {
                         </select>
                       </div>
                       <div className="col-span-1 flex items-center justify-center gap-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // Check if medicine has any stock (has been purchased)
-                            if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
-                              alert('Cannot edit medicine with existing stock. This medicine has been used in transactions. You can only change its status (active/inactive).');
-                              return;
-                            }
-                            handleEdit(medicine);
-                          }}
-                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
-                          className={`p-1.5 rounded transition-colors ${
-                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
-                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
-                              : 'text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
-                          }`}
-                          title={
-                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
-                              ? 'Cannot edit: Medicine has been used in transactions (you can only change status)'
-                              : 'Edit'
-                          }
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleEdit(medicine);
+                            }}
+                          className="p-1.5 rounded transition-colors text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
+                          title="Edit"
                         >
                           <FiEdit2 className="w-3.5 h-3.5" />
                         </button>
@@ -1127,23 +1113,24 @@ export default function MedicinesPage() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (medicine.id) {
-                              // Check if medicine has any stock (has been purchased)
-                              if (medicine.totalAvailablePills > 0 || medicine.sellablePills > 0) {
-                                alert('Cannot delete medicine with existing stock. This medicine has been used in transactions. You can mark it as inactive instead.');
+                              if (medicine.hasTransactionHistory) {
+                                alert(
+                                  'Cannot delete: This medicine appears in purchase, sale, or return records. You can mark it as inactive instead.'
+                                );
                                 return;
                               }
                               setDeleteConfirm({ id: medicine.id, name: medicine.name });
                             }
                           }}
-                          disabled={medicine.totalAvailablePills > 0 || medicine.sellablePills > 0}
+                          disabled={medicine.hasTransactionHistory}
                           className={`p-1.5 rounded transition-colors ${
-                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
+                            medicine.hasTransactionHistory
                               ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
                               : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'
                           }`}
                           title={
-                            medicine.totalAvailablePills > 0 || medicine.sellablePills > 0
-                              ? 'Cannot delete: Medicine has been used in transactions'
+                            medicine.hasTransactionHistory
+                              ? 'Cannot delete: Medicine has transaction history'
                               : 'Delete'
                           }
                         >

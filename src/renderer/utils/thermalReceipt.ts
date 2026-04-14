@@ -94,7 +94,7 @@ export const buildThermalReceiptHtml = (
   }, 0);
 
   const baseTotal = subtotal - discountTotal + taxTotal;
-  const additionalDiscountAmount = (saleType === 'Family/Relatives' || saleType === 'Charity') && additionalDiscount 
+  const additionalDiscountAmount = (saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && additionalDiscount 
     ? (baseTotal * additionalDiscount) / 100 
     : 0;
   const grandTotal = baseTotal - additionalDiscountAmount;

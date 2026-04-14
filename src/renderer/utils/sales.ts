@@ -48,12 +48,19 @@ export type FlatSaleRow = {
   additionalDiscountAmount?: number;
   medicineId: number;
   medicineName: string;
-  pills: number;
+  pills: number; // Net pills
+  originalPills: number;
+  returnedPills: number;
   unitPrice: number;
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  total: number;
+  originalSubtotal: number;
+  subtotal: number; // Net subtotal
+  originalDiscountAmount: number;
+  discountAmount: number; // Net discount
+  originalTaxAmount: number;
+  taxAmount: number; // Net tax
+  originalTotal: number;
+  returnedTotal: number;
+  total: number; // Net total
 };
 
 export const getSalesFlatRows = (): Promise<IpcResponse<FlatSaleRow[]>> => {

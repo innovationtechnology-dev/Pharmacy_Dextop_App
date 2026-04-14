@@ -17,7 +17,8 @@ import {
     FiTrash2,
     FiUpload,
     FiShoppingBag,
-    FiShoppingCart
+    FiShoppingCart,
+    FiEye
 } from 'react-icons/fi';
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -25,7 +26,7 @@ import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } 
 import { useTheme } from '../../contexts/ThemeContext';
 import { colorThemes, ColorTheme } from '../../themes/colorThemes';
 
-type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management';
+type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management' | 'module-visibility';
 
 interface ProfileData {
     firstName: string;
@@ -51,6 +52,25 @@ interface SecuritySettings {
     sessionTimeout: number;
     passwordChangeRequired: boolean;
 }
+
+interface PanelVisibilitySettings {
+    showSellingPanel: boolean;
+    showPurchasingPanel: boolean;
+}
+
+const defaultPanelVisibilitySettings: PanelVisibilitySettings = {
+    showSellingPanel: true,
+    showPurchasingPanel: true,
+};
+
+const getStoredPanelVisibilitySettings = (): PanelVisibilitySettings => {
+    try {
+        const stored = localStorage.getItem('panelVisibilitySettings');
+        return stored ? JSON.parse(stored) : defaultPanelVisibilitySettings;
+    } catch {
+        return defaultPanelVisibilitySettings;
+    }
+};
 
 const Settings: React.FC = () => {
     const location = useLocation();
@@ -87,6 +107,10 @@ const Settings: React.FC = () => {
     const [pharmacySettings, setPharmacySettings] = useState<PharmacySettings>({
         ...defaultPharmacySettings,
     });
+
+    const [panelVisibility, setPanelVisibility] = useState<PanelVisibilitySettings>(
+        defaultPanelVisibilitySettings
+    );
 
     const [notifications, setNotifications] = useState<NotificationSettings>({
         emailNotifications: true,
@@ -134,6 +158,9 @@ const Settings: React.FC = () => {
 
         // Load pharmacy settings from localStorage
         setPharmacySettings(getStoredPharmacySettings());
+
+        // Load panel visibility settings from localStorage
+        setPanelVisibility(getStoredPanelVisibilitySettings());
     }, []);
 
     // Load medicines when modal opens
@@ -175,6 +202,10 @@ const Settings: React.FC = () => {
 
     const handleSecurityChange = (field: keyof SecuritySettings, value: boolean | number) => {
         setSecurity((prev) => ({ ...prev, [field]: value }));
+    };
+
+    const handlePanelVisibilityChange = (field: keyof PanelVisibilitySettings, value: boolean) => {
+        setPanelVisibility((prev) => ({ ...prev, [field]: value }));
     };
 
     const { setHeader } = useDashboardHeader();
@@ -290,7 +321,7 @@ const Settings: React.FC = () => {
         
         setDeleting(true);
         let successCount = 0;
-        let errorCount = 0;
+        const errors: { id: number; error: string }[] = [];
 
         for (const id of selectedItemIds) {
             await new Promise<void>((resolve) => {
@@ -300,7 +331,7 @@ const Settings: React.FC = () => {
                     if (result.success) {
                         successCount++;
                     } else {
-                        errorCount++;
+                        errors.push({ id, error: result.error || 'Unknown error' });
                     }
                     resolve();
                 });
@@ -308,13 +339,28 @@ const Settings: React.FC = () => {
         }
 
         setDeleting(false);
-        if (successCount > 0) {
-            alert(`Successfully deleted ${successCount} purchase(s)${errorCount > 0 ? `, ${errorCount} failed` : ''}`);
-            setShowDeletePurchaseModal(false);
-            setSelectedItemIds([]);
-            loadPurchases();
+        
+        // Show detailed results
+        if (successCount > 0 || errors.length > 0) {
+            let message = '';
+            if (successCount > 0) {
+                message += `✓ Successfully deleted ${successCount} purchase(s)\n`;
+            }
+            if (errors.length > 0) {
+                message += `\n✗ Failed to delete ${errors.length} purchase(s):\n`;
+                errors.forEach(err => {
+                    message += `\n• Purchase #${err.id}: ${err.error}`;
+                });
+            }
+            alert(message);
+            
+            if (successCount > 0) {
+                setShowDeletePurchaseModal(false);
+                setSelectedItemIds([]);
+                loadPurchases();
+            }
         } else {
-            alert('Failed to delete purchases');
+            alert('Failed to delete all purchases');
         }
     };
 
@@ -340,6 +386,12 @@ const Settings: React.FC = () => {
                 localStorage.setItem('pharmacySettings', JSON.stringify(pharmacySettings));
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 alert('Settings updated successfully!');
+            } else if (activeSection === 'module-visibility') {
+                localStorage.setItem('panelVisibilitySettings', JSON.stringify(panelVisibility));
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                // Dispatch custom event to notify other components
+                window.dispatchEvent(new CustomEvent('panel-visibility-updated', { detail: panelVisibility }));
+                alert('Module visibility settings updated successfully!');
             } else if (activeSection === 'profile' && user?.id) {
                 const fullName = [profileData.firstName, profileData.lastName].filter(Boolean).join(' ').trim() || user.name;
                 const result = await updateProfile(user.id, {
@@ -373,7 +425,7 @@ const Settings: React.FC = () => {
         } finally {
             setSaving(false);
         }
-    }, [activeSection, pharmacySettings, profileData, user, security]);
+    }, [activeSection, pharmacySettings, profileData, user, security, panelVisibility]);
 
     const handleProfilePictureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -396,13 +448,14 @@ const Settings: React.FC = () => {
         // { id: 'notifications' as SettingsSection, label: 'Notifications', icon: FiBell },
         { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
+        { id: 'module-visibility' as SettingsSection, label: 'Module Visibility', icon: FiEye },
         { id: 'data-management' as SettingsSection, label: 'Data Management', icon: FiTrash2 },
     ].filter(section => {
         if (user?.role === 'cashier') {
             return ['profile', 'pharmacy', 'appearance', 'security'].includes(section.id);
         }
-        // Only admin can access data-management
-        if (section.id === 'data-management' && user?.role !== 'admin') {
+        // Only admin can access module-visibility and data-management
+        if ((section.id === 'module-visibility' || section.id === 'data-management') && user?.role !== 'admin') {
             return false;
         }
         return true;
@@ -1095,6 +1148,118 @@ const Settings: React.FC = () => {
                     </div>
                 );
 
+            case 'module-visibility':
+                return (
+                    <div className="space-y-6 animate-fadeIn">
+                        {/* Module Visibility Card */}
+                        <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md transition-all">
+                            {/* Header */}
+                            <div className="px-4 py-2 bg-gradient-to-r from-indigo-50 to-indigo-100/50 dark:from-indigo-900/20 dark:to-indigo-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                <div className="flex items-center gap-2">
+                                    <div className="p-1.5 rounded-lg bg-gradient-to-br from-indigo-500 to-indigo-600">
+                                        <FiBriefcase className="w-4 h-4 text-white" />
+                                    </div>
+                                    <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
+                                        Admin Panel Modules
+                                    </h3>
+                                </div>
+                            </div>
+                            {/* Content */}
+                            <div className="p-6 space-y-4">
+                                <p className="text-xs text-gray-600 dark:text-gray-400 mb-6">
+                                    Toggle which operational panels are visible in the admin interface. Changes take effect immediately.
+                                </p>
+
+                                {/* Selling Panel Toggle */}
+                                <div className="flex items-center justify-between p-4 bg-gradient-to-r from-emerald-50 to-teal-50/30 dark:from-emerald-900/10 dark:to-teal-900/10 rounded-lg border border-emerald-200/50 dark:border-emerald-800/30 hover:border-emerald-300/70 dark:hover:border-emerald-700/70 transition-all">
+                                    <div className="flex items-center gap-4 flex-1">
+                                        <div className="p-3 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg shadow-md">
+                                            <FiShoppingBag className="w-5 h-5 text-white" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-900 dark:text-white text-sm">Selling Panel</h4>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                Point of Sale (POS) system for processing customer transactions
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={panelVisibility.showSellingPanel}
+                                            onChange={(e) => handlePanelVisibilityChange('showSellingPanel', e.target.checked)}
+                                        />
+                                        <div className={toggleSwitchClass} />
+                                    </label>
+                                </div>
+
+                                {/* Purchasing Panel Toggle */}
+                                <div className="flex items-center justify-between p-4 bg-gradient-to-r from-blue-50 to-cyan-50/30 dark:from-blue-900/10 dark:to-cyan-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 hover:border-blue-300/70 dark:hover:border-blue-700/70 transition-all">
+                                    <div className="flex items-center gap-4 flex-1">
+                                        <div className="p-3 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-md">
+                                            <FiShoppingCart className="w-5 h-5 text-white" />
+                                        </div>
+                                        <div>
+                                            <h4 className="font-bold text-gray-900 dark:text-white text-sm">Purchasing Panel</h4>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                                Manage supplier interactions and process purchase orders
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+                                        <input
+                                            type="checkbox"
+                                            className="sr-only peer"
+                                            checked={panelVisibility.showPurchasingPanel}
+                                            onChange={(e) => handlePanelVisibilityChange('showPurchasingPanel', e.target.checked)}
+                                        />
+                                        <div className={toggleSwitchClass} />
+                                    </label>
+                                </div>
+
+                                {/* Info Note */}
+                                <div className="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                                    <div className="flex gap-3">
+                                        <FiBriefcase className="w-5 h-5 text-amber-600 dark:text-amber-500 flex-shrink-0" />
+                                        <div>
+                                            <h5 className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase">Module Management</h5>
+                                            <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-1">
+                                                Hiding modules doesn't delete any data—they will still be accessible in the main dashboard. Only admin users can modify these settings.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Status Summary */}
+                                <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700/30 rounded-lg border border-gray-200 dark:border-gray-600">
+                                    <h5 className="text-[11px] font-bold text-gray-700 dark:text-gray-300 uppercase mb-3">
+                                        Current status
+                                    </h5>
+                                    <div className="flex flex-wrap gap-2">
+                                        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
+                                            panelVisibility.showSellingPanel
+                                                ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
+                                                : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-400'
+                                        }`}>
+                                            <FiShoppingBag className="w-3 h-3" />
+                                            <span>Selling {panelVisibility.showSellingPanel ? 'Enabled' : 'Disabled'}</span>
+                                        </div>
+                                        <div className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
+                                            panelVisibility.showPurchasingPanel
+                                                ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                                                : 'bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-400'
+                                        }`}>
+                                            <FiShoppingCart className="w-3 h-3" />
+                                            <span>Purchasing {panelVisibility.showPurchasingPanel ? 'Enabled' : 'Disabled'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+
             case 'data-management':
                 return (
                     <div className="space-y-4 animate-fadeIn">
@@ -1477,6 +1642,11 @@ const Settings: React.FC = () => {
                     title: 'Appearance Settings',
                     subtitle: 'Switch themes and personalize the interface',
                 };
+            case 'module-visibility':
+                return {
+                    title: 'Module Visibility',
+                    subtitle: 'Control which panels are displayed in the admin interface',
+                };
             case 'data-management':
                 return {
                     title: 'Data Management',
@@ -1494,7 +1664,8 @@ const Settings: React.FC = () => {
         activeSection === 'profile' ||
         activeSection === 'pharmacy' ||
         activeSection === 'appearance' ||
-        activeSection === 'security';
+        activeSection === 'security' ||
+        activeSection === 'module-visibility';
 
     const headerActions = useMemo(() => {
         if (!canSave) {
