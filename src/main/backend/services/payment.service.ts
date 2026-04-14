@@ -93,7 +93,7 @@ export class PaymentService {
         return rows.map(this.mapRowToPayment);
     }
 
-    public async getPaymentsByDateRange(fromDate: string, toDate: string): Promise<Payment[]> {
+    public async getPaymentsByDateRange(fromDate: string, toDate: string, limit: number = 30, offset: number = 0): Promise<Payment[]> {
         const fromDateTime = `${fromDate} 00:00:00`;
         const toDateTime = `${toDate} 23:59:59`;
         const sql = `
@@ -101,9 +101,22 @@ export class PaymentService {
       WHERE datetime(payment_date) >= datetime(?) 
         AND datetime(payment_date) <= datetime(?)
       ORDER BY payment_date DESC
+      LIMIT ? OFFSET ?
     `;
-        const rows = await this.dbService.query(sql, [fromDateTime, toDateTime]);
+        const rows = await this.dbService.query(sql, [fromDateTime, toDateTime, limit, offset]);
         return rows.map(this.mapRowToPayment);
+    }
+
+    public async getPaymentsCountByDateRange(fromDate: string, toDate: string): Promise<number> {
+        const fromDateTime = `${fromDate} 00:00:00`;
+        const toDateTime = `${toDate} 23:59:59`;
+        const sql = `
+      SELECT COUNT(*) as count FROM purchase_payments 
+      WHERE datetime(payment_date) >= datetime(?) 
+        AND datetime(payment_date) <= datetime(?)
+    `;
+        const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+        return result?.count || 0;
     }
 
     public async deletePayment(paymentId: number): Promise<void> {
@@ -229,8 +242,8 @@ export class PaymentService {
         return summary;
     }
 
-    public async getPaymentRecords(filters: any, paginated: boolean = false): Promise<any> {
-        const { supplierId, paymentMethod, periodType, fromDate, toDate, page = 1, limit = 50 } = filters;
+    public async getPaymentRecords(filters: any, paginated: boolean = true): Promise<any> {
+        const { supplierId, paymentMethod, periodType, fromDate, toDate, page = 1, limit = 30 } = filters;
         
         let where = 'WHERE 1=1';
         const params: any[] = [];

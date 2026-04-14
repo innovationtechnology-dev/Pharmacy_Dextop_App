@@ -20,14 +20,27 @@ export class SupplierController {
    * Register all IPC handlers for supplier operations
    */
   private registerHandlers(): void {
-    // Get all suppliers
-    ipcMain.on('supplier-get-all', async (event: IpcMainEvent) => {
+    // Get all suppliers with pagination
+    ipcMain.on('supplier-get-all', async (event: IpcMainEvent, args: any[]) => {
       try {
-        const suppliers = await this.supplierService.getAllSuppliers();
+        const limit = (args?.[0] as number) || 30;
+        const offset = (args?.[1] as number) || 0;
+        const suppliers = await this.supplierService.getAllSuppliers(limit, offset);
         event.reply('supplier-get-all-reply', { success: true, data: suppliers });
       } catch (error) {
         console.error('Get all suppliers error:', error);
         event.reply('supplier-get-all-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get suppliers count for pagination
+    ipcMain.on('supplier-get-count', async (event: IpcMainEvent) => {
+      try {
+        const count = await this.supplierService.getSuppliersCount();
+        event.reply('supplier-get-count-reply', { success: true, data: count });
+      } catch (error) {
+        console.error('Get suppliers count error:', error);
+        event.reply('supplier-get-count-reply', { success: false, error: String(error) });
       }
     });
 

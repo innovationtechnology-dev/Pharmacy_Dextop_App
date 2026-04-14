@@ -408,8 +408,17 @@ export class PurchaseService {
 
   /**
    * Get all purchases with their computed items, optionally filtered by date range.
+   * @param fromDate - Optional start date for filtering
+   * @param toDate - Optional end date for filtering
+   * @param limit - Maximum number of records to return (default: 30)
+   * @param offset - Number of records to skip (default: 0)
    */
-  public async getAllPurchases(fromDate?: string, toDate?: string): Promise<Purchase[]> {
+  public async getAllPurchases(
+    fromDate?: string,
+    toDate?: string,
+    limit: number = 30,
+    offset: number = 0
+  ): Promise<Purchase[]> {
     let query = `
       SELECT p.*, 
              s.company_name as supplier_company_name, 
@@ -428,7 +437,8 @@ export class PurchaseService {
       params.push(fromDateTime, toDateTime);
     }
 
-    query += ' ORDER BY p.created_at DESC';
+    query += ' ORDER BY p.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
 
     const purchases = await this.dbService.query(query, params);
     
@@ -475,6 +485,26 @@ export class PurchaseService {
       updatedAt: purchase.updated_at,
       items: (itemsMap.get(purchase.id) || []).map((item: any) => mapPurchaseItemDbRow(item)),
     }));
+  }
+
+  /**
+   * Get total count of purchases, optionally filtered by date range.
+   * @param fromDate - Optional start date for filtering
+   * @param toDate - Optional end date for filtering
+   */
+  public async getPurchasesCount(fromDate?: string, toDate?: string): Promise<number> {
+    let query = 'SELECT COUNT(*) as count FROM purchases p';
+    const params: any[] = [];
+
+    if (fromDate && toDate) {
+      const fromDateTime = `${fromDate} 00:00:00`;
+      const toDateTime = `${toDate} 23:59:59`;
+      query += ' WHERE datetime(p.created_at) >= datetime(?) AND datetime(p.created_at) <= datetime(?)';
+      params.push(fromDateTime, toDateTime);
+    }
+
+    const result = await this.dbService.queryOne(query, params);
+    return result?.count || 0;
   }
 
   /**

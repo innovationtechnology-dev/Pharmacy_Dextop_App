@@ -38,14 +38,27 @@ export class MedicineController {
    * Register all IPC handlers for medicine operations
    */
   private registerHandlers(): void {
-    // Get all medicines
-    ipcMain.on('medicine-get-all', async (event: IpcMainEvent) => {
+    // Get all medicines with pagination
+    ipcMain.on('medicine-get-all', async (event: IpcMainEvent, args: any[]) => {
       try {
-        const medicines = await this.medicineService.getAllMedicines();
+        const limit = (args?.[0] as number) || 30;
+        const offset = (args?.[1] as number) || 0;
+        const medicines = await this.medicineService.getAllMedicines(limit, offset);
         event.reply('medicine-get-all-reply', { success: true, data: medicines });
       } catch (error) {
         console.error('Get all medicines error:', error);
         event.reply('medicine-get-all-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get medicines count for pagination
+    ipcMain.on('medicine-get-count', async (event: IpcMainEvent) => {
+      try {
+        const count = await this.medicineService.getMedicinesCount();
+        event.reply('medicine-get-count-reply', { success: true, data: count });
+      } catch (error) {
+        console.error('Get medicines count error:', error);
+        event.reply('medicine-get-count-reply', { success: false, error: String(error) });
       }
     });
 

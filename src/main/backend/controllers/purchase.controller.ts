@@ -34,16 +34,31 @@ export class PurchaseController {
       }
     });
 
-    // Get all purchases
+    // Get all purchases with pagination
     ipcMain.on('purchase-get-all', async (event: IpcMainEvent, args: any[]) => {
       try {
         const fromDate = args?.[0] as string | undefined;
         const toDate = args?.[1] as string | undefined;
-        const purchases = await this.purchaseService.getAllPurchases(fromDate, toDate);
+        const limit = (args?.[2] as number) || 30;
+        const offset = (args?.[3] as number) || 0;
+        const purchases = await this.purchaseService.getAllPurchases(fromDate, toDate, limit, offset);
         event.reply('purchase-get-all-reply', { success: true, data: purchases });
       } catch (error) {
         console.error('Get all purchases error:', error);
         event.reply('purchase-get-all-reply', { success: false, error: String(error) });
+      }
+    });
+
+    // Get purchases count for pagination
+    ipcMain.on('purchase-get-count', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const fromDate = args?.[0] as string | undefined;
+        const toDate = args?.[1] as string | undefined;
+        const count = await this.purchaseService.getPurchasesCount(fromDate, toDate);
+        event.reply('purchase-get-count-reply', { success: true, data: count });
+      } catch (error) {
+        console.error('Get purchases count error:', error);
+        event.reply('purchase-get-count-reply', { success: false, error: String(error) });
       }
     });
 

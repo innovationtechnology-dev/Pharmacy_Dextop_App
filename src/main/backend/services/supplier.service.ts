@@ -60,11 +60,22 @@ export class SupplierService {
 
   /**
    * Get all suppliers
+   * @param limit - Maximum number of records to return (default: 30)
+   * @param offset - Number of records to skip (default: 0)
    */
-  public async getAllSuppliers(): Promise<Supplier[]> {
-    const sql = 'SELECT * FROM suppliers ORDER BY name ASC';
-    const suppliers = await this.dbService.query(sql);
+  public async getAllSuppliers(limit: number = 30, offset: number = 0): Promise<Supplier[]> {
+    const sql = 'SELECT * FROM suppliers ORDER BY name ASC LIMIT ? OFFSET ?';
+    const suppliers = await this.dbService.query(sql, [limit, offset]);
     return suppliers.map(this.mapRowToSupplier);
+  }
+
+  /**
+   * Get total count of suppliers
+   */
+  public async getSuppliersCount(): Promise<number> {
+    const sql = 'SELECT COUNT(*) as count FROM suppliers';
+    const result = await this.dbService.queryOne(sql);
+    return result?.count || 0;
   }
 
   /**

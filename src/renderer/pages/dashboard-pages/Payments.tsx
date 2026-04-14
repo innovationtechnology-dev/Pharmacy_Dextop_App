@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import {
   FiRefreshCw,
   FiCreditCard,
@@ -144,6 +144,11 @@ const Payments: React.FC = () => {
   const [supplierAccounts, setSupplierAccounts] = useState<SupplierAccount[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [purchasePage, setPurchasePage] = useState(1);
+  const [totalPurchases, setTotalPurchases] = useState(0);
+  const [hasMorePurchases, setHasMorePurchases] = useState(true);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // Filter state
@@ -191,7 +196,7 @@ const Payments: React.FC = () => {
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [recordsPerPage, setRecordsPerPage] = useState(50);
+  const [recordsPerPage, setRecordsPerPage] = useState(30);
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   
@@ -227,7 +232,7 @@ const Payments: React.FC = () => {
   }, []);
 
   // Load data
-  const loadPurchases = useCallback(async () => {
+  const loadPurchases = useCallback(async (page: number = 1, append: boolean = false) => {
     return new Promise<void>((resolve, reject) => {
       try {
         // Build date filters for purchases
@@ -263,21 +268,73 @@ const Payments: React.FC = () => {
 
         window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
           if (response.success) {
-            setPurchases(response.data || []);
+            const purchases = response.data || [];
+            if (append) {
+              setPurchases(prev => [...prev, ...purchases]);
+            } else {
+              setPurchases(purchases);
+            }
+            // Check if there are more records
+            setHasMorePurchases(purchases.length === recordsPerPage);
             resolve();
           } else {
             console.error('Error loading purchases:', response.error);
             reject(response.error);
           }
         });
-        // Pass date range to filter purchases
-        window.electron.ipcRenderer.sendMessage('purchase-get-all', [fromDate, toDate]);
+
+        // Get total count for purchases
+        window.electron.ipcRenderer.once('purchase-get-count-reply', (countResponse: any) => {
+          if (countResponse.success) {
+            setTotalPurchases(countResponse.data || 0);
+          }
+        });
+
+        // Pass date range and pagination parameters
+        const offset = (page - 1) * recordsPerPage;
+        window.electron.ipcRenderer.sendMessage('purchase-get-all', [fromDate, toDate, recordsPerPage, offset]);
+        window.electron.ipcRenderer.sendMessage('purchase-get-count', [fromDate, toDate]);
       } catch (err) {
         console.error('Error loading purchases:', err);
         reject(err);
       }
     });
-  }, [periodType, customFromDate, customToDate]);
+  }, [periodType, customFromDate, customToDate, recordsPerPage]);
+
+  const loadMorePurchases = useCallback(() => {
+    if (!hasMorePurchases || loading) return;
+    const nextPage = purchasePage + 1;
+    setPurchasePage(nextPage);
+    loadPurchases(nextPage, true);
+  }, [purchasePage, hasMorePurchases, loading, loadPurchases]);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMorePurchases && !loading) {
+          loadMorePurchases();
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    );
+
+    observerRef.current = observer;
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [hasMorePurchases, loading, loadMorePurchases]);
 
   const loadSuppliers = useCallback(async () => {
     return new Promise<void>((resolve, reject) => {
@@ -1167,6 +1224,15 @@ const Payments: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
+                <div ref={loadMoreRef} className="h-1" />
+                {loading && filteredPurchases.length > 0 && (
+                  <div className="p-4 border-t border-gray-200 dark:border-gray-700 text-center">
+                    <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400 text-sm">
+                      <FiRefreshCw className="w-4 h-4 animate-spin" />
+                      Loading more purchases...
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

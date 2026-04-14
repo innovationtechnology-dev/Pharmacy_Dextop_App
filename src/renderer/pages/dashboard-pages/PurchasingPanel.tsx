@@ -234,6 +234,12 @@ const PurchasingPanel: React.FC = () => {
   const [purchaseHistoryList, setPurchaseHistoryList] = useState<any[]>([]);
   const [selectedPurchaseId, setSelectedPurchaseId] = useState<number | null>(null);
   const [currentPurchaseIndex, setCurrentPurchaseIndex] = useState<number>(-1);
+  const [purchasePage, setPurchasePage] = useState(1);
+  const [purchasePageSize] = useState(30);
+  const [totalPurchases, setTotalPurchases] = useState(0);
+  const [hasMorePurchases, setHasMorePurchases] = useState(true);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [showPaymentSection, setShowPaymentSection] = useState(false);
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>(() => {
@@ -803,6 +809,8 @@ const PurchasingPanel: React.FC = () => {
     setSelectedPurchaseId(null);
     setCurrentPurchaseIndex(-1);
     setPurchaseOrderNumber('');
+    setPurchasePage(1);
+    setHasMorePurchases(true);
     
     const now = new Date();
     setCurrentDate(now.toLocaleDateString('en-US', {
@@ -829,9 +837,11 @@ const PurchasingPanel: React.FC = () => {
     }, 100);
   }, []);
 
-  const loadPastPurchases = useCallback(async () => {
+  const loadPastPurchases = useCallback(async (page: number = 1, append: boolean = false) => {
     setLoadingPurchases(true);
     try {
+      const offset = (page - 1) * purchasePageSize;
+      
       window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
         setLoadingPurchases(false);
         if (response.success) {
@@ -842,15 +852,68 @@ const PurchasingPanel: React.FC = () => {
             const dateB = new Date(b.createdAt || 0).getTime();
             return dateB - dateA;
           });
-          setPastPurchases(purchases);
-          setPurchaseHistoryList(purchases);
+          
+          if (append) {
+            setPastPurchases(prev => [...prev, ...purchases]);
+            setPurchaseHistoryList(prev => [...prev, ...purchases]);
+          } else {
+            setPastPurchases(purchases);
+            setPurchaseHistoryList(purchases);
+          }
+          
+          // Check if there are more records
+          setHasMorePurchases(purchases.length === purchasePageSize);
         }
       });
-      window.electron.ipcRenderer.sendMessage('purchase-get-all', []);
+      
+      // Get total count
+      window.electron.ipcRenderer.once('purchase-get-count-reply', (countResponse: any) => {
+        if (countResponse.success) {
+          setTotalPurchases(countResponse.data || 0);
+        }
+      });
+      
+      window.electron.ipcRenderer.sendMessage('purchase-get-all', [undefined, undefined, purchasePageSize, offset]);
+      window.electron.ipcRenderer.sendMessage('purchase-get-count', []);
     } catch (err) {
       setLoadingPurchases(false);
     }
-  }, []);
+  }, [purchasePageSize]);
+
+  const loadMorePurchases = useCallback(() => {
+    if (!hasMorePurchases || loadingPurchases) return;
+    const nextPage = purchasePage + 1;
+    setPurchasePage(nextPage);
+    loadPastPurchases(nextPage, true);
+  }, [purchasePage, hasMorePurchases, loadingPurchases, loadPastPurchases]);
+
+  // Intersection Observer for infinite scroll
+  useEffect(() => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMorePurchases && !loadingPurchases) {
+          loadMorePurchases();
+        }
+      },
+      { threshold: 0.1, rootMargin: '100px' }
+    );
+
+    observerRef.current = observer;
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => {
+      if (observerRef.current) {
+        observerRef.current.disconnect();
+      }
+    };
+  }, [hasMorePurchases, loadingPurchases, loadMorePurchases]);
 
   const formatCurrency = useCallback((value: number) => {
     const currency = pharmacySettings.currency || 'USD';
@@ -2561,6 +2624,15 @@ const PurchasingPanel: React.FC = () => {
                       </div>
                     );
                   })
+                )}
+                <div ref={loadMoreRef} className="h-1" />
+                {loadingPurchases && purchaseHistoryList.length > 0 && (
+                  <div className="p-3 border-t border-gray-100 dark:border-gray-700 text-center">
+                    <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400 text-xs">
+                      <FiRefreshCw className="w-4 h-4 animate-spin" />
+                      Loading more purchases...
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
