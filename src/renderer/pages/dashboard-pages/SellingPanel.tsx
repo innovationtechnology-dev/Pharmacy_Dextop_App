@@ -101,13 +101,49 @@ interface CartItem {
   discountAmount?: number;
   taxAmount?: number;
   finalPrice: number;
-  /** FEFO batches loaded at add-to-cart time, used to compute blended price across batches */
+  /** FEFO batches loaded at add-to-cart time, used to compute per-batch prices */
   fefoBatches?: FefoBatch[];
+  /**
+   * Per-batch price segments for this cart item.
+   * e.g. [{pills:5, price:10}, {pills:5, price:15}] means 5 pills at 10 and 5 at 15.
+   * When set, subtotal is computed from this breakdown (not unitPrice × pills).
+   */
+  batchBreakdown?: Array<{ pills: number; price: number }>;
 }
 
 /**
- * Walk the FEFO batches and compute a weighted average sell price for the given quantity.
- * e.g. 10 pills @ Rs.10 + 5 pills @ Rs.20 → blended = Rs.13.33/pill (total Rs.200).
+ * Split qty across FEFO batches and return per-segment {pills, price} pairs.
+ * Consecutive segments with the same price are merged.
+ */
+function computeBatchBreakdown(
+  batches: FefoBatch[],
+  qty: number
+): Array<{ pills: number; price: number }> {
+  if (!batches || batches.length === 0 || qty <= 0) return [];
+  let remaining = qty;
+  const raw: Array<{ pills: number; price: number }> = [];
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const consume = Math.min(batch.availablePills, remaining);
+    if (consume > 0) raw.push({ pills: consume, price: batch.sellPrice });
+    remaining -= consume;
+  }
+  if (remaining > 0 && batches.length > 0) {
+    raw.push({ pills: remaining, price: batches[batches.length - 1].sellPrice });
+  }
+  // Merge adjacent segments with identical price
+  return raw.reduce<Array<{ pills: number; price: number }>>((acc, seg) => {
+    if (acc.length > 0 && acc[acc.length - 1].price === seg.price) {
+      acc[acc.length - 1] = { pills: acc[acc.length - 1].pills + seg.pills, price: seg.price };
+    } else {
+      acc.push({ ...seg });
+    }
+    return acc;
+  }, []);
+}
+
+/**
+ * Blended (weighted average) price — kept for the unit-price input field display.
  */
 function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
   if (!batches || batches.length === 0 || qty <= 0) return 0;
@@ -119,10 +155,7 @@ function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
     totalCost += consume * batch.sellPrice;
     remaining -= consume;
   }
-  // If qty exceeds available stock, use the last batch's price for the overflow
-  if (remaining > 0) {
-    totalCost += remaining * batches[batches.length - 1].sellPrice;
-  }
+  if (remaining > 0) totalCost += remaining * batches[batches.length - 1].sellPrice;
   return totalCost / qty;
 }
 
@@ -154,10 +187,14 @@ const medicineCompanyLine = (m: {
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
-  const subtotal = item.unitPrice * item.pills;
+  // Use exact per-batch total when breakdown is available; fall back to blended unit price.
+  const subtotal =
+    item.batchBreakdown && item.batchBreakdown.length > 0
+      ? item.batchBreakdown.reduce((sum, seg) => sum + seg.pills * seg.price, 0)
+      : item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
   const discountedAmount = subtotal - discountAmount;
-  const taxAmount = (discountedAmount * taxPercent) / 100; // Tax calculated on discounted amount
+  const taxAmount = (discountedAmount * taxPercent) / 100;
   const finalPrice = discountedAmount + taxAmount;
 
   return {
@@ -395,16 +432,22 @@ const SellingPanel: React.FC = () => {
     setSearchTerm('');
     setShowSearchResults(false);
 
-    // Background: fetch FEFO batch prices and apply blended price based on actual quantity
+    // Background: fetch FEFO batch prices — compute per-batch breakdown + blended display price
     window.electron.ipcRenderer.invoke('medicine-get-fefo-sell-batches', medicine.id).then((resp: any) => {
       if (!resp?.success || !Array.isArray(resp.data) || resp.data.length === 0) return;
       const batches: FefoBatch[] = resp.data;
       setCart((prev) =>
         prev.map((item) => {
           if (item.medicine.id !== medicine.id) return item;
+          const breakdown = computeBatchBreakdown(batches, item.pills);
           const blended = computeBlendedPrice(batches, item.pills);
-          if (blended <= 0) return item;
-          return recalculateSaleItem({ ...item, unitPrice: blended, fefoBatches: batches });
+          if (blended <= 0 && breakdown.length === 0) return item;
+          return recalculateSaleItem({
+            ...item,
+            unitPrice: blended > 0 ? blended : item.unitPrice,
+            fefoBatches: batches,
+            batchBreakdown: breakdown,
+          });
         })
       );
     }).catch(() => {/* silently ignore — default price remains */});
@@ -1077,10 +1120,12 @@ const SellingPanel: React.FC = () => {
               return item;
             }
             const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, newQuantity) : 0;
+            const breakdown = item.fefoBatches ? computeBatchBreakdown(item.fefoBatches, newQuantity) : undefined;
             return recalculateSaleItem({
               ...item,
               pills: newQuantity,
               ...(blended > 0 ? { unitPrice: blended } : {}),
+              batchBreakdown: breakdown,
             });
           }
           return item;
@@ -1102,10 +1147,12 @@ const SellingPanel: React.FC = () => {
             warning(`Only ${available} pills available in stock!`);
           }
           const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, clampedQty) : 0;
+          const breakdown = item.fefoBatches ? computeBatchBreakdown(item.fefoBatches, clampedQty) : undefined;
           return recalculateSaleItem({
             ...item,
             pills: clampedQty,
             ...(blended > 0 ? { unitPrice: blended } : {}),
+            batchBreakdown: breakdown,
           });
         }
         return item;
@@ -1126,15 +1173,38 @@ const SellingPanel: React.FC = () => {
     setProcessing(true);
 
     try {
-      const sale = {
-        items: cart.map((item) => ({
+      // Flatten cart items: multi-batch items become separate sale_items with exact batch prices.
+      const saleItems = cart.flatMap((item) => {
+        const breakdown = item.batchBreakdown;
+        if (breakdown && breakdown.length > 1) {
+          return breakdown.map((seg) => {
+            const segSubtotal = seg.pills * seg.price;
+            const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
+            const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
+            return {
+              medicineId: item.medicine.id,
+              medicineName: item.medicine.name,
+              pills: seg.pills,
+              unitPrice: seg.price,
+              discountAmount: discountAmt,
+              taxAmount: taxAmt,
+            };
+          });
+        }
+        return [{
           medicineId: item.medicine.id,
           medicineName: item.medicine.name,
           pills: item.pills,
-          unitPrice: item.unitPrice,
+          unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
+            ? item.batchBreakdown[0].price
+            : item.unitPrice,
           discountAmount: item.discountAmount || 0,
           taxAmount: item.taxAmount || 0,
-        })),
+        }];
+      });
+
+      const sale = {
+        items: saleItems,
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
@@ -2679,15 +2749,29 @@ const SellingPanel: React.FC = () => {
                           </div>
                         )}
                         <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
-
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={item.unitPrice.toFixed(1)}
-                            readOnly
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
-                          />
+                          {item.batchBreakdown && item.batchBreakdown.length > 1 ? (
+                            /* Multi-batch: show each segment's price separately */
+                            <div className="flex flex-col gap-0.5">
+                              {item.batchBreakdown.map((seg, idx) => (
+                                <div key={idx} className="flex items-center justify-between gap-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
+                                  <span className="text-[9px] font-semibold text-amber-700 dark:text-amber-400 tabular-nums whitespace-nowrap">{seg.pills}×</span>
+                                  <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 tabular-nums">{seg.price.toFixed(1)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={(item.batchBreakdown && item.batchBreakdown.length === 1
+                                ? item.batchBreakdown[0].price
+                                : item.unitPrice
+                              ).toFixed(1)}
+                              readOnly
+                              className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
+                            />
+                          )}
                         </div>
                         <div className="col-span-1 text-center">
                           <input
@@ -2795,16 +2879,8 @@ const SellingPanel: React.FC = () => {
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
-                          {symbol}{(() => {
-                            // Backend already provides net pillars and total
-                            const netPills = item.pills;
-                            const itemSubtotal = item.unitPrice * netPills;
-                            const itemDiscount = (itemSubtotal * item.discount) / 100;
-                            const discountedAmount = itemSubtotal - itemDiscount;
-                            const itemTax = (discountedAmount * item.tax) / 100;
-                            return (discountedAmount + itemTax).toFixed(1);
-                          })()}
+                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0">
+                          {symbol}{item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="col-span-1 text-center">
                           <button

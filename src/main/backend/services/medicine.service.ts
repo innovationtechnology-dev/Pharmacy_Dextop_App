@@ -261,12 +261,31 @@ export class MedicineService {
           pi.total_pills,
           pi.available_pills,
           pi.price_per_pill,
-          CASE WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill ELSE pi.price_per_pill END,
+          CASE
+            WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
+            WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+            ELSE pi.price_per_pill
+          END,
           datetime('now','localtime')
         FROM purchase_items pi
       `);
       console.log('[stock_batches] Migration complete: populated from purchase_items.');
     }
+
+    // Patch any stock_batches rows with selling_price_per_pill = 0 (back-fill from purchase_items)
+    await this.dbService.execute(`
+      UPDATE stock_batches
+      SET selling_price_per_pill = (
+        SELECT CASE
+          WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+          ELSE stock_batches.cost_price_per_pill
+        END
+        FROM purchase_items pi
+        WHERE pi.id = stock_batches.purchase_item_id
+      )
+      WHERE selling_price_per_pill = 0
+        AND purchase_item_id IS NOT NULL
+    `);
   }
 
   /**
@@ -319,9 +338,15 @@ export class MedicineService {
         MIN(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} AND sb.qty_remaining > 0
                  THEN date(sb.expiry_date) ELSE NULL END) AS next_expiry_date,
         -- Selling price: FEFO batch (oldest unexpired with qty_remaining > 0).
+        -- Falls back to price_per_packet/pills_per_packet from purchase_items, then cost_price_per_pill.
         (
-          SELECT sb2.selling_price_per_pill
+          SELECT CASE
+            WHEN sb2.selling_price_per_pill > 0 THEN sb2.selling_price_per_pill
+            WHEN pi2.pills_per_packet > 0 THEN (pi2.price_per_packet * 1.0 / pi2.pills_per_packet)
+            ELSE sb2.cost_price_per_pill
+          END
           FROM stock_batches sb2
+          LEFT JOIN purchase_items pi2 ON pi2.id = sb2.purchase_item_id
           WHERE sb2.medicine_id = m.id
             AND date(sb2.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
             AND sb2.qty_remaining > 0
@@ -793,13 +818,18 @@ export class MedicineService {
   public async getFefoSellBatches(medicineId: number): Promise<Array<{ availablePills: number; sellPrice: number }>> {
     const sql = `
       SELECT
-        qty_remaining AS availablePills,
-        selling_price_per_pill AS sellPrice
-      FROM stock_batches
-      WHERE medicine_id = ?
-        AND date(expiry_date) >= date('now')
-        AND qty_remaining > 0
-      ORDER BY date(expiry_date) ASC, id ASC
+        sb.qty_remaining AS availablePills,
+        CASE
+          WHEN sb.selling_price_per_pill > 0 THEN sb.selling_price_per_pill
+          WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+          ELSE sb.cost_price_per_pill
+        END AS sellPrice
+      FROM stock_batches sb
+      LEFT JOIN purchase_items pi ON pi.id = sb.purchase_item_id
+      WHERE sb.medicine_id = ?
+        AND date(sb.expiry_date) >= date('now')
+        AND sb.qty_remaining > 0
+      ORDER BY date(sb.expiry_date) ASC, sb.id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
   }

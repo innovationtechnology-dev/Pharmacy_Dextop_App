@@ -237,7 +237,7 @@ const PurchasingPanel: React.FC = () => {
   const [purchasePage, setPurchasePage] = useState(1);
   const [purchasePageSize] = useState(30);
   const [totalPurchases, setTotalPurchases] = useState(0);
-  const [hasMorePurchases, setHasMorePurchases] = useState(true);
+  const [hasMorePurchases, setHasMorePurchases] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const [showPaymentSection, setShowPaymentSection] = useState(false);
@@ -2600,7 +2600,7 @@ const PurchasingPanel: React.FC = () => {
                     No recent purchases
                   </div>
                 ) : (
-                  purchaseHistoryList.map((purchase) => {
+                  Array.from(new Map(purchaseHistoryList.map(p => [p.id, p])).values()).map((purchase) => {
                     const isSelected = selectedPurchaseId === purchase.id;
                     const dateObj = new Date(purchase.createdAt);
                     return (

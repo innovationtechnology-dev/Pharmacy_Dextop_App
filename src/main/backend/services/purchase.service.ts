@@ -368,7 +368,14 @@ export class PurchaseService {
         ]);
         const purchaseItemId = (purchaseItemResult as any).lastID;
 
-        // Mirror into stock_batches (live inventory record)
+        // Mirror into stock_batches (live inventory record).
+        // Selling price falls back to price_per_packet/pills_per_packet if not explicitly set.
+        const effectiveSellingPrice = (item.sellingPricePerPill && item.sellingPricePerPill > 0)
+          ? item.sellingPricePerPill
+          : (item.packetQuantity > 0 && item.pillsPerPacket > 0)
+            ? (item.pricePerPacket / item.pillsPerPacket)
+            : item.pricePerPill;
+
         const insertStockBatchSql = `
           INSERT INTO stock_batches (
             medicine_id,
@@ -390,7 +397,7 @@ export class PurchaseService {
           item.totalPills,
           item.totalPills,
           item.pricePerPill,
-          item.sellingPricePerPill ?? 0,
+          effectiveSellingPrice,
         ]);
       }
 
@@ -1159,7 +1166,13 @@ export class PurchaseService {
         ]);
         const newPurchaseItemId = (newItemResult as any).lastID;
 
-        // Mirror into stock_batches
+        // Mirror into stock_batches; selling price falls back to gross price per pill if not set.
+        const effectiveSellPrice = (item.sellingPricePerPill && item.sellingPricePerPill > 0)
+          ? item.sellingPricePerPill
+          : (item.packetQuantity > 0 && item.pillsPerPacket > 0)
+            ? (item.pricePerPacket / item.pillsPerPacket)
+            : item.pricePerPill;
+
         await this.dbService.execute(`
           INSERT INTO stock_batches (
             medicine_id, purchase_item_id, batch_number, expiry_date,
@@ -1173,7 +1186,7 @@ export class PurchaseService {
           item.totalPills,
           item.totalPills,
           item.pricePerPill,
-          item.sellingPricePerPill ?? 0,
+          effectiveSellPrice,
         ]);
       }
 
