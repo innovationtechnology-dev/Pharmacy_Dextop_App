@@ -2750,14 +2750,12 @@ const SellingPanel: React.FC = () => {
                         )}
                         <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
                           {item.batchBreakdown && item.batchBreakdown.length > 1 ? (
-                            /* Multi-batch: show each segment's price separately */
-                            <div className="flex flex-col gap-0.5">
-                              {item.batchBreakdown.map((seg, idx) => (
-                                <div key={idx} className="flex items-center justify-between gap-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700">
-                                  <span className="text-[9px] font-semibold text-amber-700 dark:text-amber-400 tabular-nums whitespace-nowrap">{seg.pills}×</span>
-                                  <span className="text-[10px] font-bold text-amber-800 dark:text-amber-300 tabular-nums">{seg.price.toFixed(1)}</span>
-                                </div>
-                              ))}
+                            /* Multi-batch: compact one-line summary keeps row height stable */
+                            <div
+                              className="w-full px-1.5 py-1 text-[10px] font-semibold border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 rounded whitespace-nowrap overflow-hidden text-ellipsis tabular-nums"
+                              title={item.batchBreakdown.map((seg) => `${seg.pills}x ${seg.price.toFixed(1)}`).join(' + ')}
+                            >
+                              {item.batchBreakdown.map((seg) => `${seg.pills}x ${seg.price.toFixed(1)}`).join(' + ')}
                             </div>
                           ) : (
                             <input
@@ -2879,7 +2877,7 @@ const SellingPanel: React.FC = () => {
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0">
+                        <div className="col-span-1 flex items-center justify-end pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap">
                           {symbol}{item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="col-span-1 text-center">
