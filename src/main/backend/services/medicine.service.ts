@@ -641,6 +641,7 @@ export class MedicineService {
       LEFT JOIN purchase_items pi ON pi.medicine_id = m.id
       WHERE m.minimum_stock_level > 0
         AND m.status = 'active'
+        AND EXISTS (SELECT 1 FROM purchase_items WHERE medicine_id = m.id)
       GROUP BY m.id
       HAVING sellable_pills < m.minimum_stock_level
       ORDER BY (m.minimum_stock_level - sellable_pills) DESC

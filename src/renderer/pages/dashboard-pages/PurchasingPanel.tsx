@@ -311,7 +311,7 @@ const PurchasingPanel: React.FC = () => {
 
   const isSelectedUpdate = selectedPurchase?.updatedAt && selectedPurchase?.updatedAt !== selectedPurchase?.createdAt;
 
-  const { setHeader, refreshExpiringAlerts } = useDashboardHeader();
+  const { setHeader, refreshExpiringAlerts, refreshLowStockAlerts } = useDashboardHeader();
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const barcodeInputRef = useRef<HTMLInputElement>(null);
@@ -1025,6 +1025,8 @@ const PurchasingPanel: React.FC = () => {
             setSelectedPurchaseId(null);
             setCurrentPurchaseIndex(-1);
             loadPastPurchases();
+            refreshExpiringAlerts();
+            refreshLowStockAlerts();
             success('Purchase and related payments removed from the database.');
           } else {
             error('Error deleting purchase: ' + (response.error || 'Unknown error'));
