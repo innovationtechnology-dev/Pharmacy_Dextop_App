@@ -310,13 +310,26 @@ export class SalesService {
       CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)
     `);
 
-    // One-time migration to update sale_items cost_price from corrected purchase_items
+    // One-time migration: update sale_items cost_price from stock_batches
     await this.dbService.execute(`
-      UPDATE sale_items 
-      SET 
-        cost_price = (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id),
-        cost_subtotal = pills * (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)
-      WHERE cost_price = 0 OR ABS(cost_price - (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)) > 0.001
+      UPDATE sale_items
+      SET
+        cost_price = (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        ),
+        cost_subtotal = pills * (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        )
+      WHERE cost_price = 0
+        OR ABS(cost_price - (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        )) > 0.001
     `);
   }
 
@@ -372,11 +385,11 @@ export class SalesService {
 
   private async getSellableInventory(medicineId: number): Promise<{ id: number; available_pills: number; }[]> {
     const sql = `
-      SELECT id, available_pills
-      FROM purchase_items
+      SELECT id, qty_remaining AS available_pills
+      FROM stock_batches
       WHERE medicine_id = ?
         AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
-        AND available_pills > 0
+        AND qty_remaining > 0
       ORDER BY date(expiry_date) ASC, id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
@@ -390,7 +403,11 @@ export class SalesService {
     }
   }
 
-  private async deductInventory(medicineId: number, pillsToDeduct: number): Promise<void> {
+  /**
+   * Deduct pills from stock_batches (FEFO order) and record the allocation
+   * in sale_item_batches for exact audit trail and future restoration.
+   */
+  private async deductInventory(medicineId: number, pillsToDeduct: number, saleItemId: number): Promise<void> {
     let remaining = pillsToDeduct;
     const batches = await this.getSellableInventory(medicineId);
 
@@ -398,8 +415,12 @@ export class SalesService {
       if (remaining <= 0) break;
       const consume = Math.min(batch.available_pills, remaining);
       await this.dbService.execute(
-        'UPDATE purchase_items SET available_pills = available_pills - ? WHERE id = ?',
+        'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
         [consume, batch.id]
+      );
+      await this.dbService.execute(
+        'INSERT INTO sale_item_batches (sale_item_id, stock_batch_id, qty_deducted) VALUES (?, ?, ?)',
+        [saleItemId, batch.id, consume]
       );
       remaining -= consume;
     }
@@ -456,18 +477,18 @@ export class SalesService {
       ]);
       const saleId = (saleResult as any).lastID;
 
-      // Batch fetch all cost prices at once to avoid N+1 query problem
+      // Batch fetch all cost prices at once from stock_batches (live inventory)
       const medicineIds = computedItems.map(item => item.medicineId);
       const uniqueMedicineIds = [...new Set(medicineIds)];
       const placeholders = uniqueMedicineIds.map(() => '?').join(',');
-      
+
       const costResults = await this.dbService.query(`
-        SELECT 
+        SELECT
           medicine_id,
-          AVG(price_per_pill) as avg_cost 
-        FROM purchase_items 
+          AVG(cost_price_per_pill) as avg_cost
+        FROM stock_batches
         WHERE medicine_id IN (${placeholders})
-          AND available_pills > 0
+          AND qty_remaining > 0
           AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
         GROUP BY medicine_id
       `, uniqueMedicineIds);
@@ -485,7 +506,7 @@ export class SalesService {
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const saleItemResult = await this.dbService.execute(insertItemSql, [
           saleId,
           item.medicineId,
           item.medicineName,
@@ -498,8 +519,9 @@ export class SalesService {
           item.taxAmount ?? 0,
           item.total,
         ]);
+        const saleItemId = (saleItemResult as any).lastID;
 
-        await this.deductInventory(item.medicineId, item.pills);
+        await this.deductInventory(item.medicineId, item.pills, saleItemId);
       }
 
       await this.dbService.execute('COMMIT');
@@ -583,28 +605,24 @@ export class SalesService {
   }
 
   /**
-   * Delete a sale and its items, restoring inventory.
+   * Delete a sale and its items, restoring inventory via exact sale_item_batches lookup.
    */
   public async deleteSale(saleId: number): Promise<void> {
-    // Check if sale exists
     const sale = await this.dbService.queryOne('SELECT id FROM sales WHERE id = ?', [saleId]);
     if (!sale) {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
-    // Get sale items to restore inventory
-    const saleItems = await this.dbService.query('SELECT medicine_id, pills FROM sale_items WHERE sale_id = ?', [saleId]);
+    const saleItems = await this.dbService.query('SELECT id, medicine_id, pills FROM sale_items WHERE sale_id = ?', [saleId]);
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Restore inventory for each item
       for (const item of saleItems) {
-        await this.restoreInventory(item.medicine_id, item.pills);
+        await this.restoreInventory(item.id, item.medicine_id, item.pills);
       }
 
-      // Delete sale items first
+      // sale_items DELETE cascades sale_item_batches via FK ON DELETE CASCADE
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
-      // Delete the sale
       await this.dbService.execute('DELETE FROM sales WHERE id = ?', [saleId]);
       await this.dbService.execute('COMMIT');
     } catch (error) {
@@ -647,44 +665,49 @@ export class SalesService {
   }
 
   /**
-   * Restore inventory by adding pills back to purchase_items
-   * Uses FIFO (First In First Out) - adds to the oldest batch first
+   * Restore inventory by reversing the exact batch allocations recorded in sale_item_batches.
+   * Falls back to FEFO on stock_batches if no audit record exists (pre-migration data).
    */
-  private async restoreInventory(medicineId: number, pillsToRestore: number): Promise<void> {
-    // Get purchase items for this medicine, ordered by expiry date (oldest first)
-    const sql = `
-      SELECT id, total_pills, available_pills
-      FROM purchase_items
-      WHERE medicine_id = ?
-        AND expiry_date >= date('now', '+30 days')
-      ORDER BY expiry_date ASC, id ASC
-    `;
-    const batches = await this.dbService.query(sql, [medicineId]);
+  private async restoreInventory(saleItemId: number, medicineId: number, pillsToRestore: number): Promise<void> {
+    // Prefer exact restoration using the audit trail
+    const batchRows = await this.dbService.query(
+      'SELECT stock_batch_id, qty_deducted FROM sale_item_batches WHERE sale_item_id = ?',
+      [saleItemId]
+    );
 
-    if (batches.length === 0) {
-      console.warn(`No valid purchase batches found for medicine ${medicineId} to restore inventory`);
+    if (batchRows.length > 0) {
+      for (const row of batchRows) {
+        await this.dbService.execute(
+          'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
+          [row.qty_deducted, row.stock_batch_id]
+        );
+      }
       return;
     }
 
-    let remaining = pillsToRestore;
+    // Fallback: no audit record (pre-migration sale) — restore to FEFO batches in stock_batches
+    console.warn(`[restoreInventory] No sale_item_batches found for sale_item ${saleItemId}. Using FEFO fallback for medicine ${medicineId}.`);
+    const batches = await this.dbService.query(
+      `SELECT id, qty_received, qty_remaining FROM stock_batches
+       WHERE medicine_id = ? ORDER BY date(expiry_date) ASC, id ASC`,
+      [medicineId]
+    );
 
-    // Restore pills to batches, starting with the oldest
+    let remaining = pillsToRestore;
     for (const batch of batches) {
       if (remaining <= 0) break;
-      
-      const maxCanRestore = batch.total_pills - batch.available_pills;
-      if (maxCanRestore <= 0) continue; // This batch is already full
-
+      const maxCanRestore = batch.qty_received - batch.qty_remaining;
+      if (maxCanRestore <= 0) continue;
       const restore = Math.min(maxCanRestore, remaining);
       await this.dbService.execute(
-        'UPDATE purchase_items SET available_pills = available_pills + ? WHERE id = ?',
+        'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
         [restore, batch.id]
       );
       remaining -= restore;
     }
 
     if (remaining > 0) {
-      console.warn(`Could not restore ${remaining} pills for medicine ${medicineId} - original batches may have been deleted`);
+      console.warn(`[restoreInventory] Could not restore ${remaining} pills for medicine ${medicineId} — batches may have been deleted.`);
     }
   }
 
@@ -968,12 +991,20 @@ export class SalesService {
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
     
-    // Get total COGS (Cost of Goods Sold)
+    // Get total COGS (Cost of Goods Sold) using sale_item_batches for exact cost
     const cogsSql = `
       SELECT COALESCE(SUM(
-        CASE 
-          WHEN si.cost_subtotal > 0 THEN si.cost_subtotal 
-          ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0)
+        CASE
+          WHEN si.cost_subtotal > 0 THEN si.cost_subtotal
+          ELSE si.pills * COALESCE(
+            (SELECT sb.cost_price_per_pill
+             FROM stock_batches sb
+             WHERE sb.medicine_id = si.medicine_id
+               AND sb.qty_remaining > 0
+             ORDER BY date(sb.expiry_date) ASC, sb.id ASC
+             LIMIT 1),
+            0
+          )
         END
       ), 0) as total_cogs
       FROM sale_items si
@@ -1022,7 +1053,7 @@ export class SalesService {
       SELECT 
         date(s.created_at) as date, 
         SUM(si.total) as amount,
-        SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0) END) as cost
+        SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT sb.cost_price_per_pill FROM stock_batches sb WHERE sb.medicine_id = si.medicine_id AND sb.qty_remaining > 0 ORDER BY date(sb.expiry_date) ASC, sb.id ASC LIMIT 1), 0) END) as cost
       FROM sales s
       JOIN sale_items si ON s.id = si.sale_id
       WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)

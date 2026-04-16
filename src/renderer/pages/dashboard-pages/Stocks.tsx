@@ -2,11 +2,11 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDebouncedSearch } from '../../hooks/useDebounce';
-import { 
-  FiPackage, 
-  FiSearch, 
-  FiAlertCircle, 
-  FiRefreshCw, 
+import {
+  FiPackage,
+  FiSearch,
+  FiAlertCircle,
+  FiRefreshCw,
   FiFilter,
   FiEye,
   FiBox,
@@ -50,11 +50,12 @@ const Stocks: React.FC = () => {
   const loadStocks = useCallback(() => {
     if (!window?.electron) return;
     setIsLoading(true);
-    
+
     window.electron.ipcRenderer.once('medicine-get-all-reply', (response: any) => {
       setIsLoading(false);
       if (response.success) {
-        setMedicines(response.data);
+        // Inventory page should only show medicines that currently have stock.
+        setMedicines((response.data || []).filter((m: MedicineStock) => (m.totalAvailablePills || 0) > 0));
       }
     });
     window.electron.ipcRenderer.sendMessage('medicine-get-all', []);
@@ -67,14 +68,16 @@ const Stocks: React.FC = () => {
   const filteredStocks = useMemo(() => {
     const normalizedTerm = searchTerm.trim().toLowerCase();
     const searchWords = normalizedTerm.split(/\s+/).filter(word => word.length > 0);
-    
+
     return medicines.filter(med => {
+      if ((med.totalAvailablePills || 0) <= 0) return false;
+
       const matchesSearch = normalizedTerm.length === 0 || searchWords.every(word =>
         med.name.toLowerCase().includes(word) ||
         (med.brandName && med.brandName.toLowerCase().includes(word)) ||
         (med.manufacturer && med.manufacturer.toLowerCase().includes(word))
       );
-      
+
       const isLow = med.totalAvailablePills <= med.minimumStockLevel && med.totalAvailablePills > 0;
       const isOut = med.totalAvailablePills === 0;
 
@@ -89,16 +92,16 @@ const Stocks: React.FC = () => {
     const lowStock = medicines.filter(m => m.totalAvailablePills <= m.minimumStockLevel && m.totalAvailablePills > 0).length;
     const outOfStock = medicines.filter(m => m.totalAvailablePills === 0).length;
     const totalPills = medicines.reduce((sum, m) => sum + m.totalAvailablePills, 0);
-    
+
     return { totalItems, lowStock, outOfStock, totalPills };
   }, [medicines]);
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gray-50 dark:bg-gray-950 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
-      
+
       {/* Stats — neutral chips; status shown with small accent dots only */}
       <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-2">
-        
+
         <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/80 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600">
             <FiBox className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
             <span className="text-[11px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
@@ -167,7 +170,7 @@ const Stocks: React.FC = () => {
                 />
               </div>
             </div>
-            
+
             <div className="w-full sm:w-auto">
               <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
                 Stock Status
@@ -189,7 +192,7 @@ const Stocks: React.FC = () => {
       {/* Table Section — bordered grid (readability) */}
       <div className="flex-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
         <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm flex-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
-          
+
           {/* Grid Header Row */}
           <div className="grid grid-cols-12 gap-0 min-w-[880px] w-full items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide sticky top-0 z-10 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:py-2.5">
             <div className="col-span-1">ID</div>
@@ -209,11 +212,11 @@ const Stocks: React.FC = () => {
               </div>
             ) : filteredStocks.length === 0 ? (
               <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 text-sm">
-                No matching medicines found.
+                No medicines in stock.
               </div>
             ) : (
-              (selectedMedicineForDetails 
-                ? filteredStocks.filter(med => med.id === selectedMedicineForDetails.id) 
+              (selectedMedicineForDetails
+                ? filteredStocks.filter(med => med.id === selectedMedicineForDetails.id)
                 : filteredStocks
               ).map((med, rowIndex) => {
                 const isOutOfStock = med.totalAvailablePills === 0;
@@ -232,7 +235,7 @@ const Stocks: React.FC = () => {
                       } transition-colors`}
                     >
                       <div className="col-span-1 text-gray-400 dark:text-gray-600 font-bold tabular-nums">#{med.id}</div>
-                    
+
                     <div className="col-span-4 min-w-0 py-1">
                       <div className="font-bold text-gray-900 dark:text-white uppercase truncate">{med.name}</div>
                       <div className="text-[9px] text-gray-400 dark:text-gray-500 font-medium">
@@ -242,7 +245,7 @@ const Stocks: React.FC = () => {
 
                     <div className="col-span-2 flex flex-col items-center justify-center gap-0.5 px-1 sm:px-2 py-1">
                       <div className="w-full h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                        <div 
+                        <div
                           className={`h-full ${isOutOfStock ? 'bg-red-700/85' : isLowStock ? 'bg-amber-600/85' : 'bg-gray-600 dark:bg-gray-400'}`}
                           style={{ width: `${safetyMargin}%` }}
                         />
@@ -272,7 +275,7 @@ const Stocks: React.FC = () => {
                        </button>
                     </div>
                   </div>
-                  
+
                   {/* Expanded Row for Inline Details */}
                   {selectedMedicineForDetails?.id === med.id && (
                     <div className="min-w-[880px] border-b border-x-0 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/50 animate-in slide-in-from-top-1 fade-in duration-200">
@@ -289,7 +292,7 @@ const Stocks: React.FC = () => {
             })
             )}
           </div>
-          
+
           {/* Table Footer Stats */}
           {!isLoading && filteredStocks.length > 0 && (
             <div className="px-4 py-2.5 bg-gray-50/90 dark:bg-gray-700/40 border-t-2 border-gray-200 dark:border-gray-600 flex justify-between items-center text-[10px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">

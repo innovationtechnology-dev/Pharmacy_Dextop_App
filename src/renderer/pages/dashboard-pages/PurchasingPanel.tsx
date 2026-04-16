@@ -2571,7 +2571,7 @@ const PurchasingPanel: React.FC = () => {
                     title={
                       isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)
                         ? 'Cashiers can only change purchases within 24 hours. Ask an administrator.'
-                        : 'Removes this PO, lines, payments, and GRN data from the database (if nothing was sold from this order).'
+                        : 'Removes this PO, its lines, and payments from the database (any sales linked to this order will also be removed).'
                     }
                     className="w-full py-2 rounded-lg text-xs font-semibold border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
