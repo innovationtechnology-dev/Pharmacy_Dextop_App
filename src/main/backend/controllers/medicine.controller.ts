@@ -41,7 +41,11 @@ export class MedicineController {
     // Get all medicines with pagination
     ipcMain.on('medicine-get-all', async (event: IpcMainEvent, args: any[]) => {
       try {
-        const limit = (args?.[0] as number) || 30;
+        const limitArg = args?.[0];
+        const limit =
+          typeof limitArg === 'number' && Number.isFinite(limitArg) && limitArg > 0
+            ? limitArg
+            : undefined;
         const offset = (args?.[1] as number) || 0;
         const medicines = await this.medicineService.getAllMedicines(limit, offset);
         event.reply('medicine-get-all-reply', { success: true, data: medicines });

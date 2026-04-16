@@ -262,17 +262,29 @@ export class MedicineService {
 
   /**
    * Get all medicines with aggregated inventory information.
-   * @param limit - Maximum number of records to return (default: 30)
+   * @param limit - Optional maximum number of records to return.
    * @param offset - Number of records to skip (default: 0)
    */
-  public async getAllMedicines(limit: number = 30, offset: number = 0): Promise<MedicineWithInventory[]> {
-    const sql = `
+  public async getAllMedicines(
+    limit?: number,
+    offset: number = 0
+  ): Promise<MedicineWithInventory[]> {
+    const hasPagination = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
+    const sql = hasPagination
+      ? `
       ${this.baseInventorySelect}
       GROUP BY m.id
       ORDER BY m.name ASC
       LIMIT ? OFFSET ?
+    `
+      : `
+      ${this.baseInventorySelect}
+      GROUP BY m.id
+      ORDER BY m.name ASC
     `;
-    const rows = await this.dbService.query(sql, [limit, offset]);
+    const rows = hasPagination
+      ? await this.dbService.query(sql, [limit, offset])
+      : await this.dbService.query(sql);
     return rows.map((row) => this.mapRowToMedicine(row));
   }
 
