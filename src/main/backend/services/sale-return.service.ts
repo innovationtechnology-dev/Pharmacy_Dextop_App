@@ -579,29 +579,34 @@ export class SaleReturnService {
    * Note: This is a destructive operation. Consider adding a flag instead of deleting.
    */
   public async deleteSaleReturn(saleReturnId: number): Promise<void> {
-    // Check if sale return exists
     const saleReturn = await this.dbService.queryOne('SELECT id FROM sale_returns WHERE id = ?', [saleReturnId]);
     if (!saleReturn) {
       throw new Error(`Sale return with id ${saleReturnId} not found`);
     }
 
-    // Get items before deletion to potentially reverse inventory changes
-    const items = await this.dbService.query(
-      'SELECT medicine_id, pills FROM sale_return_items WHERE sale_return_id = ?',
+    // Reverse the inventory restoration that happened when the return was created,
+    // using the exact audit trail in return_item_batches so stock_batches stays
+    // consistent with what the original sale deducted.
+    const batchRestorations = await this.dbService.query(
+      `SELECT rib.stock_batch_id, rib.qty_restored
+       FROM return_item_batches rib
+       JOIN sale_return_items sri ON sri.id = rib.sale_return_item_id
+       WHERE sri.sale_return_id = ?`,
       [saleReturnId]
     );
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Delete sale return items first
-      await this.dbService.execute('DELETE FROM sale_return_items WHERE sale_return_id = ?', [saleReturnId]);
-      // Delete the sale return
-      await this.dbService.execute('DELETE FROM sale_returns WHERE id = ?', [saleReturnId]);
+      for (const row of batchRestorations) {
+        await this.dbService.execute(
+          'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+          [row.qty_restored, row.stock_batch_id]
+        );
+      }
 
-      // Note: We don't reverse inventory here because:
-      // 1. The original sale may have been deleted
-      // 2. The batches may have changed
-      // 3. It's safer to require manual inventory adjustment if needed
+      // sale_return_items DELETE cascades return_item_batches via FK ON DELETE CASCADE
+      await this.dbService.execute('DELETE FROM sale_return_items WHERE sale_return_id = ?', [saleReturnId]);
+      await this.dbService.execute('DELETE FROM sale_returns WHERE id = ?', [saleReturnId]);
 
       await this.dbService.execute('COMMIT');
     } catch (error) {

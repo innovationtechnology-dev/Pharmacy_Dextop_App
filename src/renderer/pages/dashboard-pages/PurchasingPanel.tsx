@@ -105,7 +105,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
 
   const totalPills = packetQuantity * pillsPerPacket;
   const pricePerPill = totalPills > 0 ? totalAmount / totalPills : 0;
-  
+
   // Line subtotal is the total amount entered
   const lineSubtotal = totalAmount;
   const discountAmount = (lineSubtotal * discountPercent) / 100;
@@ -257,7 +257,7 @@ const PurchasingPanel: React.FC = () => {
       minute: '2-digit',
     });
   });
-  
+
   const isCashier = getAuthUser()?.role === 'cashier';
 
   // Update time every minute
@@ -276,7 +276,7 @@ const PurchasingPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [selectedPurchaseId]);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
-  
+
   const selectedPurchase = useMemo(() => {
     if (selectedPurchaseId === null) return null;
     return purchaseHistoryList.find(p => p.id === selectedPurchaseId);
@@ -294,7 +294,7 @@ const PurchasingPanel: React.FC = () => {
       if (response.success && response.nextBatchNumber) {
         return response.nextBatchNumber;
       }
-      
+
       // Fallback: generate batch number based on medicine name and current date
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
@@ -331,11 +331,11 @@ const PurchasingPanel: React.FC = () => {
     const min = new Date();
     min.setHours(0, 0, 0, 0);
     min.setDate(min.getDate() + MIN_EXPIRY_DAYS);
-    
+
     // Normalize expDate to start of day as well to be safe
     const normalizedExpDate = new Date(expDate);
     normalizedExpDate.setHours(0, 0, 0, 0);
-    
+
     return normalizedExpDate >= min;
   }, []);
 
@@ -466,10 +466,10 @@ const PurchasingPanel: React.FC = () => {
 
   const addToCart = useCallback(async (medicine: Medicine) => {
     const mergedMedicine = mergeMedicineWithCatalog(medicine);
-    
+
     // Generate auto batch number
     const autoBatchNumber = await generateAutoBatchNumber(medicine.id, medicine.name);
-    
+
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
 
@@ -555,16 +555,16 @@ const PurchasingPanel: React.FC = () => {
 
   // Debounce search to prevent firing on every keystroke
   const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
-  
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
-    
+
     // Clear previous timeout
     if (debouncedSearch.current) {
       clearTimeout(debouncedSearch.current);
     }
-    
+
     // Set new timeout - only search after 300ms of no typing
     debouncedSearch.current = setTimeout(() => {
       handleSearch(value);
@@ -811,7 +811,7 @@ const PurchasingPanel: React.FC = () => {
     setPurchaseOrderNumber('');
     setPurchasePage(1);
     setHasMorePurchases(true);
-    
+
     const now = new Date();
     setCurrentDate(now.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -841,7 +841,7 @@ const PurchasingPanel: React.FC = () => {
     setLoadingPurchases(true);
     try {
       const offset = (page - 1) * purchasePageSize;
-      
+
       window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
         setLoadingPurchases(false);
         if (response.success) {
@@ -852,7 +852,7 @@ const PurchasingPanel: React.FC = () => {
             const dateB = new Date(b.createdAt || 0).getTime();
             return dateB - dateA;
           });
-          
+
           if (append) {
             setPastPurchases(prev => [...prev, ...purchases]);
             setPurchaseHistoryList(prev => [...prev, ...purchases]);
@@ -860,19 +860,19 @@ const PurchasingPanel: React.FC = () => {
             setPastPurchases(purchases);
             setPurchaseHistoryList(purchases);
           }
-          
+
           // Check if there are more records
           setHasMorePurchases(purchases.length === purchasePageSize);
         }
       });
-      
+
       // Get total count
       window.electron.ipcRenderer.once('purchase-get-count-reply', (countResponse: any) => {
         if (countResponse.success) {
           setTotalPurchases(countResponse.data || 0);
         }
       });
-      
+
       window.electron.ipcRenderer.sendMessage('purchase-get-all', [undefined, undefined, purchasePageSize, offset]);
       window.electron.ipcRenderer.sendMessage('purchase-get-count', []);
     } catch (err) {
@@ -1044,7 +1044,7 @@ const PurchasingPanel: React.FC = () => {
   const afterLastLineRemovedWhileEditing = useCallback(
     (purchaseId: number) => {
       const del = window.confirm(
-        `Lines were removed from the screen only. PO-${purchaseId} is still in the database, so History still shows the old total until you change it.\n\nDelete PO-${purchaseId} from the database now?\n\nOK = remove this order and its payments\nCancel = reload the saved lines from the database`
+        `If you press OK:\n- This purchase will be deleted permanently.\n- Payment records for this purchase will be deleted.\n- If sold items came from this purchase stock, related sale records will also be deleted.\n\nPress OK to delete.\nPress Cancel to restore saved items.`
       );
       if (del) {
         void handleDeletePurchase(purchaseId, true);
@@ -1080,10 +1080,10 @@ const PurchasingPanel: React.FC = () => {
     setSelectedPurchaseId(purchase.id);
     setCurrentPurchaseIndex(index);
     setPurchaseOrderNumber(`PO-${purchase.id}`);
-    
+
     // Use updatedAt if available, otherwise createdAt
     const dateToUse = purchase.updatedAt || purchase.createdAt;
-    
+
     if (dateToUse) {
       const dbDate = new Date(dateToUse);
       const formattedDate = dbDate.toLocaleDateString('en-US', {
@@ -1098,12 +1098,12 @@ const PurchasingPanel: React.FC = () => {
       setCurrentDate(formattedDate);
       setCurrentTime(formattedTime);
     }
-    
+
     // Simulate loading complete (in real app, this would be when data is fully loaded)
     setTimeout(() => {
       setLoadingPurchaseDetails(false);
     }, 500);
-    
+
     // Reload suppliers to ensure they're up to date
     loadSuppliers();
     loadPurchaseForEdit(purchase.id);
@@ -1137,7 +1137,7 @@ const PurchasingPanel: React.FC = () => {
   }, [setHeader]);
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
-  
+
   // Memoize calculations to prevent recalculation on every render
   const subtotal = useMemo(() => calculateSubtotal(), [cart]);
   const discountTotal = useMemo(() => calculateDiscountTotal(), [cart]);
@@ -1347,7 +1347,7 @@ const PurchasingPanel: React.FC = () => {
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
-      
+
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-slideInRight">
@@ -1526,10 +1526,10 @@ const PurchasingPanel: React.FC = () => {
               data-wedge-typing="true"
               className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0"
             >
-              
+
               {/* TOP GRID ROW */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                
+
                 {/* Order Number + Navigation */}
                 <div className="flex items-center gap-2 min-w-0">
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
@@ -2135,12 +2135,12 @@ const PurchasingPanel: React.FC = () => {
                                   // Get cost per unit for validation
                                   const pricing = getPricingInsights(item);
                                   const adjustedPrice = Math.max(numVal, pricing.buyPerPill);
-                                  
+
                                   // Show notification if price was auto-adjusted
                                   if (numVal < pricing.buyPerPill && pricing.buyPerPill > 0) {
                                     warning(`Sell price auto-adjusted from ${formatCurrency(numVal)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
                                   }
-                                  
+
                                   updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
                                 } else if (v === '') {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
@@ -2160,12 +2160,12 @@ const PurchasingPanel: React.FC = () => {
                                   // Get cost per unit for validation
                                   const pricing = getPricingInsights(item);
                                   const adjustedPrice = Math.max(val, pricing.buyPerPill);
-                                  
+
                                   // Show notification if price was auto-adjusted
                                   if (val < pricing.buyPerPill && pricing.buyPerPill > 0) {
                                     warning(`Sell price auto-adjusted from ${formatCurrency(val)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
                                   }
-                                  
+
                                   updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
                                 } else {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
@@ -2433,8 +2433,8 @@ const PurchasingPanel: React.FC = () => {
                       {symbol}{paymentAmount.toFixed(2)}
                     </span>
                   )}
-                  <FiChevronDown 
-                    className={`w-4 h-4 text-emerald-600/80 transition-transform duration-300 ${showPaymentSection ? 'rotate-180' : ''}`} 
+                  <FiChevronDown
+                    className={`w-4 h-4 text-emerald-600/80 transition-transform duration-300 ${showPaymentSection ? 'rotate-180' : ''}`}
                   />
                 </div>
               </button>

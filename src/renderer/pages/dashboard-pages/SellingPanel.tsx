@@ -990,17 +990,17 @@ const SellingPanel: React.FC = () => {
 
   // Debounce search to prevent firing on every keystroke
   const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
-  
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { value } = e.target;
     setSearchTerm(value);
     setHighlightedIndex(-1); // Reset highlight when search changes
-    
+
     // Clear previous timeout
     if (debouncedSearch.current) {
       clearTimeout(debouncedSearch.current);
     }
-    
+
     // Set new timeout - only search after 300ms of no typing
     debouncedSearch.current = setTimeout(() => {
       handleSearch(value);
@@ -1099,11 +1099,89 @@ const SellingPanel: React.FC = () => {
     [addToCart]
   );
 
-  const removeFromCart = (medicineId: number) => {
+  const removeFromCart = async (medicineId: number) => {
     clearQtyDraft(medicineId);
-    setCart((prevCart) =>
-      prevCart.filter((item) => item.medicine.id !== medicineId)
-    );
+
+    const nextCart = cart.filter((item) => item.medicine.id !== medicineId);
+
+    // New bill: local cart removal only.
+    if (currentBillIndex < 0 || !selectedSaleId) {
+      setCart(nextCart);
+      return;
+    }
+
+    // Editing a history sale: persist immediately.
+    if (isCashier && !isWithin24Hours(selectedSale?.createdAt)) {
+      return;
+    }
+
+    // If no items remain, delete the sale record itself.
+    if (nextCart.length === 0) {
+      if (selectedSale) {
+        await handleDeleteSale(selectedSale.saleId, selectedSale.createdAt);
+      }
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const saleItems = nextCart.flatMap((item) => {
+        const breakdown = item.batchBreakdown;
+        if (breakdown && breakdown.length > 1) {
+          return breakdown.map((seg) => {
+            const segSubtotal = seg.pills * seg.price;
+            const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
+            const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
+            return {
+              medicineId: item.medicine.id,
+              medicineName: item.medicine.name,
+              pills: seg.pills,
+              unitPrice: seg.price,
+              discountAmount: discountAmt,
+              taxAmount: taxAmt,
+            };
+          });
+        }
+        return [{
+          medicineId: item.medicine.id,
+          medicineName: item.medicine.name,
+          pills: item.pills,
+          unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
+            ? item.batchBreakdown[0].price
+            : item.unitPrice,
+          discountAmount: item.discountAmount || 0,
+          taxAmount: item.taxAmount || 0,
+        }];
+      });
+
+      const sale = {
+        items: saleItems,
+        customerName: customerName || undefined,
+        customerPhone: customerPhone || undefined,
+        saleType: saleType || 'Regular',
+        additionalDiscount:
+          (saleType === 'Family/Relatives' || saleType === 'Charity')
+            ? additionalDiscount
+            : 0,
+        prescriptionNumber: prescriptionNumber.trim() || undefined,
+        doctorName: doctorName.trim() || undefined,
+      };
+
+      const result = await updateSale(selectedSaleId, sale);
+      if (result.success) {
+        setCart(nextCart);
+        loadMedicines();
+        loadSalesHistory();
+        refreshExpiringAlerts();
+      } else {
+        alert(`Error updating sale: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating sale after removing item:', error);
+      alert('Error updating sale. Please try again.');
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
@@ -1285,21 +1363,21 @@ const SellingPanel: React.FC = () => {
     }
     // Always read latest from Settings so receipt reflects current pharmacy details
     const pharmacyInfo = getStoredPharmacySettings();
-    
+
     // Calculate values locally to avoid dependency issues
     const localSubtotal = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       return sum + (item.unitPrice * netPills);
     }, 0);
-    
+
     const localDiscount = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       return sum + ((itemSubtotal * item.discount) / 100);
     }, 0);
-    
+
     const localTax = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
@@ -1308,7 +1386,7 @@ const SellingPanel: React.FC = () => {
       const discountedAmount = itemSubtotal - itemDiscount;
       return sum + ((discountedAmount * item.tax) / 100);
     }, 0);
-    
+
     const amountGivenForReceipt =
       currentBillIndex === -1 && receivedAmount && !Number.isNaN(Number(receivedAmount))
         ? Number(receivedAmount)
@@ -1455,7 +1533,7 @@ const SellingPanel: React.FC = () => {
         setCustomerPhone(sale.customerPhone || '0000');
         setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
-        
+
         // Set additional discount from the first item (all items in a sale have the same additional discount)
         const firstItem = sale.items[0];
         if (firstItem && (firstItem.additionalDiscount !== undefined && firstItem.additionalDiscount !== null)) {
@@ -1769,15 +1847,17 @@ const SellingPanel: React.FC = () => {
     }
   };
 
+  const canCurrentUserDeleteSale = useCallback((saleDate: string): boolean => {
+    if (!isCashier) {
+      return isToday(saleDate);
+    }
+    return isWithin24Hours(saleDate);
+  }, [isCashier, isWithin24Hours]);
+
   // Handle delete sale
   const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
-    if (isCashier) {
-      alert('Cashiers are not allowed to delete sales');
-      return;
-    }
-
-    if (!isToday(saleDate)) {
-      alert('You can only delete sales created today');
+    if (!canCurrentUserDeleteSale(saleDate)) {
+      alert(isCashier ? 'Cashiers can only delete sales created within 24 hours' : 'You can only delete sales created today');
       return;
     }
 
@@ -1807,7 +1887,7 @@ const SellingPanel: React.FC = () => {
       console.error('Error deleting sale:', error);
       alert('Error deleting sale. Please try again.');
     }
-  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
+  }, [canCurrentUserDeleteSale, isCashier, selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -2570,11 +2650,7 @@ const SellingPanel: React.FC = () => {
                   <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
                     Current Bill Items
                   </h3>
-                  {currentBillIndex >= 0 && (
-                    <div className="text-[10px] px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded border border-yellow-300 dark:border-yellow-700">
-                      Viewing old sale - Use trash icon to remove items
-                    </div>
-                  )}
+
                 </div>
               </div>
               <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 overscroll-contain">
@@ -2597,11 +2673,11 @@ const SellingPanel: React.FC = () => {
                       const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
                       return (
                     <div
-                      className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                      className="grid w-full min-w-[720px] grid-cols-[44px_repeat(13,minmax(0,1fr))] gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
                     >
-                      <div className="col-span-1">Sr#</div>
-                      <div className="col-span-2">Product</div>
-                      <div className="col-span-2">Company</div>
+                      <div className="col-span-1 text-left">Sr#</div>
+                      <div className="col-span-2 text-left">Product</div>
+                      <div className="col-span-2 text-left">Company</div>
                       <div className="col-span-1 text-center">Pill QTY</div>
                       {showRetCol && (
                         <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
@@ -2609,7 +2685,7 @@ const SellingPanel: React.FC = () => {
                       <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
-                      <div className="col-span-1 text-center">Amount</div>
+                      <div className="col-span-3 text-right pr-1">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
                       );
@@ -2622,7 +2698,7 @@ const SellingPanel: React.FC = () => {
                       return (
                       <div
                         key={item.medicine.id}
-                        className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
+                        className="grid w-full min-w-[720px] grid-cols-[44px_repeat(13,minmax(0,1fr))] gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
                       >
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
@@ -2750,12 +2826,26 @@ const SellingPanel: React.FC = () => {
                         )}
                         <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
                           {item.batchBreakdown && item.batchBreakdown.length > 1 ? (
-                            /* Multi-batch: compact one-line summary keeps row height stable */
+                            /* Multi-batch: stacked rows, one per batch (old/new stock split by FEFO). */
                             <div
-                              className="w-full px-1.5 py-1 text-[10px] font-semibold border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 rounded whitespace-nowrap overflow-hidden text-ellipsis tabular-nums"
-                              title={item.batchBreakdown.map((seg) => `${seg.pills}x ${seg.price.toFixed(1)}`).join(' + ')}
+                              className="w-full border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 rounded overflow-hidden divide-y divide-amber-200 dark:divide-amber-700 tabular-nums"
+                              title={item.batchBreakdown.map((seg) => `${seg.pills}x ${symbol}${seg.price.toFixed(1)}`).join(' + ')}
                             >
-                              {item.batchBreakdown.map((seg) => `${seg.pills}x ${seg.price.toFixed(1)}`).join(' + ')}
+                              {item.batchBreakdown.map((seg, segIdx) => {
+                                const stockLabel = segIdx === 0 ? '(old)' : '(new)';
+                                return (
+                                  <div
+                                    key={segIdx}
+                                    className="flex items-center justify-between gap-1 px-1.5 py-0.5 text-[10px] font-semibold"
+                                  >
+                                    <span className="text-amber-600 dark:text-amber-500 text-[9px] font-normal">
+                                      {stockLabel}
+                                    </span>
+                                    <span>{seg.pills}</span>
+                                    <span>{symbol}{seg.price.toFixed(1)}</span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           ) : (
                             <input
@@ -2767,7 +2857,7 @@ const SellingPanel: React.FC = () => {
                                 : item.unitPrice
                               ).toFixed(1)}
                               readOnly
-                              className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
                             />
                           )}
                         </div>
@@ -2820,7 +2910,7 @@ const SellingPanel: React.FC = () => {
                               if (val > 100) val = 100;
                               updateCartItemField(id, 'discount', val);
                             }}
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
@@ -2873,11 +2963,11 @@ const SellingPanel: React.FC = () => {
                               if (val > 100) val = 100;
                               updateCartItemField(id, 'tax', val);
                             }}
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-1 flex items-center justify-end pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap">
+                        <div className="col-span-3 flex items-center justify-end pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap">
                           {symbol}{item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="col-span-1 text-center">
@@ -2887,7 +2977,7 @@ const SellingPanel: React.FC = () => {
                               if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                               removeFromCart(item.medicine.id);
                             }}
-                            disabled={isCashier && currentBillIndex >= 0}
+                            disabled={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
                             className={`p-1.5 transition-all border border-transparent ${
                               isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)
                                 ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
@@ -3026,7 +3116,7 @@ const SellingPanel: React.FC = () => {
                             -{formatCurrency(discountValue)}
                           </div>
                         </div>
-                        
+
                         <div className="flex items-center justify-between gap-4">
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
@@ -3043,7 +3133,7 @@ const SellingPanel: React.FC = () => {
                             +{formatCurrency(taxValue)}
                           </div>
                         </div>
-                        
+
                         {/* SPECIAL DISCOUNT SECTION - Only show for Family/Relatives, Charity, or Employee */}
                         {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <>
@@ -3141,7 +3231,7 @@ const SellingPanel: React.FC = () => {
                             {formatCurrency(subtotalValue)}
                           </div>
                         </div>
-                        
+
                         {/* Additional Discount Amount - Only show when discount is applied */}
                         {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <div className="flex items-center justify-between gap-4">
@@ -3161,7 +3251,7 @@ const SellingPanel: React.FC = () => {
                             </div>
                           </div>
                         )}
-                        
+
                         <div className={`flex items-center justify-between gap-4 border-t border-gray-200 dark:border-gray-600 ${expandedSaleSummary ? 'pt-1 mt-0' : 'pt-1.5 mt-1.5'}`}>
                           <div
                             className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
@@ -3295,7 +3385,7 @@ const SellingPanel: React.FC = () => {
 
                           {(() => {
                             const sale = salesHistoryList.find(s => s.saleId === selectedSaleId);
-                            const canDelete = sale && isToday(sale.createdAt);
+                            const canDelete = !!(sale && canCurrentUserDeleteSale(sale.createdAt));
                             return (
                               <button
                                 type="button"
@@ -3310,7 +3400,13 @@ const SellingPanel: React.FC = () => {
                                     ? 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
                                     : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
                                 }`}
-                                title={canDelete ? 'Delete this sale' : 'Can only delete today\'s sales'}
+                                title={
+                                  canDelete
+                                    ? 'Delete this sale'
+                                    : (isCashier
+                                      ? 'Cashiers can only delete sales created within 24 hours'
+                                      : 'Can only delete today\'s sales')
+                                }
                               >
                                 <FiTrash2 className="w-3.5 h-3.5" />
                                 <span>Delete</span>

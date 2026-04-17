@@ -713,7 +713,11 @@ export class SalesService {
 
   /**
    * Update an existing sale and adjust inventory accordingly.
-   * Restores inventory for removed items and deducts for added items.
+   *
+   * Flow: restore all old items via their audit trail → delete old sale_items
+   * (which cascades sale_item_batches) → insert new sale_items → deduct
+   * inventory for each using the new sale_item_id. This keeps the audit trail
+   * consistent whether items are added, removed, or have their quantities changed.
    */
   public async updateSale(
     saleId: number,
@@ -725,13 +729,12 @@ export class SalesService {
       throw new Error('At least one medicine must be included in a sale.');
     }
 
-    // Get the original sale
     const originalSale = await this.getSaleById(saleId);
     if (!originalSale) {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
-    // Get all previous returns for this sale to ensure update doesn't conflict
+    // Ensure the update doesn't leave fewer pills than already returned for any medicine.
     const previousReturns = await this.dbService.query(
       `SELECT sri.medicine_id, sri.medicine_name, SUM(sri.pills) as total_returned
        FROM sale_return_items sri
@@ -741,65 +744,43 @@ export class SalesService {
       [saleId]
     );
 
-    const returnedQuantities = new Map<number, { name: string; pills: number }>();
-    previousReturns.forEach((ret: any) => {
-      returnedQuantities.set(ret.medicine_id, { name: ret.medicine_name, pills: ret.total_returned || 0 });
-    });
-
     const computedItems = payload.items.map((item) => this.computeSaleItem(item));
 
-    // Validate new quantities against returned quantities
-    for (const [medicineId, returned] of returnedQuantities.entries()) {
-      const newItem = computedItems.find(item => item.medicineId === medicineId);
-      const newPills = newItem ? newItem.pills : 0;
-      
-      if (newPills < returned.pills) {
+    // Aggregate by medicine (same medicine may appear on multiple lines)
+    const newPillsByMedicine = new Map<number, number>();
+    computedItems.forEach(item => {
+      newPillsByMedicine.set(item.medicineId, (newPillsByMedicine.get(item.medicineId) || 0) + item.pills);
+    });
+
+    for (const ret of previousReturns) {
+      const newPills = newPillsByMedicine.get(ret.medicine_id) || 0;
+      const returnedPills = ret.total_returned || 0;
+      if (newPills < returnedPills) {
         throw new Error(
-          `Cannot reduce ${returned.name} to ${newPills} pills because ${returned.pills} pills have already been returned. ` +
+          `Cannot reduce ${ret.medicine_name} to ${newPills} pills because ${returnedPills} pills have already been returned. ` +
           `Please adjust the return records first.`
         );
       }
     }
 
-    // Calculate differences
-    const originalItemsMap = new Map<number, number>();
+    // Check availability against NET delta per medicine. After we restore the old
+    // quantities, only the positive difference must still be satisfiable.
+    const originalPillsByMedicine = new Map<number, number>();
     originalSale.items.forEach(item => {
-      originalItemsMap.set(item.medicineId, item.pills);
+      originalPillsByMedicine.set(item.medicineId, (originalPillsByMedicine.get(item.medicineId) || 0) + item.pills);
     });
 
-    const newItemsMap = new Map<number, number>();
-    computedItems.forEach(item => {
-      newItemsMap.set(item.medicineId, item.pills);
-    });
-
-    // Find items to restore (removed or reduced)
-    const itemsToRestore: Array<{ medicineId: number; pills: number }> = [];
-    originalItemsMap.forEach((originalPills, medicineId) => {
-      const newPills = newItemsMap.get(medicineId) || 0;
-      if (newPills < originalPills) {
-        itemsToRestore.push({ medicineId, pills: originalPills - newPills });
+    for (const [medicineId, newPills] of Array.from(newPillsByMedicine.entries())) {
+      const oldPills = originalPillsByMedicine.get(medicineId) || 0;
+      const delta = newPills - oldPills;
+      if (delta > 0) {
+        await this.ensureInventoryAvailable(medicineId, delta);
       }
-    });
-
-    // Find items to deduct (added or increased)
-    const itemsToDeduct: Array<{ medicineId: number; pills: number }> = [];
-    newItemsMap.forEach((newPills, medicineId) => {
-      const originalPills = originalItemsMap.get(medicineId) || 0;
-      if (newPills > originalPills) {
-        itemsToDeduct.push({ medicineId, pills: newPills - originalPills });
-      }
-    });
-
-    // Check inventory availability for items to deduct
-    for (const item of itemsToDeduct) {
-      await this.ensureInventoryAvailable(item.medicineId, item.pills);
     }
 
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    
-    // Calculate additional discount
     const baseTotal = subtotal - discountTotal + taxTotal;
     const additionalDiscount = payload.additionalDiscount || 0;
     const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
@@ -807,10 +788,17 @@ export class SalesService {
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Update sale record
+      // Fetch old sale_items with their IDs BEFORE deleting them, so
+      // restoreInventory can reverse batch allocations from sale_item_batches.
+      const oldSaleItems = await this.dbService.query(
+        'SELECT id, medicine_id, pills FROM sale_items WHERE sale_id = ?',
+        [saleId]
+      );
+
+      // Update sale header
       const updateSaleSql = `
-        UPDATE sales 
-        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?, 
+        UPDATE sales
+        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?,
             customer_name = ?, customer_phone = ?, sale_type = ?
         WHERE id = ?
       `;
@@ -827,46 +815,58 @@ export class SalesService {
         saleId,
       ]);
 
-      // Delete old sale items
+      // 1) Restore inventory for ALL old items using their recorded batch allocations.
+      for (const oldItem of oldSaleItems) {
+        await this.restoreInventory(oldItem.id, oldItem.medicine_id, oldItem.pills);
+      }
+
+      // 2) Delete old sale_items (FK ON DELETE CASCADE removes their sale_item_batches).
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
 
-      // Insert new sale items
+      // 3) Batch-fetch average cost price per medicine from current stock_batches.
+      const uniqueMedicineIds = Array.from(new Set(computedItems.map(item => item.medicineId)));
+      const costMap = new Map<number, number>();
+      if (uniqueMedicineIds.length > 0) {
+        const placeholders = uniqueMedicineIds.map(() => '?').join(',');
+        const costResults = await this.dbService.query(`
+          SELECT medicine_id, AVG(cost_price_per_pill) as avg_cost
+          FROM stock_batches
+          WHERE medicine_id IN (${placeholders})
+            AND qty_remaining > 0
+            AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+          GROUP BY medicine_id
+        `, uniqueMedicineIds);
+        costResults.forEach((r: any) => costMap.set(r.medicine_id, r.avg_cost || 0));
+      }
+
+      // 4) Insert new sale_items and deduct inventory against the new sale_item_id.
       for (const item of computedItems) {
+        const costPrice = costMap.get(item.medicineId) || 0;
+        const costSubtotal = costPrice * item.pills;
+
         const insertItemSql = `
           INSERT INTO sale_items (
-            sale_id,
-            medicine_id,
-            medicine_name,
-            pills,
-            unit_price,
-            subtotal,
-            discount_amount,
-            tax_amount,
-            total
+            sale_id, medicine_id, medicine_name, pills, unit_price, subtotal,
+            cost_price, cost_subtotal, discount_amount, tax_amount, total
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const itemResult = await this.dbService.execute(insertItemSql, [
           saleId,
           item.medicineId,
           item.medicineName,
           item.pills,
           item.unitPrice,
           item.subtotal,
+          costPrice,
+          costSubtotal,
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.total,
         ]);
-      }
+        const newSaleItemId = (itemResult as any).lastID;
 
-      // Restore inventory for removed/reduced items
-      for (const item of itemsToRestore) {
-        await this.restoreInventory(item.medicineId, item.pills);
-      }
-
-      // Deduct inventory for added/increased items
-      for (const item of itemsToDeduct) {
-        await this.deductInventory(item.medicineId, item.pills);
+        await this.deductInventory(item.medicineId, item.pills, newSaleItemId);
       }
 
       await this.dbService.execute('COMMIT');
