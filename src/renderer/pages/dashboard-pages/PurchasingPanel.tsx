@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft } from 'react-icons/fi';
+import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft, FiUsers } from 'react-icons/fi';
 import { FaPlus, FaTrashAlt, FaDollarSign, FaCheck, FaPercent, FaList, FaEdit, FaEye } from 'react-icons/fa';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -50,6 +50,8 @@ interface Supplier {
 }
 
 const MIN_EXPIRY_DAYS = 0;
+const SEARCH_RESULT_LIMIT = 100;
+const SUPPLIER_FETCH_THROTTLE_MS = 3000;
 
 
 /** Same column template for cart header, item row, and insights line layer — keeps vertical borders aligned. */
@@ -82,6 +84,11 @@ interface PurchaseItem {
   sellingPricePerPill: number;
 }
 
+type DeleteConfirmState = {
+  purchaseId: number;
+  restoreOnCancel?: boolean;
+} | null;
+
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
   const packetQuantity = Math.max(0, item.packetQuantity || 0);
   const pillsPerPacket = Math.max(1, item.pillsPerPacket || 1);
@@ -105,7 +112,7 @@ const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
 
   const totalPills = packetQuantity * pillsPerPacket;
   const pricePerPill = totalPills > 0 ? totalAmount / totalPills : 0;
-  
+
   // Line subtotal is the total amount entered
   const lineSubtotal = totalAmount;
   const discountAmount = (lineSubtotal * discountPercent) / 100;
@@ -185,6 +192,8 @@ const PurchasingPanel: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
@@ -228,7 +237,7 @@ const PurchasingPanel: React.FC = () => {
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
   const [loadingPurchaseDetails, setLoadingPurchaseDetails] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>(null);
   const [viewPurchase, setViewPurchase] = useState<any | null>(null);
   const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
   const [purchaseHistoryList, setPurchaseHistoryList] = useState<any[]>([]);
@@ -237,9 +246,17 @@ const PurchasingPanel: React.FC = () => {
   const [purchasePage, setPurchasePage] = useState(1);
   const [purchasePageSize] = useState(30);
   const [totalPurchases, setTotalPurchases] = useState(0);
-  const [hasMorePurchases, setHasMorePurchases] = useState(true);
+  const [hasMorePurchases, setHasMorePurchases] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const supplierDropdownRef = useRef<HTMLDivElement | null>(null);
+  const supplierFetchInFlightRef = useRef(false);
+  const supplierLastFetchRef = useRef(0);
+  const supplierRequestSeqRef = useRef(0);
+  const supplierByIdRequestSeqRef = useRef(0);
+  const searchRequestSeqRef = useRef(0);
+  const batchNoCacheRef = useRef<Map<number, string>>(new Map());
+  const batchNoInFlightRef = useRef<Map<number, Promise<string>>>(new Map());
   const [showPaymentSection, setShowPaymentSection] = useState(false);
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>(() => {
@@ -257,7 +274,7 @@ const PurchasingPanel: React.FC = () => {
       minute: '2-digit',
     });
   });
-  
+
   const isCashier = getAuthUser()?.role === 'cashier';
 
   // Update time every minute
@@ -276,7 +293,7 @@ const PurchasingPanel: React.FC = () => {
     return () => clearInterval(interval);
   }, [selectedPurchaseId]);
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
-  
+
   const selectedPurchase = useMemo(() => {
     if (selectedPurchaseId === null) return null;
     return purchaseHistoryList.find(p => p.id === selectedPurchaseId);
@@ -284,28 +301,47 @@ const PurchasingPanel: React.FC = () => {
 
   // Function to generate auto-increment batch number for a medicine
   const generateAutoBatchNumber = useCallback(async (medicineId: number, medicineName: string): Promise<string> => {
+    const cached = batchNoCacheRef.current.get(medicineId);
+    if (cached) return cached;
+    const inflight = batchNoInFlightRef.current.get(medicineId);
+    if (inflight) return inflight;
+
     try {
-      // Get the highest existing batch number for this medicine from purchase items
-      const response = await window.electron.ipcRenderer.invoke('get-next-batch-number', medicineId) as {
-        success: boolean;
-        nextBatchNumber?: string;
-        error?: string;
-      };
-      if (response.success && response.nextBatchNumber) {
-        return response.nextBatchNumber;
-      }
-      
-      // Fallback: generate batch number based on medicine name and current date
-      const date = new Date();
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-      return `${medicineAbbr}${dateStr}-01`;
+      const request = window.electron.ipcRenderer
+        .invoke('get-next-batch-number', medicineId)
+        .then((response: any) => {
+          if (response.success && response.nextBatchNumber) {
+            batchNoCacheRef.current.set(medicineId, response.nextBatchNumber);
+            return response.nextBatchNumber as string;
+          }
+
+          const date = new Date();
+          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+          const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+          const fallback = `${medicineAbbr}${dateStr}-01`;
+          batchNoCacheRef.current.set(medicineId, fallback);
+          return fallback;
+        })
+        .catch(() => {
+          const date = new Date();
+          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+          const fallback = `BATCH${dateStr}-01`;
+          batchNoCacheRef.current.set(medicineId, fallback);
+          return fallback;
+        })
+        .finally(() => {
+          batchNoInFlightRef.current.delete(medicineId);
+        });
+
+      batchNoInFlightRef.current.set(medicineId, request);
+      return await request;
     } catch (error) {
       console.error('Error generating batch number:', error);
-      // Fallback to simple format
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      return `BATCH${dateStr}-01`;
+      const fallback = `BATCH${dateStr}-01`;
+      batchNoCacheRef.current.set(medicineId, fallback);
+      return fallback;
     }
   }, []);
 
@@ -331,11 +367,11 @@ const PurchasingPanel: React.FC = () => {
     const min = new Date();
     min.setHours(0, 0, 0, 0);
     min.setDate(min.getDate() + MIN_EXPIRY_DAYS);
-    
+
     // Normalize expDate to start of day as well to be safe
     const normalizedExpDate = new Date(expDate);
     normalizedExpDate.setHours(0, 0, 0, 0);
-    
+
     return normalizedExpDate >= min;
   }, []);
 
@@ -358,21 +394,38 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const loadSuppliers = useCallback(async () => {
+  const loadSuppliers = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force) {
+      if (supplierFetchInFlightRef.current) return;
+      if (
+        suppliers.length > 0 &&
+        now - supplierLastFetchRef.current < SUPPLIER_FETCH_THROTTLE_MS
+      ) {
+        return;
+      }
+    }
+
+    const requestSeq = ++supplierRequestSeqRef.current;
+    supplierFetchInFlightRef.current = true;
     setLoadingSuppliers(true);
     try {
       window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
+        if (requestSeq !== supplierRequestSeqRef.current) return;
+        supplierFetchInFlightRef.current = false;
         setLoadingSuppliers(false);
         if (response.success) {
           setSuppliers(response.data || []);
+          supplierLastFetchRef.current = Date.now();
         }
       });
       window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
     } catch (error) {
+      supplierFetchInFlightRef.current = false;
       setLoadingSuppliers(false);
       console.error('Error loading suppliers:', error);
     }
-  }, []);
+  }, [suppliers.length]);
 
   useEffect(() => {
     loadMedicines();
@@ -400,11 +453,14 @@ const PurchasingPanel: React.FC = () => {
   /** When catalog loads, refresh pricing fields on existing cart rows */
   useEffect(() => {
     if (medicines.length === 0) return;
+    const medicinesById = new Map(medicines.map((m) => [m.id, m]));
     setCart((prev) =>
       prev.map((row) => {
-        const fresh = medicines.find((m) => m.id === row.medicine.id);
+        const fresh = medicinesById.get(row.medicine.id);
         if (!fresh) return row;
-        return { ...row, medicine: { ...row.medicine, ...fresh } };
+        const mergedMedicine = { ...row.medicine, ...fresh };
+        if (mergedMedicine === row.medicine) return row;
+        return { ...row, medicine: mergedMedicine };
       })
     );
   }, [medicines]);
@@ -423,7 +479,9 @@ const PurchasingPanel: React.FC = () => {
         const supplierExists = currentSuppliers.find(s => s.id === selectedSupplierId);
         if (!supplierExists && currentSuppliers.length >= 0) {
           // Supplier not in list, fetch it
+          const requestSeq = ++supplierByIdRequestSeqRef.current;
           window.electron.ipcRenderer.once('supplier-get-by-id-reply', (response: any) => {
+            if (requestSeq !== supplierByIdRequestSeqRef.current) return;
             if (response.success && response.data) {
               setSuppliers(prev => {
                 const exists = prev.find(s => s.id === response.data.id);
@@ -441,35 +499,56 @@ const PurchasingPanel: React.FC = () => {
     }
   }, [selectedSupplierId]);
 
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!showSupplierDropdown) return;
+      const target = event.target as Node;
+      if (
+        supplierDropdownRef.current &&
+        !supplierDropdownRef.current.contains(target)
+      ) {
+        setShowSupplierDropdown(false);
+        setSupplierSearchTerm('');
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showSupplierDropdown]);
+
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
       setShowSearchResults(false);
       return;
     }
 
+    const requestSeq = ++searchRequestSeqRef.current;
     setIsSearching(true);
     setShowSearchResults(true);
 
     try {
       window.electron.ipcRenderer.once('medicine-search-reply', (response: any) => {
+        if (requestSeq !== searchRequestSeqRef.current) return;
         setIsSearching(false);
         if (response.success) {
-          setMedicines(response.data || []);
+          setMedicines((response.data || []).slice(0, SEARCH_RESULT_LIMIT));
         }
       });
       window.electron.ipcRenderer.sendMessage('medicine-search', [term.trim()]);
     } catch (error) {
       console.error('Error searching medicines:', error);
-      setIsSearching(false);
+      if (requestSeq === searchRequestSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, []);
 
   const addToCart = useCallback(async (medicine: Medicine) => {
     const mergedMedicine = mergeMedicineWithCatalog(medicine);
-    
+
     // Generate auto batch number
     const autoBatchNumber = await generateAutoBatchNumber(medicine.id, medicine.name);
-    
+
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
 
@@ -555,21 +634,29 @@ const PurchasingPanel: React.FC = () => {
 
   // Debounce search to prevent firing on every keystroke
   const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
-  
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setSearchTerm(value);
-    
+
     // Clear previous timeout
     if (debouncedSearch.current) {
       clearTimeout(debouncedSearch.current);
     }
-    
+
     // Set new timeout - only search after 300ms of no typing
     debouncedSearch.current = setTimeout(() => {
       handleSearch(value);
     }, 300);
   };
+
+  useEffect(() => {
+    return () => {
+      if (debouncedSearch.current) {
+        clearTimeout(debouncedSearch.current);
+      }
+    };
+  }, []);
 
   const updateCartItemField = useCallback(
     (medicineId: number, field: keyof PurchaseItem, value: any) => {
@@ -589,6 +676,17 @@ const PurchasingPanel: React.FC = () => {
   );
 
   const adjustPacketQuantity = (medicineId: number, delta: number) => {
+    const target = cart.find((item) => item.medicine.id === medicineId);
+    if (
+      editingPurchaseId !== null &&
+      cart.length === 1 &&
+      target &&
+      target.packetQuantity + delta <= 0
+    ) {
+      setDeleteConfirm({ purchaseId: editingPurchaseId, restoreOnCancel: true });
+      return;
+    }
+
     setCart((prevCart) =>
       prevCart
         .map((item) => {
@@ -609,6 +707,14 @@ const PurchasingPanel: React.FC = () => {
   };
 
   const removeFromCart = (medicineId: number) => {
+    if (
+      editingPurchaseId !== null &&
+      cart.length === 1 &&
+      cart[0].medicine.id === medicineId
+    ) {
+      setDeleteConfirm({ purchaseId: editingPurchaseId, restoreOnCancel: true });
+      return;
+    }
     setCart((prevCart) => prevCart.filter((item) => item.medicine.id !== medicineId));
   };
 
@@ -811,7 +917,7 @@ const PurchasingPanel: React.FC = () => {
     setPurchaseOrderNumber('');
     setPurchasePage(1);
     setHasMorePurchases(true);
-    
+
     const now = new Date();
     setCurrentDate(now.toLocaleDateString('en-US', {
       year: 'numeric',
@@ -841,7 +947,7 @@ const PurchasingPanel: React.FC = () => {
     setLoadingPurchases(true);
     try {
       const offset = (page - 1) * purchasePageSize;
-      
+
       window.electron.ipcRenderer.once('purchase-get-all-reply', (response: any) => {
         setLoadingPurchases(false);
         if (response.success) {
@@ -852,7 +958,7 @@ const PurchasingPanel: React.FC = () => {
             const dateB = new Date(b.createdAt || 0).getTime();
             return dateB - dateA;
           });
-          
+
           if (append) {
             setPastPurchases(prev => [...prev, ...purchases]);
             setPurchaseHistoryList(prev => [...prev, ...purchases]);
@@ -860,19 +966,19 @@ const PurchasingPanel: React.FC = () => {
             setPastPurchases(purchases);
             setPurchaseHistoryList(purchases);
           }
-          
+
           // Check if there are more records
           setHasMorePurchases(purchases.length === purchasePageSize);
         }
       });
-      
+
       // Get total count
       window.electron.ipcRenderer.once('purchase-get-count-reply', (countResponse: any) => {
         if (countResponse.success) {
           setTotalPurchases(countResponse.data || 0);
         }
       });
-      
+
       window.electron.ipcRenderer.sendMessage('purchase-get-all', [undefined, undefined, purchasePageSize, offset]);
       window.electron.ipcRenderer.sendMessage('purchase-get-count', []);
     } catch (err) {
@@ -935,9 +1041,6 @@ const PurchasingPanel: React.FC = () => {
 
   const loadPurchaseForEdit = useCallback(async (purchaseId: number) => {
     try {
-      // Ensure suppliers are loaded first
-      loadSuppliers();
-
       window.electron.ipcRenderer.once('purchase-get-by-id-reply', (response: any) => {
         if (response.success && response.data) {
           const purchase = response.data;
@@ -996,7 +1099,7 @@ const PurchasingPanel: React.FC = () => {
     } catch (err) {
       error('Error loading purchase. Please try again.');
     }
-  }, []);
+  }, [error]);
 
   const cancelEdit = useCallback(() => {
     setEditingPurchaseId(null);
@@ -1007,16 +1110,7 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const handleDeletePurchase = useCallback(
-    async (purchaseId: number, skipConfirm = false) => {
-      if (
-        !skipConfirm &&
-        !window.confirm(
-          `Permanently delete purchase PO-${purchaseId}? This removes the order from the database. This cannot be undone.`
-        )
-      ) {
-        return;
-      }
-
+    async (purchaseId: number) => {
       try {
         window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
           setDeleteConfirm(null);
@@ -1043,16 +1137,9 @@ const PurchasingPanel: React.FC = () => {
 
   const afterLastLineRemovedWhileEditing = useCallback(
     (purchaseId: number) => {
-      const del = window.confirm(
-        `Lines were removed from the screen only. PO-${purchaseId} is still in the database, so History still shows the old total until you change it.\n\nDelete PO-${purchaseId} from the database now?\n\nOK = remove this order and its payments\nCancel = reload the saved lines from the database`
-      );
-      if (del) {
-        void handleDeletePurchase(purchaseId, true);
-      } else {
-        void loadPurchaseForEdit(purchaseId);
-      }
+      setDeleteConfirm({ purchaseId, restoreOnCancel: true });
     },
-    [handleDeletePurchase, loadPurchaseForEdit]
+    []
   );
 
   useEffect(() => {
@@ -1080,10 +1167,10 @@ const PurchasingPanel: React.FC = () => {
     setSelectedPurchaseId(purchase.id);
     setCurrentPurchaseIndex(index);
     setPurchaseOrderNumber(`PO-${purchase.id}`);
-    
+
     // Use updatedAt if available, otherwise createdAt
     const dateToUse = purchase.updatedAt || purchase.createdAt;
-    
+
     if (dateToUse) {
       const dbDate = new Date(dateToUse);
       const formattedDate = dbDate.toLocaleDateString('en-US', {
@@ -1098,16 +1185,14 @@ const PurchasingPanel: React.FC = () => {
       setCurrentDate(formattedDate);
       setCurrentTime(formattedTime);
     }
-    
+
     // Simulate loading complete (in real app, this would be when data is fully loaded)
     setTimeout(() => {
       setLoadingPurchaseDetails(false);
     }, 500);
-    
-    // Reload suppliers to ensure they're up to date
-    loadSuppliers();
+
     loadPurchaseForEdit(purchase.id);
-  }, [loadPurchaseForEdit, loadSuppliers]);
+  }, [loadPurchaseForEdit]);
 
   // Navigate to previous/next purchase
   const navigateToPreviousPurchase = useCallback(() => {
@@ -1137,7 +1222,26 @@ const PurchasingPanel: React.FC = () => {
   }, [setHeader]);
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
-  
+  const uniquePurchaseHistory = useMemo(
+    () => Array.from(new Map(purchaseHistoryList.map((p) => [p.id, p])).values()),
+    [purchaseHistoryList]
+  );
+  const purchaseIndexById = useMemo(
+    () => new Map(purchaseHistoryList.map((p, idx) => [p.id, idx])),
+    [purchaseHistoryList]
+  );
+  const filteredSuppliers = useMemo(() => {
+    const q = supplierSearchTerm.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) => {
+      const company = (s.company || s.companyName || '').toLowerCase();
+      return (
+        s.name.toLowerCase().includes(q) ||
+        company.includes(q)
+      );
+    });
+  }, [suppliers, supplierSearchTerm]);
+
   // Memoize calculations to prevent recalculation on every render
   const subtotal = useMemo(() => calculateSubtotal(), [cart]);
   const discountTotal = useMemo(() => calculateDiscountTotal(), [cart]);
@@ -1347,7 +1451,7 @@ const PurchasingPanel: React.FC = () => {
     <div className="h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-hidden flex flex-col p-2">
       {/* Toast Notifications */}
       <ToastContainer toasts={toasts} onClose={removeToast} />
-      
+
       {/* Success Message */}
       {showSuccess && (
         <div className="fixed top-4 right-4 z-50 bg-green-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm animate-slideInRight">
@@ -1526,10 +1630,10 @@ const PurchasingPanel: React.FC = () => {
               data-wedge-typing="true"
               className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 flex-shrink-0"
             >
-              
+
               {/* TOP GRID ROW */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                
+
                 {/* Order Number + Navigation */}
                 <div className="flex items-center gap-2 min-w-0">
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
@@ -1604,20 +1708,87 @@ const PurchasingPanel: React.FC = () => {
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
                     Supplier
                   </label>
-                  <div className="flex-1 min-w-0 relative">
-                    <select
-                      value={selectedSupplierId || ''}
-                      onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
-                      className="w-full h-8 pl-2.5 pr-8 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition appearance-none cursor-pointer"
+                  <div className="flex-1 min-w-0 relative" ref={supplierDropdownRef}>
+                    <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500/80 dark:text-emerald-400/80">
+                      <FiUsers className="w-3.5 h-3.5" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSupplierDropdown((v) => {
+                          const next = !v;
+                          if (!next) setSupplierSearchTerm('');
+                          return next;
+                        });
+                      }}
+                      className="w-full h-8 pl-8 pr-8 text-xs font-semibold border border-emerald-300/80 dark:border-emerald-600/70 bg-gradient-to-r from-emerald-50/70 to-white dark:from-emerald-900/20 dark:to-gray-700/60 text-gray-800 dark:text-gray-100 rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 focus:shadow-md transition-all hover:border-emerald-400 dark:hover:border-emerald-500 text-left"
                     >
-                      <option value="">Select Supplier...</option>
-                      {suppliers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 dark:text-gray-500">
+                      {selectedSupplier?.name || 'Select Supplier...'}
+                    </button>
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500/80 dark:text-emerald-400/80">
                       <FiChevronDown className="w-3.5 h-3.5" />
                     </div>
+                    {showSupplierDropdown && (
+                      <div className="absolute z-50 mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+                        <div className="px-3 py-2 bg-emerald-50/80 dark:bg-emerald-900/20 border-b border-gray-200 dark:border-gray-600">
+                          <label className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-2 mb-1">
+                            <FiSearch className="w-3.5 h-3.5" />
+                            Select Supplier
+                          </label>
+                          <input
+                            type="text"
+                            value={supplierSearchTerm}
+                            onChange={(e) => setSupplierSearchTerm(e.target.value)}
+                            placeholder="Search supplier..."
+                            autoFocus
+                            className="w-full h-8 px-2.5 rounded-md border border-emerald-200 dark:border-emerald-700 bg-white/90 dark:bg-gray-800 text-xs font-semibold text-gray-800 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setSelectedSupplierId(null);
+                            setShowSupplierDropdown(false);
+                            setSupplierSearchTerm('');
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700"
+                        >
+                          Select Supplier...
+                        </button>
+                        <div className="max-h-56 overflow-y-auto">
+                          {filteredSuppliers.length === 0 && (
+                            <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                              No supplier found
+                            </div>
+                          )}
+                          {filteredSuppliers.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSelectedSupplierId(s.id);
+                                setShowSupplierDropdown(false);
+                                setSupplierSearchTerm('');
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
+                                selectedSupplierId === s.id
+                                  ? 'bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300'
+                                  : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate">{s.name}</span>
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 truncate">
+                                  {s.company || s.companyName || '—'}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1631,7 +1802,7 @@ const PurchasingPanel: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.phone || 'N/A') : ''}
+                    value={selectedSupplierId ? (selectedSupplier?.phone || 'N/A') : ''}
                     readOnly
                     className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
                   />
@@ -1644,7 +1815,7 @@ const PurchasingPanel: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.company || suppliers.find(s => s.id === selectedSupplierId)?.companyName || 'N/A') : ''}
+                    value={selectedSupplierId ? (selectedSupplier?.company || selectedSupplier?.companyName || 'N/A') : ''}
                     readOnly
                     className="w-40 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
                   />
@@ -2135,12 +2306,12 @@ const PurchasingPanel: React.FC = () => {
                                   // Get cost per unit for validation
                                   const pricing = getPricingInsights(item);
                                   const adjustedPrice = Math.max(numVal, pricing.buyPerPill);
-                                  
+
                                   // Show notification if price was auto-adjusted
                                   if (numVal < pricing.buyPerPill && pricing.buyPerPill > 0) {
                                     warning(`Sell price auto-adjusted from ${formatCurrency(numVal)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
                                   }
-                                  
+
                                   updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
                                 } else if (v === '') {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
@@ -2160,12 +2331,12 @@ const PurchasingPanel: React.FC = () => {
                                   // Get cost per unit for validation
                                   const pricing = getPricingInsights(item);
                                   const adjustedPrice = Math.max(val, pricing.buyPerPill);
-                                  
+
                                   // Show notification if price was auto-adjusted
                                   if (val < pricing.buyPerPill && pricing.buyPerPill > 0) {
                                     warning(`Sell price auto-adjusted from ${formatCurrency(val)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
                                   }
-                                  
+
                                   updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
                                 } else {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
@@ -2433,8 +2604,8 @@ const PurchasingPanel: React.FC = () => {
                       {symbol}{paymentAmount.toFixed(2)}
                     </span>
                   )}
-                  <FiChevronDown 
-                    className={`w-4 h-4 text-emerald-600/80 transition-transform duration-300 ${showPaymentSection ? 'rotate-180' : ''}`} 
+                  <FiChevronDown
+                    className={`w-4 h-4 text-emerald-600/80 transition-transform duration-300 ${showPaymentSection ? 'rotate-180' : ''}`}
                   />
                 </div>
               </button>
@@ -2563,7 +2734,7 @@ const PurchasingPanel: React.FC = () => {
                 {editingPurchaseId !== null && (
                   <button
                     type="button"
-                    onClick={() => handleDeletePurchase(editingPurchaseId)}
+                    onClick={() => setDeleteConfirm({ purchaseId: editingPurchaseId })}
                     disabled={
                       processing ||
                       (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
@@ -2571,9 +2742,14 @@ const PurchasingPanel: React.FC = () => {
                     title={
                       isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)
                         ? 'Cashiers can only change purchases within 24 hours. Ask an administrator.'
-                        : 'Removes this PO, lines, payments, and GRN data from the database (if nothing was sold from this order).'
+                        : 'Removes this PO, its lines, and payments from the database (any sales linked to this order will also be removed).'
                     }
-                    className="w-full py-2 rounded-lg text-xs font-semibold border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 ${
+                      processing ||
+                      (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
+                        ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
+                        : 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
+                    }`}
                   >
                     Delete purchase PO-{editingPurchaseId} from database
                   </button>
@@ -2595,19 +2771,19 @@ const PurchasingPanel: React.FC = () => {
                     <FiRefreshCw className="w-5 h-5 animate-spin text-emerald-500" />
                     Loading purchases...
                   </div>
-                ) : purchaseHistoryList.length === 0 ? (
+                ) : uniquePurchaseHistory.length === 0 ? (
                   <div className="py-8 text-center text-gray-400 text-xs">
                     No recent purchases
                   </div>
                 ) : (
-                  purchaseHistoryList.map((purchase) => {
+                  uniquePurchaseHistory.slice(0, SEARCH_RESULT_LIMIT).map((purchase) => {
                     const isSelected = selectedPurchaseId === purchase.id;
                     const dateObj = new Date(purchase.createdAt);
                     return (
                       <div
                         key={purchase.id}
                         onClick={() => {
-                          const index = purchaseHistoryList.findIndex(p => p.id === purchase.id);
+                          const index = purchaseIndexById.get(purchase.id) ?? -1;
                           loadPurchaseDetails(purchase, index);
                         }}
                         className={`p-3 rounded-lg border transition-all cursor-pointer ${isSelected
@@ -2745,17 +2921,31 @@ const PurchasingPanel: React.FC = () => {
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-500 mb-6">
-                Are you sure you want to delete purchase PO-{deleteConfirm}? This action cannot be undone and will remove all associated items.
+                {deleteConfirm.restoreOnCancel
+                  ? `All lines were removed from screen for PO-${deleteConfirm.purchaseId}.`
+                  : `Delete PO-${deleteConfirm.purchaseId} permanently?`}
+                <br />
+                <br />
+                This will delete this purchase and payment records. If this stock was sold, related sales may also be deleted.
+                <br />
+                <br />
+                This action cannot be undone.
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setDeleteConfirm(null)}
+                  onClick={() => {
+                    const pendingDelete = deleteConfirm;
+                    setDeleteConfirm(null);
+                    if (pendingDelete.restoreOnCancel) {
+                      void loadPurchaseForEdit(pendingDelete.purchaseId);
+                    }
+                  }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 dark:text-gray-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700/50 transition-colors font-medium"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleDeletePurchase(deleteConfirm)}
+                  onClick={() => handleDeletePurchase(deleteConfirm.purchaseId)}
                   className="flex-1 px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors font-medium"
                 >
                   Delete

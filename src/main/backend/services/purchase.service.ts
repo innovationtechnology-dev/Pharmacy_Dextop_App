@@ -348,7 +348,7 @@ export class PurchaseService {
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const purchaseItemResult = await this.dbService.execute(insertItemSql, [
           purchaseId,
           item.medicineId,
           item.medicineName,
@@ -365,6 +365,39 @@ export class PurchaseService {
           item.lineTotal,
           item.expiryDate,
           item.batchNumber || null,
+        ]);
+        const purchaseItemId = (purchaseItemResult as any).lastID;
+
+        // Mirror into stock_batches (live inventory record).
+        // Selling price falls back to price_per_packet/pills_per_packet if not explicitly set.
+        const effectiveSellingPrice = (item.sellingPricePerPill && item.sellingPricePerPill > 0)
+          ? item.sellingPricePerPill
+          : (item.packetQuantity > 0 && item.pillsPerPacket > 0)
+            ? (item.pricePerPacket / item.pillsPerPacket)
+            : item.pricePerPill;
+
+        const insertStockBatchSql = `
+          INSERT INTO stock_batches (
+            medicine_id,
+            purchase_item_id,
+            batch_number,
+            expiry_date,
+            qty_received,
+            qty_remaining,
+            cost_price_per_pill,
+            selling_price_per_pill
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        await this.dbService.execute(insertStockBatchSql, [
+          item.medicineId,
+          purchaseItemId,
+          item.batchNumber || null,
+          item.expiryDate,
+          item.totalPills,
+          item.totalPills,
+          item.pricePerPill,
+          effectiveSellingPrice,
         ]);
       }
 
@@ -699,9 +732,9 @@ export class PurchaseService {
   }
 
   /**
-   * Delete a purchase, all its lines, supplier payment rows, and any GRN rows.
-   * If any stock from this PO was already sold, those sale records are removed
-   * first and the inventory is restored before the purchase is deleted.
+   * Delete a purchase and all its lines, payments, and associated stock.
+   * Uses sale_item_batches to precisely identify which sales consumed stock
+   * from this purchase's batches, then removes those sales before deleting.
    */
   public async deletePurchase(purchaseId: number): Promise<void> {
     const purchase = await this.dbService.queryOne('SELECT id FROM purchases WHERE id = ?', [purchaseId]);
@@ -709,66 +742,83 @@ export class PurchaseService {
       throw new Error(`Purchase with id ${purchaseId} not found`);
     }
 
-    const oldItems = await this.dbService.query(
-      'SELECT medicine_id, total_pills, available_pills FROM purchase_items WHERE purchase_id = ?',
-      [purchaseId]
-    );
-
-    const hasGrn = await this.dbService.queryOne(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='goods_received_notes'"
-    );
-    const hasSaleReturns = await this.dbService.queryOne(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='sale_returns'"
-    );
-
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      for (const row of oldItems) {
-        const total = Number(row.total_pills) || 0;
-        const avail = Number(row.available_pills) ?? 0;
-        if (avail < total) {
-          const medicineId = row.medicine_id;
+      // 1. Find all purchase_items for this purchase
+      const purchaseItems = await this.dbService.query(
+        'SELECT id FROM purchase_items WHERE purchase_id = ?',
+        [purchaseId]
+      );
+      const purchaseItemIds = purchaseItems.map((r: any) => r.id);
 
-          // Remove sale return items referencing this medicine first
-          if (hasSaleReturns) {
-            await this.dbService.execute(
-              `DELETE FROM sale_return_items WHERE medicine_id = ?`,
-              [medicineId]
+      if (purchaseItemIds.length > 0) {
+        const piPlaceholders = purchaseItemIds.map(() => '?').join(',');
+
+        // 2. Find the stock_batches created from these purchase_items
+        const stockBatches = await this.dbService.query(
+          `SELECT id FROM stock_batches WHERE purchase_item_id IN (${piPlaceholders})`,
+          purchaseItemIds
+        );
+        const stockBatchIds = stockBatches.map((r: any) => r.id);
+
+        if (stockBatchIds.length > 0) {
+          const sbPlaceholders = stockBatchIds.map(() => '?').join(',');
+
+          // 3. Find sale_items that consumed pills from these batches
+          const affectedSaleItems = await this.dbService.query(
+            `SELECT DISTINCT sale_item_id FROM sale_item_batches WHERE stock_batch_id IN (${sbPlaceholders})`,
+            stockBatchIds
+          );
+          const saleItemIds = affectedSaleItems.map((r: any) => r.sale_item_id);
+
+          if (saleItemIds.length > 0) {
+            const siPlaceholders = saleItemIds.map(() => '?').join(',');
+
+            // 4. Find the parent sales
+            const affectedSales = await this.dbService.query(
+              `SELECT DISTINCT sale_id FROM sale_items WHERE id IN (${siPlaceholders})`,
+              saleItemIds
             );
-            await this.dbService.execute(
-              `DELETE FROM sale_returns WHERE id NOT IN (SELECT DISTINCT sale_return_id FROM sale_return_items)`
-            );
+            const saleIds = affectedSales.map((r: any) => r.sale_id);
+
+            if (saleIds.length > 0) {
+              const sPlaceholders = saleIds.map(() => '?').join(',');
+
+              // 5. Delete sale_return_items and orphan sale_returns for these sales
+              await this.dbService.execute(
+                `DELETE FROM sale_return_items WHERE sale_return_id IN (
+                   SELECT id FROM sale_returns WHERE sale_id IN (${sPlaceholders})
+                 )`,
+                saleIds
+              );
+              await this.dbService.execute(
+                `DELETE FROM sale_returns WHERE sale_id IN (${sPlaceholders})`,
+                saleIds
+              );
+
+              // 6. Delete sale_items (cascades sale_item_batches via FK ON DELETE CASCADE)
+              await this.dbService.execute(
+                `DELETE FROM sale_items WHERE sale_id IN (${sPlaceholders})`,
+                saleIds
+              );
+
+              // 7. Delete the now-empty sales
+              await this.dbService.execute(
+                `DELETE FROM sales WHERE id IN (${sPlaceholders})`,
+                saleIds
+              );
+            }
           }
 
-          // Remove sale items for this medicine
+          // 8. Delete stock_batches for this purchase (return_item_batches cascade via sale_return_items FK)
           await this.dbService.execute(
-            'DELETE FROM sale_items WHERE medicine_id = ?',
-            [medicineId]
-          );
-
-          // Remove sales that are now completely empty
-          await this.dbService.execute(
-            `DELETE FROM sales WHERE id NOT IN (SELECT DISTINCT sale_id FROM sale_items)`
-          );
-
-          // Restore available_pills for all other batches of this medicine
-          // (FEFO may have deducted from earlier batches belonging to other purchases)
-          await this.dbService.execute(
-            `UPDATE purchase_items SET available_pills = total_pills
-             WHERE medicine_id = ? AND purchase_id != ?`,
-            [medicineId, purchaseId]
+            `DELETE FROM stock_batches WHERE id IN (${sbPlaceholders})`,
+            stockBatchIds
           );
         }
       }
 
-      if (hasGrn) {
-        await this.dbService.execute(
-          `DELETE FROM grn_items WHERE grn_id IN (SELECT id FROM goods_received_notes WHERE purchase_id = ?)`,
-          [purchaseId]
-        );
-        await this.dbService.execute('DELETE FROM goods_received_notes WHERE purchase_id = ?', [purchaseId]);
-      }
-
+      // 9. Delete purchase payments, items, and the purchase itself
       await this.dbService.execute('DELETE FROM purchase_payments WHERE purchase_id = ?', [purchaseId]);
       await this.dbService.execute('DELETE FROM purchase_items WHERE purchase_id = ?', [purchaseId]);
       await this.dbService.execute('DELETE FROM purchases WHERE id = ?', [purchaseId]);
@@ -965,16 +1015,19 @@ export class PurchaseService {
       throw new Error(`Purchase with id ${purchaseId} not found`);
     }
 
-    // Check if any items have been sold (available_pills < total_pills)
+    // Check if any items have been sold (qty_remaining < qty_received in stock_batches)
     const oldItems = await this.dbService.query(
-      'SELECT medicine_id, total_pills, available_pills FROM purchase_items WHERE purchase_id = ?',
+      `SELECT pi.medicine_id, sb.qty_received, sb.qty_remaining
+       FROM purchase_items pi
+       JOIN stock_batches sb ON sb.purchase_item_id = pi.id
+       WHERE pi.purchase_id = ?`,
       [purchaseId]
     );
 
     for (const oldItem of oldItems) {
-      if (oldItem.available_pills < oldItem.total_pills) {
+      if (oldItem.qty_remaining < oldItem.qty_received) {
         throw new Error(
-          `Cannot edit purchase: Some items have been sold. Medicine ID ${oldItem.medicine_id} has ${oldItem.total_pills - oldItem.available_pills} pills sold.`
+          `Cannot edit purchase: Some items have been sold. Medicine ID ${oldItem.medicine_id} has ${oldItem.qty_received - oldItem.qty_remaining} pills sold.`
         );
       }
     }
@@ -1044,10 +1097,24 @@ export class PurchaseService {
         purchaseId,
       ]);
 
+      // Delete old stock_batches for this purchase before removing purchase_items
+      const oldPurchaseItems = await this.dbService.query(
+        'SELECT id FROM purchase_items WHERE purchase_id = ?',
+        [purchaseId]
+      );
+      if (oldPurchaseItems.length > 0) {
+        const oldPiIds = oldPurchaseItems.map((r: any) => r.id);
+        const oldPiPlaceholders = oldPiIds.map(() => '?').join(',');
+        await this.dbService.execute(
+          `DELETE FROM stock_batches WHERE purchase_item_id IN (${oldPiPlaceholders})`,
+          oldPiIds
+        );
+      }
+
       // Delete old purchase items
       await this.dbService.execute('DELETE FROM purchase_items WHERE purchase_id = ?', [purchaseId]);
 
-      // Insert new purchase items
+      // Insert new purchase items and corresponding stock_batches
       for (const item of computedItems) {
         const medicineExists = await this.dbService.queryOne(
           'SELECT id FROM medicines WHERE id = ?',
@@ -1079,14 +1146,14 @@ export class PurchaseService {
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const newItemResult = await this.dbService.execute(insertItemSql, [
           purchaseId,
           item.medicineId,
           item.medicineName,
           item.packetQuantity,
           item.pillsPerPacket,
           item.totalPills,
-          item.totalPills, // Start with all pills available
+          item.totalPills,
           item.pricePerPacket,
           item.pricePerPill,
           item.sellingPricePerPill ?? 0,
@@ -1096,6 +1163,30 @@ export class PurchaseService {
           item.lineTotal,
           item.expiryDate,
           item.batchNumber || null,
+        ]);
+        const newPurchaseItemId = (newItemResult as any).lastID;
+
+        // Mirror into stock_batches; selling price falls back to gross price per pill if not set.
+        const effectiveSellPrice = (item.sellingPricePerPill && item.sellingPricePerPill > 0)
+          ? item.sellingPricePerPill
+          : (item.packetQuantity > 0 && item.pillsPerPacket > 0)
+            ? (item.pricePerPacket / item.pillsPerPacket)
+            : item.pricePerPill;
+
+        await this.dbService.execute(`
+          INSERT INTO stock_batches (
+            medicine_id, purchase_item_id, batch_number, expiry_date,
+            qty_received, qty_remaining, cost_price_per_pill, selling_price_per_pill
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          item.medicineId,
+          newPurchaseItemId,
+          item.batchNumber || null,
+          item.expiryDate,
+          item.totalPills,
+          item.totalPills,
+          item.pricePerPill,
+          effectiveSellPrice,
         ]);
       }
 

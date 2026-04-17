@@ -18,8 +18,6 @@ import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
 
-import { GRNController } from './controllers/grn.controller';
-
 export class Backend {
   private databaseController!: DatabaseController;
   private exampleController!: ExampleController;
@@ -32,7 +30,6 @@ export class Backend {
   private saleReturnController!: SaleReturnController;
   private licenseController!: LicenseController;
   private superAdminController!: SuperAdminController;
-  private grnController!: GRNController;
 
   /**
    * Initialize backend services and controllers
@@ -58,7 +55,6 @@ export class Backend {
       this.saleReturnController = new SaleReturnController();
       this.licenseController = new LicenseController();
       this.superAdminController = new SuperAdminController();
-      this.grnController = new GRNController();
 
       // Initialize all tables SEQUENTIALLY to avoid SQLite concurrency issues
       console.log('Initializing database tables...');
@@ -75,7 +71,6 @@ export class Backend {
       await this.purchaseController.initializeTables();
       await this.paymentController.initializeTables();
       await this.saleReturnController.initializeTables();
-      await this.grnController.initializeTables();
 
       // Register any additional custom handlers
       this.databaseController.registerCustomHandlers();

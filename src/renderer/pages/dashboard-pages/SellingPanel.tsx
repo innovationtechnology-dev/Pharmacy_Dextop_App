@@ -56,6 +56,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 const SUCCESS_MESSAGE_DURATION_MS = 2000;
 const DROPDOWN_BLUR_DELAY_MS = 200;
 const PRINT_FRAME_CLEANUP_MS = 500;
+const FEFO_CACHE_TTL_MS = 30000;
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -101,13 +102,49 @@ interface CartItem {
   discountAmount?: number;
   taxAmount?: number;
   finalPrice: number;
-  /** FEFO batches loaded at add-to-cart time, used to compute blended price across batches */
+  /** FEFO batches loaded at add-to-cart time, used to compute per-batch prices */
   fefoBatches?: FefoBatch[];
+  /**
+   * Per-batch price segments for this cart item.
+   * e.g. [{pills:5, price:10}, {pills:5, price:15}] means 5 pills at 10 and 5 at 15.
+   * When set, subtotal is computed from this breakdown (not unitPrice × pills).
+   */
+  batchBreakdown?: Array<{ pills: number; price: number }>;
 }
 
 /**
- * Walk the FEFO batches and compute a weighted average sell price for the given quantity.
- * e.g. 10 pills @ Rs.10 + 5 pills @ Rs.20 → blended = Rs.13.33/pill (total Rs.200).
+ * Split qty across FEFO batches and return per-segment {pills, price} pairs.
+ * Consecutive segments with the same price are merged.
+ */
+function computeBatchBreakdown(
+  batches: FefoBatch[],
+  qty: number
+): Array<{ pills: number; price: number }> {
+  if (!batches || batches.length === 0 || qty <= 0) return [];
+  let remaining = qty;
+  const raw: Array<{ pills: number; price: number }> = [];
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const consume = Math.min(batch.availablePills, remaining);
+    if (consume > 0) raw.push({ pills: consume, price: batch.sellPrice });
+    remaining -= consume;
+  }
+  if (remaining > 0 && batches.length > 0) {
+    raw.push({ pills: remaining, price: batches[batches.length - 1].sellPrice });
+  }
+  // Merge adjacent segments with identical price
+  return raw.reduce<Array<{ pills: number; price: number }>>((acc, seg) => {
+    if (acc.length > 0 && acc[acc.length - 1].price === seg.price) {
+      acc[acc.length - 1] = { pills: acc[acc.length - 1].pills + seg.pills, price: seg.price };
+    } else {
+      acc.push({ ...seg });
+    }
+    return acc;
+  }, []);
+}
+
+/**
+ * Blended (weighted average) price — kept for the unit-price input field display.
  */
 function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
   if (!batches || batches.length === 0 || qty <= 0) return 0;
@@ -119,10 +156,7 @@ function computeBlendedPrice(batches: FefoBatch[], qty: number): number {
     totalCost += consume * batch.sellPrice;
     remaining -= consume;
   }
-  // If qty exceeds available stock, use the last batch's price for the overflow
-  if (remaining > 0) {
-    totalCost += remaining * batches[batches.length - 1].sellPrice;
-  }
+  if (remaining > 0) totalCost += remaining * batches[batches.length - 1].sellPrice;
   return totalCost / qty;
 }
 
@@ -154,10 +188,14 @@ const medicineCompanyLine = (m: {
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
-  const subtotal = item.unitPrice * item.pills;
+  // Use exact per-batch total when breakdown is available; fall back to blended unit price.
+  const subtotal =
+    item.batchBreakdown && item.batchBreakdown.length > 0
+      ? item.batchBreakdown.reduce((sum, seg) => sum + seg.pills * seg.price, 0)
+      : item.unitPrice * item.pills;
   const discountAmount = (subtotal * discountPercent) / 100;
   const discountedAmount = subtotal - discountAmount;
-  const taxAmount = (discountedAmount * taxPercent) / 100; // Tax calculated on discounted amount
+  const taxAmount = (discountedAmount * taxPercent) / 100;
   const finalPrice = discountedAmount + taxAmount;
 
   return {
@@ -271,6 +309,10 @@ const SellingPanel: React.FC = () => {
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState<string | null>(null);
+  const [saleDeleteConfirm, setSaleDeleteConfirm] = useState<{
+    saleId: number;
+    saleDate: string;
+  } | null>(null);
   const isCashier = getAuthUser()?.role === 'cashier';
 
   const isWithin24Hours = useCallback((dateString?: string): boolean => {
@@ -288,6 +330,10 @@ const SellingPanel: React.FC = () => {
   const globalBarcodeBufferRef = useRef<string>('');
   const globalBarcodeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownItemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const searchRequestSeqRef = useRef(0);
+  const returnsRequestSeqRef = useRef(0);
+  const fefoCacheRef = useRef<Map<number, { ts: number; batches: FefoBatch[] }>>(new Map());
+  const fefoInFlightRef = useRef<Map<number, Promise<FefoBatch[]>>>(new Map());
 
   // Define functions first using useCallback
   const loadMedicines = useCallback(async () => {
@@ -307,6 +353,33 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error loading medicines:', error);
     }
+  }, []);
+
+  const getFefoBatches = useCallback(async (medicineId: number): Promise<FefoBatch[]> => {
+    const now = Date.now();
+    const cached = fefoCacheRef.current.get(medicineId);
+    if (cached && now - cached.ts <= FEFO_CACHE_TTL_MS) {
+      return cached.batches;
+    }
+
+    const inflight = fefoInFlightRef.current.get(medicineId);
+    if (inflight) return inflight;
+
+    const request = window.electron.ipcRenderer
+      .invoke('medicine-get-fefo-sell-batches', medicineId)
+      .then((resp: any) => {
+        if (!resp?.success || !Array.isArray(resp.data)) return [] as FefoBatch[];
+        const batches: FefoBatch[] = resp.data;
+        fefoCacheRef.current.set(medicineId, { ts: Date.now(), batches });
+        return batches;
+      })
+      .catch(() => [] as FefoBatch[])
+      .finally(() => {
+        fefoInFlightRef.current.delete(medicineId);
+      });
+
+    fefoInFlightRef.current.set(medicineId, request);
+    return request;
   }, []);
 
   const addToCart = useCallback((medicine: Medicine, quantityParam?: number) => {
@@ -395,20 +468,25 @@ const SellingPanel: React.FC = () => {
     setSearchTerm('');
     setShowSearchResults(false);
 
-    // Background: fetch FEFO batch prices and apply blended price based on actual quantity
-    window.electron.ipcRenderer.invoke('medicine-get-fefo-sell-batches', medicine.id).then((resp: any) => {
-      if (!resp?.success || !Array.isArray(resp.data) || resp.data.length === 0) return;
-      const batches: FefoBatch[] = resp.data;
+    // Background: fetch FEFO batch prices — compute per-batch breakdown + blended display price
+    void getFefoBatches(medicine.id).then((batches) => {
+      if (batches.length === 0) return;
       setCart((prev) =>
         prev.map((item) => {
           if (item.medicine.id !== medicine.id) return item;
+          const breakdown = computeBatchBreakdown(batches, item.pills);
           const blended = computeBlendedPrice(batches, item.pills);
-          if (blended <= 0) return item;
-          return recalculateSaleItem({ ...item, unitPrice: blended, fefoBatches: batches });
+          if (blended <= 0 && breakdown.length === 0) return item;
+          return recalculateSaleItem({
+            ...item,
+            unitPrice: blended > 0 ? blended : item.unitPrice,
+            fefoBatches: batches,
+            batchBreakdown: breakdown,
+          });
         })
       );
-    }).catch(() => {/* silently ignore — default price remains */});
-  }, [error, warning]);
+    });
+  }, [error, warning, getFefoBatches]);
 
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
@@ -416,6 +494,7 @@ const SellingPanel: React.FC = () => {
       return;
     }
 
+    const requestSeq = ++searchRequestSeqRef.current;
     setIsSearching(true);
     setShowSearchResults(true);
 
@@ -423,20 +502,23 @@ const SellingPanel: React.FC = () => {
       window.electron.ipcRenderer.once(
         'medicine-search-reply',
         (response: any) => {
+          if (requestSeq !== searchRequestSeqRef.current) return;
           setIsSearching(false);
           if (response.success) {
             // Hide expired items from the selling panel search.
             const filtered = (response.data || []).filter(
               (medicine: Medicine) => (medicine.sellablePills ?? 0) > 0
             );
-            setMedicines(filtered);
+            setMedicines(filtered.slice(0, 100));
           }
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-search', [term.trim()]);
     } catch (error) {
       console.error('Error searching medicines:', error);
-      setIsSearching(false);
+      if (requestSeq === searchRequestSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, []);
 
@@ -686,23 +768,29 @@ const SellingPanel: React.FC = () => {
 
   // Load returns for all sales in history to show net totals
   useEffect(() => {
+    const requestSeq = ++returnsRequestSeqRef.current;
+    if (salesHistoryList.length === 0) {
+      setSaleReturnsMap(new Map());
+      return;
+    }
+
     const loadReturnsForAllSales = async () => {
-      const returnsMap = new Map<number, number>();
-
-      for (const sale of salesHistoryList) {
-        const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
-        if (returnsResponse.success && returnsResponse.data) {
+      const results = await Promise.all(
+        salesHistoryList.map(async (sale) => {
+          const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
+          if (!returnsResponse.success || !returnsResponse.data) {
+            return [sale.saleId, 0] as const;
+          }
           const returnTotal = returnsResponse.data.reduce((sum, ret) => sum + ret.total, 0);
-          returnsMap.set(sale.saleId, returnTotal);
-        }
-      }
+          return [sale.saleId, returnTotal] as const;
+        })
+      );
 
-      setSaleReturnsMap(returnsMap);
+      if (requestSeq !== returnsRequestSeqRef.current) return;
+      setSaleReturnsMap(new Map(results));
     };
 
-    if (salesHistoryList.length > 0) {
-      loadReturnsForAllSales();
-    }
+    void loadReturnsForAllSales();
   }, [salesHistoryList]); // Fixed: Use full salesHistoryList instead of just length
 
   // Reset to new bill when sales history is loaded and no bill is selected
@@ -732,18 +820,16 @@ const SellingPanel: React.FC = () => {
     const updateDateTime = () => {
       const now = new Date();
 
-      // Update time
-      setCurrentTime(
-        now.toLocaleTimeString('en-US', {
-          hour12: true,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        })
-      );
-
-      // Update date (only when creating new sale, not viewing old ones)
+      // Update date/time only when creating a new sale (no need to tick while viewing old ones)
       if (currentBillIndex === -1) {
+        setCurrentTime(
+          now.toLocaleTimeString('en-US', {
+            hour12: true,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        );
         const day = String(now.getDate()).padStart(2, '0');
         const month = now.toLocaleString('default', { month: 'short' });
         const year = now.getFullYear();
@@ -947,17 +1033,17 @@ const SellingPanel: React.FC = () => {
 
   // Debounce search to prevent firing on every keystroke
   const debouncedSearch = useRef<NodeJS.Timeout | null>(null);
-  
+
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { value } = e.target;
     setSearchTerm(value);
     setHighlightedIndex(-1); // Reset highlight when search changes
-    
+
     // Clear previous timeout
     if (debouncedSearch.current) {
       clearTimeout(debouncedSearch.current);
     }
-    
+
     // Set new timeout - only search after 300ms of no typing
     debouncedSearch.current = setTimeout(() => {
       handleSearch(value);
@@ -1056,11 +1142,89 @@ const SellingPanel: React.FC = () => {
     [addToCart]
   );
 
-  const removeFromCart = (medicineId: number) => {
+  const removeFromCart = async (medicineId: number) => {
     clearQtyDraft(medicineId);
-    setCart((prevCart) =>
-      prevCart.filter((item) => item.medicine.id !== medicineId)
-    );
+
+    const nextCart = cart.filter((item) => item.medicine.id !== medicineId);
+
+    // New bill: local cart removal only.
+    if (currentBillIndex < 0 || !selectedSaleId) {
+      setCart(nextCart);
+      return;
+    }
+
+    // Editing a history sale: persist immediately.
+    if (isCashier && !isWithin24Hours(selectedSale?.createdAt)) {
+      return;
+    }
+
+    // If no items remain, delete the sale record itself.
+    if (nextCart.length === 0) {
+      if (selectedSale) {
+        requestDeleteSale(selectedSale.saleId, selectedSale.createdAt);
+      }
+      return;
+    }
+
+    setProcessing(true);
+    try {
+      const saleItems = nextCart.flatMap((item) => {
+        const breakdown = item.batchBreakdown;
+        if (breakdown && breakdown.length > 1) {
+          return breakdown.map((seg) => {
+            const segSubtotal = seg.pills * seg.price;
+            const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
+            const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
+            return {
+              medicineId: item.medicine.id,
+              medicineName: item.medicine.name,
+              pills: seg.pills,
+              unitPrice: seg.price,
+              discountAmount: discountAmt,
+              taxAmount: taxAmt,
+            };
+          });
+        }
+        return [{
+          medicineId: item.medicine.id,
+          medicineName: item.medicine.name,
+          pills: item.pills,
+          unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
+            ? item.batchBreakdown[0].price
+            : item.unitPrice,
+          discountAmount: item.discountAmount || 0,
+          taxAmount: item.taxAmount || 0,
+        }];
+      });
+
+      const sale = {
+        items: saleItems,
+        customerName: customerName || undefined,
+        customerPhone: customerPhone || undefined,
+        saleType: saleType || 'Regular',
+        additionalDiscount:
+          (saleType === 'Family/Relatives' || saleType === 'Charity')
+            ? additionalDiscount
+            : 0,
+        prescriptionNumber: prescriptionNumber.trim() || undefined,
+        doctorName: doctorName.trim() || undefined,
+      };
+
+      const result = await updateSale(selectedSaleId, sale);
+      if (result.success) {
+        setCart(nextCart);
+        loadMedicines();
+        loadSalesHistory();
+        refreshExpiringAlerts();
+      } else {
+        alert(`Error updating sale: ${result.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating sale after removing item:', error);
+      alert('Error updating sale. Please try again.');
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
@@ -1077,10 +1241,12 @@ const SellingPanel: React.FC = () => {
               return item;
             }
             const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, newQuantity) : 0;
+            const breakdown = item.fefoBatches ? computeBatchBreakdown(item.fefoBatches, newQuantity) : undefined;
             return recalculateSaleItem({
               ...item,
               pills: newQuantity,
               ...(blended > 0 ? { unitPrice: blended } : {}),
+              batchBreakdown: breakdown,
             });
           }
           return item;
@@ -1102,10 +1268,12 @@ const SellingPanel: React.FC = () => {
             warning(`Only ${available} pills available in stock!`);
           }
           const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, clampedQty) : 0;
+          const breakdown = item.fefoBatches ? computeBatchBreakdown(item.fefoBatches, clampedQty) : undefined;
           return recalculateSaleItem({
             ...item,
             pills: clampedQty,
             ...(blended > 0 ? { unitPrice: blended } : {}),
+            batchBreakdown: breakdown,
           });
         }
         return item;
@@ -1126,15 +1294,38 @@ const SellingPanel: React.FC = () => {
     setProcessing(true);
 
     try {
-      const sale = {
-        items: cart.map((item) => ({
+      // Flatten cart items: multi-batch items become separate sale_items with exact batch prices.
+      const saleItems = cart.flatMap((item) => {
+        const breakdown = item.batchBreakdown;
+        if (breakdown && breakdown.length > 1) {
+          return breakdown.map((seg) => {
+            const segSubtotal = seg.pills * seg.price;
+            const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
+            const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
+            return {
+              medicineId: item.medicine.id,
+              medicineName: item.medicine.name,
+              pills: seg.pills,
+              unitPrice: seg.price,
+              discountAmount: discountAmt,
+              taxAmount: taxAmt,
+            };
+          });
+        }
+        return [{
           medicineId: item.medicine.id,
           medicineName: item.medicine.name,
           pills: item.pills,
-          unitPrice: item.unitPrice,
+          unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
+            ? item.batchBreakdown[0].price
+            : item.unitPrice,
           discountAmount: item.discountAmount || 0,
           taxAmount: item.taxAmount || 0,
-        })),
+        }];
+      });
+
+      const sale = {
+        items: saleItems,
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
@@ -1215,21 +1406,21 @@ const SellingPanel: React.FC = () => {
     }
     // Always read latest from Settings so receipt reflects current pharmacy details
     const pharmacyInfo = getStoredPharmacySettings();
-    
+
     // Calculate values locally to avoid dependency issues
     const localSubtotal = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       return sum + (item.unitPrice * netPills);
     }, 0);
-    
+
     const localDiscount = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       return sum + ((itemSubtotal * item.discount) / 100);
     }, 0);
-    
+
     const localTax = cart.reduce((sum, item) => {
       const returned = returnedQuantities.get(item.medicine.id) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
@@ -1238,7 +1429,7 @@ const SellingPanel: React.FC = () => {
       const discountedAmount = itemSubtotal - itemDiscount;
       return sum + ((discountedAmount * item.tax) / 100);
     }, 0);
-    
+
     const amountGivenForReceipt =
       currentBillIndex === -1 && receivedAmount && !Number.isNaN(Number(receivedAmount))
         ? Number(receivedAmount)
@@ -1385,7 +1576,7 @@ const SellingPanel: React.FC = () => {
         setCustomerPhone(sale.customerPhone || '0000');
         setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
-        
+
         // Set additional discount from the first item (all items in a sale have the same additional discount)
         const firstItem = sale.items[0];
         if (firstItem && (firstItem.additionalDiscount !== undefined && firstItem.additionalDiscount !== null)) {
@@ -1550,7 +1741,7 @@ const SellingPanel: React.FC = () => {
 
   // Handle opening return modal
   const handleOpenReturnModal = useCallback(async () => {
-    if (!selectedSaleId || cart.length === 0) {
+    if (!selectedSaleId || !selectedSale || selectedSale.items.length === 0) {
       alert('Please select a sale first');
       return;
     }
@@ -1568,19 +1759,24 @@ const SellingPanel: React.FC = () => {
           });
         });
 
-        // Initialize return items from cart (all items, but not pre-selected)
-        const items = cart.map((item) => {
-          const alreadyReturned = returnedByMedicine.get(item.medicine.id) || 0;
-          const availableToReturn = Math.max(0, item.pills - alreadyReturned);
+        // Always initialize from persisted sale rows (DB-backed history),
+        // not from current editable cart draft values.
+        const items = selectedSale.items.map((item) => {
+          const alreadyReturned = returnedByMedicine.get(item.medicineId) || 0;
+          const soldPills = item.originalPills || item.pills;
+          const unitPrice = soldPills > 0
+            ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
+            : item.unitPrice;
+          const availableToReturn = Math.max(0, soldPills - alreadyReturned);
           return {
-            medicineId: item.medicine.id,
-            medicineName: item.medicine.name,
-            originalPills: item.pills,
+            medicineId: item.medicineId,
+            medicineName: item.medicineName,
+            originalPills: soldPills,
             availableToReturn,
             returnPills: 0, // Start with 0 - user will select which items to return
-            unitPrice: item.unitPrice,
-            discountAmount: item.discountAmount || 0,
-            taxAmount: item.taxAmount || 0,
+            unitPrice,
+            discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
+            taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
             reason: '',
           };
         }).filter(item => item.availableToReturn > 0);
@@ -1596,21 +1792,27 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error checking existing returns:', error);
       // Still allow return creation (start with 0 - user selects)
-      const items = cart.map((item) => ({
-        medicineId: item.medicine.id,
-        medicineName: item.medicine.name,
-        originalPills: item.pills,
-        availableToReturn: item.pills,
+      const items = selectedSale.items.map((item) => {
+        const soldPills = item.originalPills || item.pills;
+        const unitPrice = soldPills > 0
+          ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
+          : item.unitPrice;
+        return {
+        medicineId: item.medicineId,
+        medicineName: item.medicineName,
+        originalPills: soldPills,
+        availableToReturn: soldPills,
         returnPills: 0, // Start with 0 - user will select which items to return
-        unitPrice: item.unitPrice,
-        discountAmount: item.discountAmount || 0,
-        taxAmount: item.taxAmount || 0,
+        unitPrice,
+        discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
+        taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
         reason: '',
-      }));
+      };
+      }).filter(item => item.availableToReturn > 0);
       setReturnItems(items);
       setShowReturnModal(true);
     }
-  }, [selectedSaleId, cart]);
+  }, [selectedSaleId, selectedSale]);
 
   // Handle processing return
   const handleProcessReturn = useCallback(async () => {
@@ -1699,24 +1901,26 @@ const SellingPanel: React.FC = () => {
     }
   };
 
+  const canCurrentUserDeleteSale = useCallback((saleDate: string): boolean => {
+    if (!isCashier) {
+      return isToday(saleDate);
+    }
+    return isWithin24Hours(saleDate);
+  }, [isCashier, isWithin24Hours]);
+
+  const requestDeleteSale = useCallback((saleId: number, saleDate: string) => {
+    if (!canCurrentUserDeleteSale(saleDate)) {
+      alert(isCashier ? 'Cashiers can only delete sales created within 24 hours' : 'You can only delete sales created today');
+      return;
+    }
+    setSaleDeleteConfirm({ saleId, saleDate });
+  }, [canCurrentUserDeleteSale, isCashier]);
+
   // Handle delete sale
-  const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
-    if (isCashier) {
-      alert('Cashiers are not allowed to delete sales');
-      return;
-    }
-
-    if (!isToday(saleDate)) {
-      alert('You can only delete sales created today');
-      return;
-    }
-
-    if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
-      return;
-    }
-
+  const handleDeleteSale = useCallback(async (saleId: number) => {
     try {
       window.electron.ipcRenderer.once('sale-delete-reply', (response: any) => {
+        setSaleDeleteConfirm(null);
         if (response.success) {
           alert('Sale deleted successfully!');
           // If the deleted sale was selected, clear the form
@@ -2500,11 +2704,7 @@ const SellingPanel: React.FC = () => {
                   <h3 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wide">
                     Current Bill Items
                   </h3>
-                  {currentBillIndex >= 0 && (
-                    <div className="text-[10px] px-2 py-1 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded border border-yellow-300 dark:border-yellow-700">
-                      Viewing old sale - Use trash icon to remove items
-                    </div>
-                  )}
+
                 </div>
               </div>
               <div className="flex-1 overflow-x-auto overflow-y-auto min-h-0 overscroll-contain">
@@ -2527,11 +2727,11 @@ const SellingPanel: React.FC = () => {
                       const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
                       return (
                     <div
-                      className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
+                      className="grid w-full min-w-[720px] grid-cols-[44px_repeat(13,minmax(0,1fr))] gap-0 items-center bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 border-b-2 border-gray-300 dark:border-gray-500 text-[10px] font-bold text-gray-700 dark:text-gray-300 sticky top-0 z-10 uppercase tracking-wider [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2.5"
                     >
-                      <div className="col-span-1">Sr#</div>
-                      <div className="col-span-2">Product</div>
-                      <div className="col-span-2">Company</div>
+                      <div className="col-span-1 text-left">Sr#</div>
+                      <div className="col-span-2 text-left">Product</div>
+                      <div className="col-span-2 text-left">Company</div>
                       <div className="col-span-1 text-center">Pill QTY</div>
                       {showRetCol && (
                         <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
@@ -2539,7 +2739,7 @@ const SellingPanel: React.FC = () => {
                       <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
                       <div className="col-span-1 text-center">Tax%</div>
-                      <div className="col-span-1 text-center">Amount</div>
+                      <div className="col-span-3 text-right pr-1">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
                     </div>
                       );
@@ -2552,7 +2752,7 @@ const SellingPanel: React.FC = () => {
                       return (
                       <div
                         key={item.medicine.id}
-                        className="grid w-full min-w-[720px] grid-cols-12 gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
+                        className="grid w-full min-w-[720px] grid-cols-[44px_repeat(13,minmax(0,1fr))] gap-0 items-stretch hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent transition-colors text-xs border-b border-gray-200 dark:border-gray-600 last:border-b-0 [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2 [&>div]:sm:px-2.5 [&>div]:py-2 [&>div]:min-h-[3rem]"
                       >
                         <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
                           {index + 1}
@@ -2679,15 +2879,41 @@ const SellingPanel: React.FC = () => {
                           </div>
                         )}
                         <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center min-w-0`}>
-
-                          <input
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={item.unitPrice.toFixed(1)}
-                            readOnly
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
-                          />
+                          {item.batchBreakdown && item.batchBreakdown.length > 1 ? (
+                            /* Multi-batch: stacked rows, one per batch (old/new stock split by FEFO). */
+                            <div
+                              className="w-full border border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-300 rounded overflow-hidden divide-y divide-amber-200 dark:divide-amber-700 tabular-nums"
+                              title={item.batchBreakdown.map((seg) => `${seg.pills}x ${symbol}${seg.price.toFixed(1)}`).join(' + ')}
+                            >
+                              {item.batchBreakdown.map((seg, segIdx) => {
+                                const stockLabel = segIdx === 0 ? '(old)' : '(new)';
+                                return (
+                                  <div
+                                    key={segIdx}
+                                    className="flex items-center justify-between gap-1 px-1.5 py-0.5 text-[10px] font-semibold"
+                                  >
+                                    <span className="text-amber-600 dark:text-amber-500 text-[9px] font-normal">
+                                      {stockLabel}
+                                    </span>
+                                    <span>{seg.pills}</span>
+                                    <span>{symbol}{seg.price.toFixed(1)}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={(item.batchBreakdown && item.batchBreakdown.length === 1
+                                ? item.batchBreakdown[0].price
+                                : item.unitPrice
+                              ).toFixed(1)}
+                              readOnly
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 rounded cursor-not-allowed"
+                            />
+                          )}
                         </div>
                         <div className="col-span-1 text-center">
                           <input
@@ -2738,7 +2964,7 @@ const SellingPanel: React.FC = () => {
                               if (val > 100) val = 100;
                               updateCartItemField(id, 'discount', val);
                             }}
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
@@ -2791,20 +3017,12 @@ const SellingPanel: React.FC = () => {
                               if (val > 100) val = 100;
                               updateCartItemField(id, 'tax', val);
                             }}
-                            className="w-full px-1.5 py-1 text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
+                            className="w-full px-1.5 py-1 text-center text-[11px] font-semibold border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded focus:ring-1 focus:ring-emerald-500/50 focus:border-emerald-500 outline-none transition-all"
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-1 text-center font-bold text-emerald-600 dark:text-emerald-400 text-xs min-w-0 truncate">
-                          {symbol}{(() => {
-                            // Backend already provides net pillars and total
-                            const netPills = item.pills;
-                            const itemSubtotal = item.unitPrice * netPills;
-                            const itemDiscount = (itemSubtotal * item.discount) / 100;
-                            const discountedAmount = itemSubtotal - itemDiscount;
-                            const itemTax = (discountedAmount * item.tax) / 100;
-                            return (discountedAmount + itemTax).toFixed(1);
-                          })()}
+                        <div className="col-span-3 flex items-center justify-end pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap">
+                          {symbol}{item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                         <div className="col-span-1 text-center">
                           <button
@@ -2813,7 +3031,7 @@ const SellingPanel: React.FC = () => {
                               if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
                               removeFromCart(item.medicine.id);
                             }}
-                            disabled={isCashier && currentBillIndex >= 0}
+                            disabled={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
                             className={`p-1.5 transition-all border border-transparent ${
                               isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)
                                 ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
@@ -2952,7 +3170,7 @@ const SellingPanel: React.FC = () => {
                             -{formatCurrency(discountValue)}
                           </div>
                         </div>
-                        
+
                         <div className="flex items-center justify-between gap-4">
                           <div
                             className={`font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide ${
@@ -2969,7 +3187,7 @@ const SellingPanel: React.FC = () => {
                             +{formatCurrency(taxValue)}
                           </div>
                         </div>
-                        
+
                         {/* SPECIAL DISCOUNT SECTION - Only show for Family/Relatives, Charity, or Employee */}
                         {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <>
@@ -3067,7 +3285,7 @@ const SellingPanel: React.FC = () => {
                             {formatCurrency(subtotalValue)}
                           </div>
                         </div>
-                        
+
                         {/* Additional Discount Amount - Only show when discount is applied */}
                         {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
                           <div className="flex items-center justify-between gap-4">
@@ -3087,7 +3305,7 @@ const SellingPanel: React.FC = () => {
                             </div>
                           </div>
                         )}
-                        
+
                         <div className={`flex items-center justify-between gap-4 border-t border-gray-200 dark:border-gray-600 ${expandedSaleSummary ? 'pt-1 mt-0' : 'pt-1.5 mt-1.5'}`}>
                           <div
                             className={`font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wide ${
@@ -3221,13 +3439,13 @@ const SellingPanel: React.FC = () => {
 
                           {(() => {
                             const sale = salesHistoryList.find(s => s.saleId === selectedSaleId);
-                            const canDelete = sale && isToday(sale.createdAt);
+                            const canDelete = !!(sale && canCurrentUserDeleteSale(sale.createdAt));
                             return (
                               <button
                                 type="button"
                                 onClick={() => {
                                   if (sale) {
-                                    handleDeleteSale(sale.saleId, sale.createdAt);
+                                    requestDeleteSale(sale.saleId, sale.createdAt);
                                   }
                                 }}
                                 disabled={!canDelete}
@@ -3236,7 +3454,13 @@ const SellingPanel: React.FC = () => {
                                     ? 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
                                     : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
                                 }`}
-                                title={canDelete ? 'Delete this sale' : 'Can only delete today\'s sales'}
+                                title={
+                                  canDelete
+                                    ? 'Delete this sale'
+                                    : (isCashier
+                                      ? 'Cashiers can only delete sales created within 24 hours'
+                                      : 'Can only delete today\'s sales')
+                                }
                               >
                                 <FiTrash2 className="w-3.5 h-3.5" />
                                 <span>Delete</span>
@@ -3503,6 +3727,35 @@ const SellingPanel: React.FC = () => {
       </div>
 
       {/* Return Modal */}
+      {saleDeleteConfirm && (
+        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              Delete Sale
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+              Are you sure you want to delete this sale? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setSaleDeleteConfirm(null)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteSale(saleDeleteConfirm.saleId)}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReturnModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => {

@@ -70,7 +70,6 @@ export class DatabaseController {
           customers: 0,
           suppliers: 0,
           saleReturns: 0,
-          grns: 0,
         };
 
         // Helper to safely get count
@@ -92,7 +91,6 @@ export class DatabaseController {
         counts.customers = await getCount('customers');
         counts.suppliers = await getCount('suppliers');
         counts.saleReturns = await getCount('sale_returns');
-        counts.grns = await getCount('goods_received_notes');
 
         event.reply('get-table-counts-reply', { success: true, data: counts });
       } catch (error) {
@@ -125,9 +123,9 @@ export class DatabaseController {
         
         // Map selected tables to actual table names and dependencies
         const tableMap: Record<string, string[]> = {
-          saleReturns: ['sale_return_items', 'sale_returns'],
-          sales: ['sale_items', 'sales'],
-          purchases: ['purchase_payments', 'purchase_items', 'purchases', 'grn_items', 'goods_received_notes'],
+          saleReturns: ['return_item_batches', 'sale_return_items', 'sale_returns'],
+          sales: ['sale_item_batches', 'sale_items', 'sales'],
+          purchases: ['return_item_batches', 'sale_item_batches', 'purchase_payments', 'purchase_items', 'stock_batches', 'purchases'],
           medicines: ['medicines'],
           customers: ['customers'],
           suppliers: ['suppliers'],
@@ -157,15 +155,16 @@ export class DatabaseController {
         
         // Delete in correct order to respect foreign keys
         const deleteOrder = [
+          'return_item_batches',
+          'sale_item_batches',
           'sale_return_items',
           'sale_returns',
           'sale_items',
           'sales',
           'purchase_payments',
           'purchase_items',
+          'stock_batches',
           'purchases',
-          'grn_items',
-          'goods_received_notes',
           'medicines',
           'customers',
           'suppliers',

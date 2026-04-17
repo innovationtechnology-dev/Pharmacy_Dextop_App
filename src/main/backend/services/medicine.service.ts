@@ -168,10 +168,129 @@ export class MedicineService {
 
     // Fix child tables that still reference dropped medicines_legacy (one-time repair)
     await repairMedicineForeignKeyReferences(this.dbService);
+
+    // --- stock_batches: single source of truth for live inventory ---
+    await this.dbService.execute(`
+      CREATE TABLE IF NOT EXISTS stock_batches (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        medicine_id           INTEGER NOT NULL,
+        purchase_item_id      INTEGER,
+        batch_number          TEXT,
+        expiry_date           TEXT NOT NULL,
+        qty_received          INTEGER NOT NULL,
+        qty_remaining         INTEGER NOT NULL,
+        cost_price_per_pill   REAL NOT NULL DEFAULT 0,
+        selling_price_per_pill REAL NOT NULL DEFAULT 0,
+        created_at            DATETIME DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (medicine_id) REFERENCES medicines(id),
+        FOREIGN KEY (purchase_item_id) REFERENCES purchase_items(id) ON DELETE SET NULL
+      )
+    `);
+
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_stock_batches_medicine_id ON stock_batches(medicine_id)
+    `);
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_stock_batches_expiry_date ON stock_batches(expiry_date)
+    `);
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_stock_batches_purchase_item_id ON stock_batches(purchase_item_id)
+    `);
+
+    // --- sale_item_batches: audit trail of which batch supplied each sale item ---
+    await this.dbService.execute(`
+      CREATE TABLE IF NOT EXISTS sale_item_batches (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_item_id   INTEGER NOT NULL,
+        stock_batch_id INTEGER NOT NULL,
+        qty_deducted   INTEGER NOT NULL,
+        FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (stock_batch_id) REFERENCES stock_batches(id)
+      )
+    `);
+
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_sale_item_batches_sale_item_id ON sale_item_batches(sale_item_id)
+    `);
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_sale_item_batches_stock_batch_id ON sale_item_batches(stock_batch_id)
+    `);
+
+    // --- return_item_batches: audit trail of which batch received returned pills ---
+    await this.dbService.execute(`
+      CREATE TABLE IF NOT EXISTS return_item_batches (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        sale_return_item_id INTEGER NOT NULL,
+        stock_batch_id      INTEGER NOT NULL,
+        qty_restored        INTEGER NOT NULL,
+        FOREIGN KEY (sale_return_item_id) REFERENCES sale_return_items(id) ON DELETE CASCADE,
+        FOREIGN KEY (stock_batch_id) REFERENCES stock_batches(id)
+      )
+    `);
+
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_return_item_batches_sale_return_item_id ON return_item_batches(sale_return_item_id)
+    `);
+
+    // --- Idempotent migration: populate stock_batches from existing purchase_items ---
+    // Only runs once on first launch after this schema upgrade.
+    const stockBatchCount = await this.dbService.queryOne(
+      `SELECT COUNT(*) as cnt FROM stock_batches`
+    );
+    const purchaseItemCount = await this.dbService.queryOne(
+      `SELECT COUNT(*) as cnt FROM purchase_items`
+    );
+    if ((stockBatchCount?.cnt ?? 0) === 0 && (purchaseItemCount?.cnt ?? 0) > 0) {
+      await this.dbService.execute(`
+        INSERT INTO stock_batches (
+          medicine_id,
+          purchase_item_id,
+          batch_number,
+          expiry_date,
+          qty_received,
+          qty_remaining,
+          cost_price_per_pill,
+          selling_price_per_pill,
+          created_at
+        )
+        SELECT
+          pi.medicine_id,
+          pi.id,
+          pi.batch_number,
+          pi.expiry_date,
+          pi.total_pills,
+          pi.available_pills,
+          pi.price_per_pill,
+          CASE
+            WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
+            WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+            ELSE pi.price_per_pill
+          END,
+          datetime('now','localtime')
+        FROM purchase_items pi
+      `);
+      console.log('[stock_batches] Migration complete: populated from purchase_items.');
+    }
+
+    // Patch any stock_batches rows with selling_price_per_pill = 0 (back-fill from purchase_items)
+    await this.dbService.execute(`
+      UPDATE stock_batches
+      SET selling_price_per_pill = (
+        SELECT CASE
+          WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+          ELSE stock_batches.cost_price_per_pill
+        END
+        FROM purchase_items pi
+        WHERE pi.id = stock_batches.purchase_item_id
+      )
+      WHERE selling_price_per_pill = 0
+        AND purchase_item_id IS NOT NULL
+    `);
   }
 
   /**
    * Base SELECT with aggregated inventory details.
+   * Stock data comes from stock_batches (qty_remaining), not purchase_items.available_pills.
    */
   private get baseInventorySelect(): string {
     return `
@@ -190,52 +309,52 @@ export class MedicineService {
             OR EXISTS (SELECT 1 FROM sale_return_items WHERE medicine_id = m.id LIMIT 1)
           THEN 1 ELSE 0
         END AS has_transaction_history,
-        COALESCE(SUM(pi.available_pills), 0) AS total_available_pills,
+        COALESCE(SUM(sb.qty_remaining), 0) AS total_available_pills,
         -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
         COALESCE(
-          SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END),
+          SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS sellable_pills,
         -- Normal (more than NEAR_THRESHOLD_DAYS)
         COALESCE(
-          SUM(CASE WHEN date(pi.expiry_date) >= ${NEAR_THRESHOLD_EXPRESSION} THEN pi.available_pills ELSE 0 END),
+          SUM(CASE WHEN date(sb.expiry_date) >= ${NEAR_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS normal_expiry_pills,
         -- Near (>= critical threshold AND < near threshold)
         COALESCE(
-          SUM(CASE WHEN date(pi.expiry_date) >= ${CRITICAL_THRESHOLD_EXPRESSION}
-                   AND date(pi.expiry_date) < ${NEAR_THRESHOLD_EXPRESSION}
-                   THEN pi.available_pills ELSE 0 END),
+          SUM(CASE WHEN date(sb.expiry_date) >= ${CRITICAL_THRESHOLD_EXPRESSION}
+                   AND date(sb.expiry_date) < ${NEAR_THRESHOLD_EXPRESSION}
+                   THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS near_expiry_pills,
         -- Critical (>= today AND < critical threshold)
         COALESCE(
-          SUM(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
-                   AND date(pi.expiry_date) < ${CRITICAL_THRESHOLD_EXPRESSION}
-                   THEN pi.available_pills ELSE 0 END),
+          SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+                   AND date(sb.expiry_date) < ${CRITICAL_THRESHOLD_EXPRESSION}
+                   THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS critical_expiry_pills,
-        -- Next expiry date among unexpired batches (FEFO uses ordering anyway)
-        MIN(CASE WHEN date(pi.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
-                 THEN date(pi.expiry_date) ELSE NULL END) AS next_expiry_date,
-        -- Selling price: always driven by the single FEFO batch (oldest expiry with stock > 0).
-        -- 1. If selling_price_per_pill was set at purchase time for that batch → use it.
-        -- 2. Otherwise fall back to that same batch's own gross price per pill (price_per_packet / pills_per_packet).
-        -- This ensures old stock always shows its own price, not a blend with newer batches.
+        -- Next expiry date among unexpired batches with remaining stock
+        MIN(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} AND sb.qty_remaining > 0
+                 THEN date(sb.expiry_date) ELSE NULL END) AS next_expiry_date,
+        -- Selling price: FEFO batch (oldest unexpired with qty_remaining > 0).
+        -- Falls back to price_per_packet/pills_per_packet from purchase_items, then cost_price_per_pill.
         (
           SELECT CASE
-            WHEN pi2.selling_price_per_pill > 0 THEN pi2.selling_price_per_pill
-            ELSE (pi2.price_per_packet * 1.0 / pi2.pills_per_packet)
+            WHEN sb2.selling_price_per_pill > 0 THEN sb2.selling_price_per_pill
+            WHEN pi2.pills_per_packet > 0 THEN (pi2.price_per_packet * 1.0 / pi2.pills_per_packet)
+            ELSE sb2.cost_price_per_pill
           END
-          FROM purchase_items pi2
-          WHERE pi2.medicine_id = m.id
-            AND date(pi2.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
-            AND pi2.available_pills > 0
-          ORDER BY date(pi2.expiry_date) ASC, pi2.id ASC
+          FROM stock_batches sb2
+          LEFT JOIN purchase_items pi2 ON pi2.id = sb2.purchase_item_id
+          WHERE sb2.medicine_id = m.id
+            AND date(sb2.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+            AND sb2.qty_remaining > 0
+          ORDER BY date(sb2.expiry_date) ASC, sb2.id ASC
           LIMIT 1
         ) AS avg_sellable_price_per_pill
       FROM medicines m
-      LEFT JOIN purchase_items pi ON pi.medicine_id = m.id
+      LEFT JOIN stock_batches sb ON sb.medicine_id = m.id
     `;
   }
 
@@ -590,6 +709,7 @@ export class MedicineService {
 
   /**
    * Get medicines whose stock expires within a threshold.
+   * Reads from stock_batches.qty_remaining (live inventory).
    */
   public async getExpiringMedicines(thresholdDays: number = 30): Promise<ExpiringMedicineAlert[]> {
     const sql = `
@@ -597,17 +717,17 @@ export class MedicineService {
         m.id,
         m.name,
         m.barcode,
-        MIN(pi.expiry_date) AS next_expiry_date,
-        SUM(pi.available_pills) AS available_pills,
-        CAST((julianday(MIN(pi.expiry_date)) - julianday('now')) AS INTEGER) AS days_until_expiry
+        MIN(sb.expiry_date) AS next_expiry_date,
+        SUM(sb.qty_remaining) AS available_pills,
+        CAST((julianday(MIN(sb.expiry_date)) - julianday('now')) AS INTEGER) AS days_until_expiry
       FROM medicines m
-      JOIN purchase_items pi ON pi.medicine_id = m.id
-      WHERE pi.available_pills > 0
-        AND pi.expiry_date IS NOT NULL
-        AND date(pi.expiry_date) >= date('now')
-        AND date(pi.expiry_date) <= date('now', '+' || ? || ' days')
+      JOIN stock_batches sb ON sb.medicine_id = m.id
+      WHERE sb.qty_remaining > 0
+        AND sb.expiry_date IS NOT NULL
+        AND date(sb.expiry_date) >= date('now')
+        AND date(sb.expiry_date) <= date('now', '+' || ? || ' days')
       GROUP BY m.id, m.name, m.barcode
-      ORDER BY MIN(pi.expiry_date) ASC
+      ORDER BY MIN(sb.expiry_date) ASC
     `;
 
     const rows = await this.dbService.query(sql, [thresholdDays]);
@@ -626,6 +746,7 @@ export class MedicineService {
   /**
    * Return medicines whose current sellable stock is below their minimum_stock_level.
    * Only includes medicines that have minimum_stock_level > 0.
+   * Reads from stock_batches.qty_remaining (live inventory).
    */
   public async getLowStockMedicines(): Promise<LowStockAlert[]> {
     const sql = `
@@ -635,13 +756,13 @@ export class MedicineService {
         m.barcode,
         COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
         COALESCE(SUM(CASE
-          WHEN pi.expiry_date IS NULL OR date(pi.expiry_date) >= date('now')
-          THEN pi.available_pills ELSE 0 END), 0) AS sellable_pills
+          WHEN sb.expiry_date IS NULL OR date(sb.expiry_date) >= date('now')
+          THEN sb.qty_remaining ELSE 0 END), 0) AS sellable_pills
       FROM medicines m
-      LEFT JOIN purchase_items pi ON pi.medicine_id = m.id
+      LEFT JOIN stock_batches sb ON sb.medicine_id = m.id
       WHERE m.minimum_stock_level > 0
         AND m.status = 'active'
-        AND EXISTS (SELECT 1 FROM purchase_items WHERE medicine_id = m.id)
+        AND EXISTS (SELECT 1 FROM stock_batches WHERE medicine_id = m.id)
       GROUP BY m.id
       HAVING sellable_pills < m.minimum_stock_level
       ORDER BY (m.minimum_stock_level - sellable_pills) DESC
@@ -658,33 +779,33 @@ export class MedicineService {
   }
   /**
    * Get detailed inventory information (batches) for a specific medicine.
+   * Reads live stock from stock_batches; joins purchase_items for financial display data.
    */
   public async getMedicineInventoryDetails(medicineId: number): Promise<any[]> {
     const sql = `
       SELECT 
-        pi.purchase_id AS purchaseId,
+        sb.id AS stockBatchId,
+        COALESCE(pi.purchase_id, NULL) AS purchaseId,
         m.name AS medicineName,
         m.pill_quantity AS pillQuantity,
-        pi.total_pills AS totalPills,
-        pi.available_pills AS availablePills,
-        (pi.total_pills - pi.available_pills) AS soldPills,
-        p.created_at AS purchaseDate,
-        p.supplier_name AS supplierName,
-        pi.expiry_date AS expiryDate,
-        pi.price_per_packet AS originalPricePerPacket,
+        sb.qty_received AS totalPills,
+        sb.qty_remaining AS availablePills,
+        (sb.qty_received - sb.qty_remaining) AS soldPills,
+        COALESCE(p.created_at, sb.created_at) AS purchaseDate,
+        COALESCE(p.supplier_name, '') AS supplierName,
+        sb.expiry_date AS expiryDate,
+        COALESCE(pi.price_per_packet, 0) AS originalPricePerPacket,
         CASE 
-          WHEN pi.packet_quantity > 0 THEN (pi.discount_amount / pi.packet_quantity)
+          WHEN pi.packet_quantity > 0 THEN COALESCE(pi.discount_amount / pi.packet_quantity, 0)
           ELSE 0 
         END AS discountPerPacket,
-        CASE 
-          WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
-          ELSE (pi.price_per_packet * 1.0 / NULLIF(pi.pills_per_packet, 0))
-        END AS sellingPricePerPill
-      FROM purchase_items pi
-      JOIN purchases p ON pi.purchase_id = p.id
-      JOIN medicines m ON pi.medicine_id = m.id
-      WHERE pi.medicine_id = ?
-      ORDER BY p.created_at DESC
+        sb.selling_price_per_pill AS sellingPricePerPill
+      FROM stock_batches sb
+      LEFT JOIN purchase_items pi ON pi.id = sb.purchase_item_id
+      LEFT JOIN purchases p ON p.id = pi.purchase_id
+      JOIN medicines m ON m.id = sb.medicine_id
+      WHERE sb.medicine_id = ?
+      ORDER BY COALESCE(p.created_at, sb.created_at) DESC
     `;
     return await this.dbService.query(sql, [medicineId]);
   }
@@ -692,19 +813,23 @@ export class MedicineService {
   /**
    * Return FEFO-ordered unexpired batches with their effective sell price per pill.
    * Used by the selling panel to compute a blended price when a quantity spans multiple batches.
+   * Reads from stock_batches (live inventory).
    */
   public async getFefoSellBatches(medicineId: number): Promise<Array<{ availablePills: number; sellPrice: number }>> {
     const sql = `
       SELECT
-        available_pills AS availablePills,
-        CASE WHEN selling_price_per_pill > 0 THEN selling_price_per_pill
-             ELSE (price_per_packet * 1.0 / pills_per_packet)
+        sb.qty_remaining AS availablePills,
+        CASE
+          WHEN sb.selling_price_per_pill > 0 THEN sb.selling_price_per_pill
+          WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+          ELSE sb.cost_price_per_pill
         END AS sellPrice
-      FROM purchase_items
-      WHERE medicine_id = ?
-        AND date(expiry_date) >= date('now')
-        AND available_pills > 0
-      ORDER BY date(expiry_date) ASC, id ASC
+      FROM stock_batches sb
+      LEFT JOIN purchase_items pi ON pi.id = sb.purchase_item_id
+      WHERE sb.medicine_id = ?
+        AND date(sb.expiry_date) >= date('now')
+        AND sb.qty_remaining > 0
+      ORDER BY date(sb.expiry_date) ASC, sb.id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
   }

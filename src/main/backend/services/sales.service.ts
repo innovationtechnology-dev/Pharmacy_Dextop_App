@@ -310,13 +310,26 @@ export class SalesService {
       CREATE INDEX IF NOT EXISTS idx_sales_created_at ON sales(created_at)
     `);
 
-    // One-time migration to update sale_items cost_price from corrected purchase_items
+    // One-time migration: update sale_items cost_price from stock_batches
     await this.dbService.execute(`
-      UPDATE sale_items 
-      SET 
-        cost_price = (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id),
-        cost_subtotal = pills * (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)
-      WHERE cost_price = 0 OR ABS(cost_price - (SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = sale_items.medicine_id)) > 0.001
+      UPDATE sale_items
+      SET
+        cost_price = (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        ),
+        cost_subtotal = pills * (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        )
+      WHERE cost_price = 0
+        OR ABS(cost_price - (
+          SELECT AVG(sb.cost_price_per_pill)
+          FROM stock_batches sb
+          WHERE sb.medicine_id = sale_items.medicine_id
+        )) > 0.001
     `);
   }
 
@@ -372,11 +385,11 @@ export class SalesService {
 
   private async getSellableInventory(medicineId: number): Promise<{ id: number; available_pills: number; }[]> {
     const sql = `
-      SELECT id, available_pills
-      FROM purchase_items
+      SELECT id, qty_remaining AS available_pills
+      FROM stock_batches
       WHERE medicine_id = ?
         AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
-        AND available_pills > 0
+        AND qty_remaining > 0
       ORDER BY date(expiry_date) ASC, id ASC
     `;
     return this.dbService.query(sql, [medicineId]);
@@ -390,7 +403,11 @@ export class SalesService {
     }
   }
 
-  private async deductInventory(medicineId: number, pillsToDeduct: number): Promise<void> {
+  /**
+   * Deduct pills from stock_batches (FEFO order) and record the allocation
+   * in sale_item_batches for exact audit trail and future restoration.
+   */
+  private async deductInventory(medicineId: number, pillsToDeduct: number, saleItemId: number): Promise<void> {
     let remaining = pillsToDeduct;
     const batches = await this.getSellableInventory(medicineId);
 
@@ -398,8 +415,12 @@ export class SalesService {
       if (remaining <= 0) break;
       const consume = Math.min(batch.available_pills, remaining);
       await this.dbService.execute(
-        'UPDATE purchase_items SET available_pills = available_pills - ? WHERE id = ?',
+        'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
         [consume, batch.id]
+      );
+      await this.dbService.execute(
+        'INSERT INTO sale_item_batches (sale_item_id, stock_batch_id, qty_deducted) VALUES (?, ?, ?)',
+        [saleItemId, batch.id, consume]
       );
       remaining -= consume;
     }
@@ -456,18 +477,18 @@ export class SalesService {
       ]);
       const saleId = (saleResult as any).lastID;
 
-      // Batch fetch all cost prices at once to avoid N+1 query problem
+      // Batch fetch all cost prices at once from stock_batches (live inventory)
       const medicineIds = computedItems.map(item => item.medicineId);
       const uniqueMedicineIds = [...new Set(medicineIds)];
       const placeholders = uniqueMedicineIds.map(() => '?').join(',');
-      
+
       const costResults = await this.dbService.query(`
-        SELECT 
+        SELECT
           medicine_id,
-          AVG(price_per_pill) as avg_cost 
-        FROM purchase_items 
+          AVG(cost_price_per_pill) as avg_cost
+        FROM stock_batches
         WHERE medicine_id IN (${placeholders})
-          AND available_pills > 0
+          AND qty_remaining > 0
           AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
         GROUP BY medicine_id
       `, uniqueMedicineIds);
@@ -485,7 +506,7 @@ export class SalesService {
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const saleItemResult = await this.dbService.execute(insertItemSql, [
           saleId,
           item.medicineId,
           item.medicineName,
@@ -498,8 +519,9 @@ export class SalesService {
           item.taxAmount ?? 0,
           item.total,
         ]);
+        const saleItemId = (saleItemResult as any).lastID;
 
-        await this.deductInventory(item.medicineId, item.pills);
+        await this.deductInventory(item.medicineId, item.pills, saleItemId);
       }
 
       await this.dbService.execute('COMMIT');
@@ -583,28 +605,60 @@ export class SalesService {
   }
 
   /**
-   * Delete a sale and its items, restoring inventory.
+   * Delete a sale and its items, restoring inventory via exact sale_item_batches lookup.
    */
   public async deleteSale(saleId: number): Promise<void> {
-    // Check if sale exists
     const sale = await this.dbService.queryOne('SELECT id FROM sales WHERE id = ?', [saleId]);
     if (!sale) {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
-    // Get sale items to restore inventory
-    const saleItems = await this.dbService.query('SELECT medicine_id, pills FROM sale_items WHERE sale_id = ?', [saleId]);
+    const saleItems = await this.dbService.query('SELECT id, medicine_id, pills FROM sale_items WHERE sale_id = ?', [saleId]);
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Restore inventory for each item
-      for (const item of saleItems) {
-        await this.restoreInventory(item.medicine_id, item.pills);
+      // 1) Reverse and remove any sale returns linked to this sale
+      const saleReturns = await this.dbService.query(
+        'SELECT id FROM sale_returns WHERE sale_id = ?',
+        [saleId]
+      );
+      const saleReturnIds = saleReturns.map((row: any) => row.id);
+
+      if (saleReturnIds.length > 0) {
+        const placeholders = saleReturnIds.map(() => '?').join(',');
+
+        // Reverse inventory restoration done at return time.
+        const batchRestorations = await this.dbService.query(
+          `SELECT rib.stock_batch_id, rib.qty_restored
+           FROM return_item_batches rib
+           JOIN sale_return_items sri ON sri.id = rib.sale_return_item_id
+           WHERE sri.sale_return_id IN (${placeholders})`,
+          saleReturnIds
+        );
+
+        for (const row of batchRestorations) {
+          await this.dbService.execute(
+            'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+            [row.qty_restored, row.stock_batch_id]
+          );
+        }
+
+        // Remove return line items and return headers.
+        await this.dbService.execute(
+          `DELETE FROM sale_return_items WHERE sale_return_id IN (${placeholders})`,
+          saleReturnIds
+        );
+        await this.dbService.execute('DELETE FROM sale_returns WHERE sale_id = ?', [saleId]);
       }
 
-      // Delete sale items first
+      // 2) Restore inventory originally deducted by the sale
+      for (const item of saleItems) {
+        await this.restoreInventory(item.id, item.medicine_id, item.pills);
+      }
+
+      // 3) Delete sale records
+      // sale_items DELETE cascades sale_item_batches via FK ON DELETE CASCADE
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
-      // Delete the sale
       await this.dbService.execute('DELETE FROM sales WHERE id = ?', [saleId]);
       await this.dbService.execute('COMMIT');
     } catch (error) {
@@ -647,50 +701,59 @@ export class SalesService {
   }
 
   /**
-   * Restore inventory by adding pills back to purchase_items
-   * Uses FIFO (First In First Out) - adds to the oldest batch first
+   * Restore inventory by reversing the exact batch allocations recorded in sale_item_batches.
+   * Falls back to FEFO on stock_batches if no audit record exists (pre-migration data).
    */
-  private async restoreInventory(medicineId: number, pillsToRestore: number): Promise<void> {
-    // Get purchase items for this medicine, ordered by expiry date (oldest first)
-    const sql = `
-      SELECT id, total_pills, available_pills
-      FROM purchase_items
-      WHERE medicine_id = ?
-        AND expiry_date >= date('now', '+30 days')
-      ORDER BY expiry_date ASC, id ASC
-    `;
-    const batches = await this.dbService.query(sql, [medicineId]);
+  private async restoreInventory(saleItemId: number, medicineId: number, pillsToRestore: number): Promise<void> {
+    // Prefer exact restoration using the audit trail
+    const batchRows = await this.dbService.query(
+      'SELECT stock_batch_id, qty_deducted FROM sale_item_batches WHERE sale_item_id = ?',
+      [saleItemId]
+    );
 
-    if (batches.length === 0) {
-      console.warn(`No valid purchase batches found for medicine ${medicineId} to restore inventory`);
+    if (batchRows.length > 0) {
+      for (const row of batchRows) {
+        await this.dbService.execute(
+          'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
+          [row.qty_deducted, row.stock_batch_id]
+        );
+      }
       return;
     }
 
-    let remaining = pillsToRestore;
+    // Fallback: no audit record (pre-migration sale) — restore to FEFO batches in stock_batches
+    console.warn(`[restoreInventory] No sale_item_batches found for sale_item ${saleItemId}. Using FEFO fallback for medicine ${medicineId}.`);
+    const batches = await this.dbService.query(
+      `SELECT id, qty_received, qty_remaining FROM stock_batches
+       WHERE medicine_id = ? ORDER BY date(expiry_date) ASC, id ASC`,
+      [medicineId]
+    );
 
-    // Restore pills to batches, starting with the oldest
+    let remaining = pillsToRestore;
     for (const batch of batches) {
       if (remaining <= 0) break;
-      
-      const maxCanRestore = batch.total_pills - batch.available_pills;
-      if (maxCanRestore <= 0) continue; // This batch is already full
-
+      const maxCanRestore = batch.qty_received - batch.qty_remaining;
+      if (maxCanRestore <= 0) continue;
       const restore = Math.min(maxCanRestore, remaining);
       await this.dbService.execute(
-        'UPDATE purchase_items SET available_pills = available_pills + ? WHERE id = ?',
+        'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
         [restore, batch.id]
       );
       remaining -= restore;
     }
 
     if (remaining > 0) {
-      console.warn(`Could not restore ${remaining} pills for medicine ${medicineId} - original batches may have been deleted`);
+      console.warn(`[restoreInventory] Could not restore ${remaining} pills for medicine ${medicineId} — batches may have been deleted.`);
     }
   }
 
   /**
    * Update an existing sale and adjust inventory accordingly.
-   * Restores inventory for removed items and deducts for added items.
+   *
+   * Flow: restore all old items via their audit trail → delete old sale_items
+   * (which cascades sale_item_batches) → insert new sale_items → deduct
+   * inventory for each using the new sale_item_id. This keeps the audit trail
+   * consistent whether items are added, removed, or have their quantities changed.
    */
   public async updateSale(
     saleId: number,
@@ -702,13 +765,12 @@ export class SalesService {
       throw new Error('At least one medicine must be included in a sale.');
     }
 
-    // Get the original sale
     const originalSale = await this.getSaleById(saleId);
     if (!originalSale) {
       throw new Error(`Sale with id ${saleId} not found`);
     }
 
-    // Get all previous returns for this sale to ensure update doesn't conflict
+    // Ensure the update doesn't leave fewer pills than already returned for any medicine.
     const previousReturns = await this.dbService.query(
       `SELECT sri.medicine_id, sri.medicine_name, SUM(sri.pills) as total_returned
        FROM sale_return_items sri
@@ -718,65 +780,43 @@ export class SalesService {
       [saleId]
     );
 
-    const returnedQuantities = new Map<number, { name: string; pills: number }>();
-    previousReturns.forEach((ret: any) => {
-      returnedQuantities.set(ret.medicine_id, { name: ret.medicine_name, pills: ret.total_returned || 0 });
-    });
-
     const computedItems = payload.items.map((item) => this.computeSaleItem(item));
 
-    // Validate new quantities against returned quantities
-    for (const [medicineId, returned] of returnedQuantities.entries()) {
-      const newItem = computedItems.find(item => item.medicineId === medicineId);
-      const newPills = newItem ? newItem.pills : 0;
-      
-      if (newPills < returned.pills) {
+    // Aggregate by medicine (same medicine may appear on multiple lines)
+    const newPillsByMedicine = new Map<number, number>();
+    computedItems.forEach(item => {
+      newPillsByMedicine.set(item.medicineId, (newPillsByMedicine.get(item.medicineId) || 0) + item.pills);
+    });
+
+    for (const ret of previousReturns) {
+      const newPills = newPillsByMedicine.get(ret.medicine_id) || 0;
+      const returnedPills = ret.total_returned || 0;
+      if (newPills < returnedPills) {
         throw new Error(
-          `Cannot reduce ${returned.name} to ${newPills} pills because ${returned.pills} pills have already been returned. ` +
+          `Cannot reduce ${ret.medicine_name} to ${newPills} pills because ${returnedPills} pills have already been returned. ` +
           `Please adjust the return records first.`
         );
       }
     }
 
-    // Calculate differences
-    const originalItemsMap = new Map<number, number>();
+    // Check availability against NET delta per medicine. After we restore the old
+    // quantities, only the positive difference must still be satisfiable.
+    const originalPillsByMedicine = new Map<number, number>();
     originalSale.items.forEach(item => {
-      originalItemsMap.set(item.medicineId, item.pills);
+      originalPillsByMedicine.set(item.medicineId, (originalPillsByMedicine.get(item.medicineId) || 0) + item.pills);
     });
 
-    const newItemsMap = new Map<number, number>();
-    computedItems.forEach(item => {
-      newItemsMap.set(item.medicineId, item.pills);
-    });
-
-    // Find items to restore (removed or reduced)
-    const itemsToRestore: Array<{ medicineId: number; pills: number }> = [];
-    originalItemsMap.forEach((originalPills, medicineId) => {
-      const newPills = newItemsMap.get(medicineId) || 0;
-      if (newPills < originalPills) {
-        itemsToRestore.push({ medicineId, pills: originalPills - newPills });
+    for (const [medicineId, newPills] of Array.from(newPillsByMedicine.entries())) {
+      const oldPills = originalPillsByMedicine.get(medicineId) || 0;
+      const delta = newPills - oldPills;
+      if (delta > 0) {
+        await this.ensureInventoryAvailable(medicineId, delta);
       }
-    });
-
-    // Find items to deduct (added or increased)
-    const itemsToDeduct: Array<{ medicineId: number; pills: number }> = [];
-    newItemsMap.forEach((newPills, medicineId) => {
-      const originalPills = originalItemsMap.get(medicineId) || 0;
-      if (newPills > originalPills) {
-        itemsToDeduct.push({ medicineId, pills: newPills - originalPills });
-      }
-    });
-
-    // Check inventory availability for items to deduct
-    for (const item of itemsToDeduct) {
-      await this.ensureInventoryAvailable(item.medicineId, item.pills);
     }
 
     const subtotal = computedItems.reduce((sum, item) => sum + item.subtotal, 0);
     const discountTotal = computedItems.reduce((sum, item) => sum + (item.discountAmount ?? 0), 0);
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
-    
-    // Calculate additional discount
     const baseTotal = subtotal - discountTotal + taxTotal;
     const additionalDiscount = payload.additionalDiscount || 0;
     const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
@@ -784,10 +824,17 @@ export class SalesService {
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Update sale record
+      // Fetch old sale_items with their IDs BEFORE deleting them, so
+      // restoreInventory can reverse batch allocations from sale_item_batches.
+      const oldSaleItems = await this.dbService.query(
+        'SELECT id, medicine_id, pills FROM sale_items WHERE sale_id = ?',
+        [saleId]
+      );
+
+      // Update sale header
       const updateSaleSql = `
-        UPDATE sales 
-        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?, 
+        UPDATE sales
+        SET subtotal = ?, discount_total = ?, tax_total = ?, additional_discount = ?, additional_discount_amount = ?, total = ?,
             customer_name = ?, customer_phone = ?, sale_type = ?
         WHERE id = ?
       `;
@@ -804,46 +851,58 @@ export class SalesService {
         saleId,
       ]);
 
-      // Delete old sale items
+      // 1) Restore inventory for ALL old items using their recorded batch allocations.
+      for (const oldItem of oldSaleItems) {
+        await this.restoreInventory(oldItem.id, oldItem.medicine_id, oldItem.pills);
+      }
+
+      // 2) Delete old sale_items (FK ON DELETE CASCADE removes their sale_item_batches).
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
 
-      // Insert new sale items
+      // 3) Batch-fetch average cost price per medicine from current stock_batches.
+      const uniqueMedicineIds = Array.from(new Set(computedItems.map(item => item.medicineId)));
+      const costMap = new Map<number, number>();
+      if (uniqueMedicineIds.length > 0) {
+        const placeholders = uniqueMedicineIds.map(() => '?').join(',');
+        const costResults = await this.dbService.query(`
+          SELECT medicine_id, AVG(cost_price_per_pill) as avg_cost
+          FROM stock_batches
+          WHERE medicine_id IN (${placeholders})
+            AND qty_remaining > 0
+            AND date(expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+          GROUP BY medicine_id
+        `, uniqueMedicineIds);
+        costResults.forEach((r: any) => costMap.set(r.medicine_id, r.avg_cost || 0));
+      }
+
+      // 4) Insert new sale_items and deduct inventory against the new sale_item_id.
       for (const item of computedItems) {
+        const costPrice = costMap.get(item.medicineId) || 0;
+        const costSubtotal = costPrice * item.pills;
+
         const insertItemSql = `
           INSERT INTO sale_items (
-            sale_id,
-            medicine_id,
-            medicine_name,
-            pills,
-            unit_price,
-            subtotal,
-            discount_amount,
-            tax_amount,
-            total
+            sale_id, medicine_id, medicine_name, pills, unit_price, subtotal,
+            cost_price, cost_subtotal, discount_amount, tax_amount, total
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const itemResult = await this.dbService.execute(insertItemSql, [
           saleId,
           item.medicineId,
           item.medicineName,
           item.pills,
           item.unitPrice,
           item.subtotal,
+          costPrice,
+          costSubtotal,
           item.discountAmount ?? 0,
           item.taxAmount ?? 0,
           item.total,
         ]);
-      }
+        const newSaleItemId = (itemResult as any).lastID;
 
-      // Restore inventory for removed/reduced items
-      for (const item of itemsToRestore) {
-        await this.restoreInventory(item.medicineId, item.pills);
-      }
-
-      // Deduct inventory for added/increased items
-      for (const item of itemsToDeduct) {
-        await this.deductInventory(item.medicineId, item.pills);
+        await this.deductInventory(item.medicineId, item.pills, newSaleItemId);
       }
 
       await this.dbService.execute('COMMIT');
@@ -968,12 +1027,20 @@ export class SalesService {
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
     
-    // Get total COGS (Cost of Goods Sold)
+    // Get total COGS (Cost of Goods Sold) using sale_item_batches for exact cost
     const cogsSql = `
       SELECT COALESCE(SUM(
-        CASE 
-          WHEN si.cost_subtotal > 0 THEN si.cost_subtotal 
-          ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0)
+        CASE
+          WHEN si.cost_subtotal > 0 THEN si.cost_subtotal
+          ELSE si.pills * COALESCE(
+            (SELECT sb.cost_price_per_pill
+             FROM stock_batches sb
+             WHERE sb.medicine_id = si.medicine_id
+               AND sb.qty_remaining > 0
+             ORDER BY date(sb.expiry_date) ASC, sb.id ASC
+             LIMIT 1),
+            0
+          )
         END
       ), 0) as total_cogs
       FROM sale_items si
@@ -1022,7 +1089,7 @@ export class SalesService {
       SELECT 
         date(s.created_at) as date, 
         SUM(si.total) as amount,
-        SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT AVG(price_per_pill) FROM purchase_items WHERE medicine_id = si.medicine_id), 0) END) as cost
+        SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT sb.cost_price_per_pill FROM stock_batches sb WHERE sb.medicine_id = si.medicine_id AND sb.qty_remaining > 0 ORDER BY date(sb.expiry_date) ASC, sb.id ASC LIMIT 1), 0) END) as cost
       FROM sales s
       JOIN sale_items si ON s.id = si.sale_id
       WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)

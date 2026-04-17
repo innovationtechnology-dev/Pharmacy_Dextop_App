@@ -123,69 +123,82 @@ export class SaleReturnService {
   }
 
   /**
-   * Restore inventory by adding pills back to purchase_items
-   * Restores to batches in FEFO order (earliest expiry first).
-   * Accepts even batches that are expired/expiring soon, as returned goods
-   * are being restocked for potential re-sale or destruction per protocol.
+   * Restore inventory for a return item.
+   * Uses sale_item_batches to find the exact batches the original sale consumed,
+   * restores pills to those batches, and records the restoration in return_item_batches.
+   * Falls back to FEFO on stock_batches for pre-migration data.
    */
-  private async restoreInventory(medicineId: number, pillsToRestore: number): Promise<void> {
-    // Get purchase items for this medicine, ordered by expiry date (oldest first)
-    // This includes expired batches - business decision to accept returns even if
-    // original batch has expired (e.g., warehouse found old stock, or customer dispute)
-    const sql = `
-      SELECT id, total_pills, available_pills
-      FROM purchase_items
-      WHERE medicine_id = ?
-      ORDER BY expiry_date ASC, id ASC
-    `;
-    const batches = await this.dbService.query(sql, [medicineId]);
+  private async restoreInventory(
+    saleReturnItemId: number,
+    saleId: number,
+    medicineId: number,
+    pillsToRestore: number
+  ): Promise<void> {
+    // Find the original sale_items for this medicine in this sale
+    const saleItemRows = await this.dbService.query(
+      `SELECT si.id
+       FROM sale_items si
+       WHERE si.sale_id = ? AND si.medicine_id = ?
+       ORDER BY si.id ASC`,
+      [saleId, medicineId]
+    );
 
-    console.log(`[RESTORE] Query found ${batches?.length || 0} batches for medicine ${medicineId}`);
+    let restored = 0;
+
+    for (const saleItemRow of saleItemRows) {
+      if (restored >= pillsToRestore) break;
+
+      // Get the batch allocations for this sale_item
+      const batchRows = await this.dbService.query(
+        `SELECT sib.stock_batch_id, sib.qty_deducted
+         FROM sale_item_batches sib
+         JOIN stock_batches sb ON sb.id = sib.stock_batch_id
+         WHERE sib.sale_item_id = ?
+         ORDER BY sb.expiry_date ASC, sb.id ASC`,
+        [saleItemRow.id]
+      );
+
+      for (const row of batchRows) {
+        if (restored >= pillsToRestore) break;
+        const restoreQty = Math.min(row.qty_deducted, pillsToRestore - restored);
+        await this.dbService.execute(
+          'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
+          [restoreQty, row.stock_batch_id]
+        );
+        await this.dbService.execute(
+          'INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored) VALUES (?, ?, ?)',
+          [saleReturnItemId, row.stock_batch_id, restoreQty]
+        );
+        restored += restoreQty;
+      }
+    }
+
+    if (restored >= pillsToRestore) return;
+
+    // Fallback: pre-migration data — use FEFO on stock_batches
+    console.warn(`[sale-return restoreInventory] No sale_item_batches found for sale ${saleId} medicine ${medicineId}. Using FEFO fallback.`);
+    const remaining = pillsToRestore - restored;
+    const batches = await this.dbService.query(
+      `SELECT id, qty_received, qty_remaining FROM stock_batches
+       WHERE medicine_id = ? ORDER BY date(expiry_date) ASC, id ASC`,
+      [medicineId]
+    );
 
     if (batches.length === 0) {
-      // If no batches exist at all, log warning but don't fail the return
-      console.warn(`No purchase batches found for medicine ${medicineId}. Return accepted but inventory could not be restored.`);
+      console.warn(`[sale-return restoreInventory] No stock_batches found for medicine ${medicineId}. Return accepted but inventory not restored.`);
       return;
     }
 
-    let remaining = pillsToRestore;
-
-    console.log(`[RESTORE] Starting restore of ${pillsToRestore} pills for medicine ${medicineId}. Found ${batches.length} batches.`);
-
-    // Strategy: Restore to the oldest batch first (FEFO), even if it means exceeding capacity temporarily.
-    // This can happen when returned items exceed what was originally in the batch but get restocked
-    // back into the system. The capacity is a "normal" limit, not a hard ceiling for returns.
-    if (batches.length > 0) {
-      const firstBatch = batches[0];
-      console.log(`[RESTORE] Restoring all ${remaining} pills to first batch (FEFO): batch ${firstBatch.id} (total_pills=${firstBatch.total_pills}, available=${firstBatch.available_pills})`);
-      
-      const result = await this.dbService.execute(
-        'UPDATE purchase_items SET available_pills = available_pills + ? WHERE id = ?',
-        [remaining, firstBatch.id]
-      );
-      
-      // Verify the update worked
-      const verifyBatch = await this.dbService.queryOne(
-        'SELECT available_pills FROM purchase_items WHERE id = ?',
-        [firstBatch.id]
-      );
-      const newAvailable = verifyBatch?.available_pills ?? 0;
-      console.log(`[RESTORE] Update result: ${JSON.stringify(result)}. New available_pills for batch ${firstBatch.id}:`, newAvailable, `(was ${firstBatch.available_pills})`);
-      
-      if (newAvailable !== firstBatch.available_pills + remaining) {
-        console.error(`[RESTORE] ERROR: Update verification failed! Expected ${firstBatch.available_pills + remaining} but got ${newAvailable}`);
-      } else {
-        console.log(`[RESTORE] ✓ Successfully restored ${remaining} pills to batch ${firstBatch.id}`);
-      }
-      remaining = 0;
-    }
-
-    console.log(`[RESTORE] Restore complete. Pills remaining to restore: ${remaining}`);
-
-    // This should now always be 0 since we restore to the first available batch
-    if (remaining > 0) {
-      console.error(`[RESTORE] ERROR: Could not restore ${remaining} pills for medicine ${medicineId} - no batches found`);
-    }
+    // Restore to the first available batch (same strategy as old code)
+    const firstBatch = batches[0];
+    await this.dbService.execute(
+      'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
+      [remaining, firstBatch.id]
+    );
+    await this.dbService.execute(
+      'INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored) VALUES (?, ?, ?)',
+      [saleReturnItemId, firstBatch.id, remaining]
+    );
   }
 
   /**
@@ -329,7 +342,7 @@ export class SaleReturnService {
           )
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
-        await this.dbService.execute(insertItemSql, [
+        const saleReturnItemResult = await this.dbService.execute(insertItemSql, [
           saleReturnId,
           item.medicineId,
           item.medicineName,
@@ -343,9 +356,10 @@ export class SaleReturnService {
           costSubtotal,
           item.reason || null,
         ]);
+        const saleReturnItemId = (saleReturnItemResult as any).lastID;
 
-        // Restore inventory
-        await this.restoreInventory(item.medicineId, item.pills);
+        // Restore inventory using exact audit trail from sale_item_batches
+        await this.restoreInventory(saleReturnItemId, payload.saleId, item.medicineId, item.pills);
       }
 
       await this.dbService.execute('COMMIT');
@@ -565,29 +579,34 @@ export class SaleReturnService {
    * Note: This is a destructive operation. Consider adding a flag instead of deleting.
    */
   public async deleteSaleReturn(saleReturnId: number): Promise<void> {
-    // Check if sale return exists
     const saleReturn = await this.dbService.queryOne('SELECT id FROM sale_returns WHERE id = ?', [saleReturnId]);
     if (!saleReturn) {
       throw new Error(`Sale return with id ${saleReturnId} not found`);
     }
 
-    // Get items before deletion to potentially reverse inventory changes
-    const items = await this.dbService.query(
-      'SELECT medicine_id, pills FROM sale_return_items WHERE sale_return_id = ?',
+    // Reverse the inventory restoration that happened when the return was created,
+    // using the exact audit trail in return_item_batches so stock_batches stays
+    // consistent with what the original sale deducted.
+    const batchRestorations = await this.dbService.query(
+      `SELECT rib.stock_batch_id, rib.qty_restored
+       FROM return_item_batches rib
+       JOIN sale_return_items sri ON sri.id = rib.sale_return_item_id
+       WHERE sri.sale_return_id = ?`,
       [saleReturnId]
     );
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
-      // Delete sale return items first
-      await this.dbService.execute('DELETE FROM sale_return_items WHERE sale_return_id = ?', [saleReturnId]);
-      // Delete the sale return
-      await this.dbService.execute('DELETE FROM sale_returns WHERE id = ?', [saleReturnId]);
+      for (const row of batchRestorations) {
+        await this.dbService.execute(
+          'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+          [row.qty_restored, row.stock_batch_id]
+        );
+      }
 
-      // Note: We don't reverse inventory here because:
-      // 1. The original sale may have been deleted
-      // 2. The batches may have changed
-      // 3. It's safer to require manual inventory adjustment if needed
+      // sale_return_items DELETE cascades return_item_batches via FK ON DELETE CASCADE
+      await this.dbService.execute('DELETE FROM sale_return_items WHERE sale_return_id = ?', [saleReturnId]);
+      await this.dbService.execute('DELETE FROM sale_returns WHERE id = ?', [saleReturnId]);
 
       await this.dbService.execute('COMMIT');
     } catch (error) {

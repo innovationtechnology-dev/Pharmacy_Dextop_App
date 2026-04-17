@@ -225,6 +225,14 @@ const FinancialSummary = () => {
             </span>
           </div>
 
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiUsers className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Employee</span>
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
+              {formatCurrency(financialData.employeeTotal)}
+            </span>
+          </div>
+
           <button
             onClick={loadFinancialData}
             className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
@@ -331,7 +339,7 @@ const FinancialSummary = () => {
                         <p className="text-sm font-bold text-blue-600">{formatCurrency(financialData.saleTaxTotal)}</p>
                       </div>
                       <div className="border-t border-gray-200 dark:border-gray-600 pt-3 col-span-2">
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-3 gap-4">
                           <div className="bg-purple-50/50 dark:bg-purple-900/10 p-2.5 rounded-lg border border-purple-100/50 dark:border-purple-800/30">
                             <p className="text-[9px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mb-0.5">Relative</p>
                             <p className="text-xs font-bold text-purple-700 dark:text-purple-300">{formatCurrency(financialData.familyTotal)}</p>
@@ -339,6 +347,10 @@ const FinancialSummary = () => {
                           <div className="bg-pink-50/50 dark:bg-pink-900/10 p-2.5 rounded-lg border border-pink-100/50 dark:border-pink-800/30">
                             <p className="text-[9px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-wider mb-0.5">Charity</p>
                             <p className="text-xs font-bold text-pink-700 dark:text-pink-300">{formatCurrency(financialData.charityTotal)}</p>
+                          </div>
+                          <div className="bg-orange-50/50 dark:bg-orange-900/10 p-2.5 rounded-lg border border-orange-100/50 dark:border-orange-800/30">
+                            <p className="text-[9px] font-bold text-orange-600/70 dark:text-orange-400/70 uppercase tracking-wider mb-0.5">Employee</p>
+                            <p className="text-xs font-bold text-orange-700 dark:text-orange-300">{formatCurrency(financialData.employeeTotal)}</p>
                           </div>
                         </div>
                       </div>
