@@ -1741,7 +1741,7 @@ const SellingPanel: React.FC = () => {
 
   // Handle opening return modal
   const handleOpenReturnModal = useCallback(async () => {
-    if (!selectedSaleId || cart.length === 0) {
+    if (!selectedSaleId || !selectedSale || selectedSale.items.length === 0) {
       alert('Please select a sale first');
       return;
     }
@@ -1759,19 +1759,24 @@ const SellingPanel: React.FC = () => {
           });
         });
 
-        // Initialize return items from cart (all items, but not pre-selected)
-        const items = cart.map((item) => {
-          const alreadyReturned = returnedByMedicine.get(item.medicine.id) || 0;
-          const availableToReturn = Math.max(0, item.pills - alreadyReturned);
+        // Always initialize from persisted sale rows (DB-backed history),
+        // not from current editable cart draft values.
+        const items = selectedSale.items.map((item) => {
+          const alreadyReturned = returnedByMedicine.get(item.medicineId) || 0;
+          const soldPills = item.originalPills || item.pills;
+          const unitPrice = soldPills > 0
+            ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
+            : item.unitPrice;
+          const availableToReturn = Math.max(0, soldPills - alreadyReturned);
           return {
-            medicineId: item.medicine.id,
-            medicineName: item.medicine.name,
-            originalPills: item.pills,
+            medicineId: item.medicineId,
+            medicineName: item.medicineName,
+            originalPills: soldPills,
             availableToReturn,
             returnPills: 0, // Start with 0 - user will select which items to return
-            unitPrice: item.unitPrice,
-            discountAmount: item.discountAmount || 0,
-            taxAmount: item.taxAmount || 0,
+            unitPrice,
+            discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
+            taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
             reason: '',
           };
         }).filter(item => item.availableToReturn > 0);
@@ -1787,21 +1792,27 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error checking existing returns:', error);
       // Still allow return creation (start with 0 - user selects)
-      const items = cart.map((item) => ({
-        medicineId: item.medicine.id,
-        medicineName: item.medicine.name,
-        originalPills: item.pills,
-        availableToReturn: item.pills,
+      const items = selectedSale.items.map((item) => {
+        const soldPills = item.originalPills || item.pills;
+        const unitPrice = soldPills > 0
+          ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
+          : item.unitPrice;
+        return {
+        medicineId: item.medicineId,
+        medicineName: item.medicineName,
+        originalPills: soldPills,
+        availableToReturn: soldPills,
         returnPills: 0, // Start with 0 - user will select which items to return
-        unitPrice: item.unitPrice,
-        discountAmount: item.discountAmount || 0,
-        taxAmount: item.taxAmount || 0,
+        unitPrice,
+        discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
+        taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
         reason: '',
-      }));
+      };
+      }).filter(item => item.availableToReturn > 0);
       setReturnItems(items);
       setShowReturnModal(true);
     }
-  }, [selectedSaleId, cart]);
+  }, [selectedSaleId, selectedSale]);
 
   // Handle processing return
   const handleProcessReturn = useCallback(async () => {

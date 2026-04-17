@@ -617,10 +617,46 @@ export class SalesService {
 
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
+      // 1) Reverse and remove any sale returns linked to this sale
+      const saleReturns = await this.dbService.query(
+        'SELECT id FROM sale_returns WHERE sale_id = ?',
+        [saleId]
+      );
+      const saleReturnIds = saleReturns.map((row: any) => row.id);
+
+      if (saleReturnIds.length > 0) {
+        const placeholders = saleReturnIds.map(() => '?').join(',');
+
+        // Reverse inventory restoration done at return time.
+        const batchRestorations = await this.dbService.query(
+          `SELECT rib.stock_batch_id, rib.qty_restored
+           FROM return_item_batches rib
+           JOIN sale_return_items sri ON sri.id = rib.sale_return_item_id
+           WHERE sri.sale_return_id IN (${placeholders})`,
+          saleReturnIds
+        );
+
+        for (const row of batchRestorations) {
+          await this.dbService.execute(
+            'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+            [row.qty_restored, row.stock_batch_id]
+          );
+        }
+
+        // Remove return line items and return headers.
+        await this.dbService.execute(
+          `DELETE FROM sale_return_items WHERE sale_return_id IN (${placeholders})`,
+          saleReturnIds
+        );
+        await this.dbService.execute('DELETE FROM sale_returns WHERE sale_id = ?', [saleId]);
+      }
+
+      // 2) Restore inventory originally deducted by the sale
       for (const item of saleItems) {
         await this.restoreInventory(item.id, item.medicine_id, item.pills);
       }
 
+      // 3) Delete sale records
       // sale_items DELETE cascades sale_item_batches via FK ON DELETE CASCADE
       await this.dbService.execute('DELETE FROM sale_items WHERE sale_id = ?', [saleId]);
       await this.dbService.execute('DELETE FROM sales WHERE id = ?', [saleId]);
