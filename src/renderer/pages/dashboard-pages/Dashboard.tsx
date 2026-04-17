@@ -118,6 +118,9 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
   const charityTotal = sales
     .filter((sale) => sale.saleType === 'Charity')
     .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
+  const employeeTotal = sales
+    .filter((sale) => sale.saleType === 'Employee')
+    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
 
   const uniqueCustomers = new Set(
     sales
@@ -134,6 +137,7 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
     saleReturnsTotal,
     familyTotal,
     charityTotal,
+    employeeTotal,
     purchasesTotal,
     profit,
     uniqueCustomers,
@@ -441,12 +445,6 @@ const Dashboard = () => {
         icon: <FiTrendingUp />,
       },
       {
-        id: 'customers',
-        title: 'Customers',
-        value: formatNumber(displayTotals.uniqueCustomers),
-        icon: <FiUsers />,
-      },
-      {
         id: 'inventory',
         title: 'Medicines',
         value: formatNumber(displayTotals.totalMedicines),
@@ -463,6 +461,12 @@ const Dashboard = () => {
         title: 'Charity',
         value: formatCurrency(displayTotals.charityTotal),
         icon: <FiPackage />,
+      },
+      {
+        id: 'employee',
+        title: 'Employee',
+        value: formatCurrency(displayTotals.employeeTotal),
+        icon: <FiUsers />,
       },
       {
         id: 'saleReturns',
@@ -510,6 +514,7 @@ const Dashboard = () => {
                   metric.id === 'customers' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
                   metric.id === 'family' ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-600/50' :
                   metric.id === 'charity' ? 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-600/50' :
+                  metric.id === 'employee' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-600/50' :
                   metric.id === 'saleReturns' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-600/50' :
                   'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-600/50'
                 }`}>
@@ -521,6 +526,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-500' :
                     metric.id === 'family' ? 'text-purple-500' :
                     metric.id === 'charity' ? 'text-pink-500' :
+                    metric.id === 'employee' ? 'text-orange-500' :
                     metric.id === 'saleReturns' ? 'text-red-500' :
                     'text-amber-500'
                   }>
@@ -537,6 +543,7 @@ const Dashboard = () => {
                     metric.id === 'customers' ? 'text-teal-600 dark:text-teal-400' :
                     metric.id === 'family' ? 'text-purple-600 dark:text-purple-400' :
                     metric.id === 'charity' ? 'text-pink-600 dark:text-pink-400' :
+                    metric.id === 'employee' ? 'text-orange-600 dark:text-orange-400' :
                     metric.id === 'saleReturns' ? 'text-red-600 dark:text-red-400' :
                     'text-amber-600 dark:text-amber-400'
                   }`}>
@@ -547,7 +554,7 @@ const Dashboard = () => {
             ))}
             
             <div className="ml-auto flex items-center gap-2 flex-wrap">
-              <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">KPI Period:</span>
+              <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Period:</span>
               <input
                 type="date"
                 value={kpiFromDate}
@@ -751,7 +758,7 @@ const Dashboard = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  {/* <div className="grid grid-cols-2 gap-2">
                     <div className="p-2.5 bg-purple-50/50 dark:bg-purple-900/10 rounded-lg border border-purple-100/50 dark:border-purple-800/30">
                       <div className="text-[9px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mb-0.5">Relative</div>
                       <div className="text-xs font-bold text-purple-700 dark:text-purple-300">{formatCurrency(totals.familyTotal)}</div>
@@ -760,7 +767,7 @@ const Dashboard = () => {
                       <div className="text-[9px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-wider mb-0.5">Charity</div>
                       <div className="text-xs font-bold text-pink-700 dark:text-pink-300">{formatCurrency(totals.charityTotal)}</div>
                     </div>
-                  </div>
+                  </div> */}
                 </div>
               </div>
             </div>
