@@ -56,6 +56,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 const SUCCESS_MESSAGE_DURATION_MS = 2000;
 const DROPDOWN_BLUR_DELAY_MS = 200;
 const PRINT_FRAME_CLEANUP_MS = 500;
+const FEFO_CACHE_TTL_MS = 30000;
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -329,6 +330,10 @@ const SellingPanel: React.FC = () => {
   const globalBarcodeBufferRef = useRef<string>('');
   const globalBarcodeTimerRef = useRef<NodeJS.Timeout | null>(null);
   const dropdownItemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const searchRequestSeqRef = useRef(0);
+  const returnsRequestSeqRef = useRef(0);
+  const fefoCacheRef = useRef<Map<number, { ts: number; batches: FefoBatch[] }>>(new Map());
+  const fefoInFlightRef = useRef<Map<number, Promise<FefoBatch[]>>>(new Map());
 
   // Define functions first using useCallback
   const loadMedicines = useCallback(async () => {
@@ -348,6 +353,33 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error loading medicines:', error);
     }
+  }, []);
+
+  const getFefoBatches = useCallback(async (medicineId: number): Promise<FefoBatch[]> => {
+    const now = Date.now();
+    const cached = fefoCacheRef.current.get(medicineId);
+    if (cached && now - cached.ts <= FEFO_CACHE_TTL_MS) {
+      return cached.batches;
+    }
+
+    const inflight = fefoInFlightRef.current.get(medicineId);
+    if (inflight) return inflight;
+
+    const request = window.electron.ipcRenderer
+      .invoke('medicine-get-fefo-sell-batches', medicineId)
+      .then((resp: any) => {
+        if (!resp?.success || !Array.isArray(resp.data)) return [] as FefoBatch[];
+        const batches: FefoBatch[] = resp.data;
+        fefoCacheRef.current.set(medicineId, { ts: Date.now(), batches });
+        return batches;
+      })
+      .catch(() => [] as FefoBatch[])
+      .finally(() => {
+        fefoInFlightRef.current.delete(medicineId);
+      });
+
+    fefoInFlightRef.current.set(medicineId, request);
+    return request;
   }, []);
 
   const addToCart = useCallback((medicine: Medicine, quantityParam?: number) => {
@@ -437,9 +469,8 @@ const SellingPanel: React.FC = () => {
     setShowSearchResults(false);
 
     // Background: fetch FEFO batch prices — compute per-batch breakdown + blended display price
-    window.electron.ipcRenderer.invoke('medicine-get-fefo-sell-batches', medicine.id).then((resp: any) => {
-      if (!resp?.success || !Array.isArray(resp.data) || resp.data.length === 0) return;
-      const batches: FefoBatch[] = resp.data;
+    void getFefoBatches(medicine.id).then((batches) => {
+      if (batches.length === 0) return;
       setCart((prev) =>
         prev.map((item) => {
           if (item.medicine.id !== medicine.id) return item;
@@ -454,8 +485,8 @@ const SellingPanel: React.FC = () => {
           });
         })
       );
-    }).catch(() => {/* silently ignore — default price remains */});
-  }, [error, warning]);
+    });
+  }, [error, warning, getFefoBatches]);
 
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
@@ -463,6 +494,7 @@ const SellingPanel: React.FC = () => {
       return;
     }
 
+    const requestSeq = ++searchRequestSeqRef.current;
     setIsSearching(true);
     setShowSearchResults(true);
 
@@ -470,20 +502,23 @@ const SellingPanel: React.FC = () => {
       window.electron.ipcRenderer.once(
         'medicine-search-reply',
         (response: any) => {
+          if (requestSeq !== searchRequestSeqRef.current) return;
           setIsSearching(false);
           if (response.success) {
             // Hide expired items from the selling panel search.
             const filtered = (response.data || []).filter(
               (medicine: Medicine) => (medicine.sellablePills ?? 0) > 0
             );
-            setMedicines(filtered);
+            setMedicines(filtered.slice(0, 100));
           }
         }
       );
       window.electron.ipcRenderer.sendMessage('medicine-search', [term.trim()]);
     } catch (error) {
       console.error('Error searching medicines:', error);
-      setIsSearching(false);
+      if (requestSeq === searchRequestSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, []);
 
@@ -733,23 +768,29 @@ const SellingPanel: React.FC = () => {
 
   // Load returns for all sales in history to show net totals
   useEffect(() => {
+    const requestSeq = ++returnsRequestSeqRef.current;
+    if (salesHistoryList.length === 0) {
+      setSaleReturnsMap(new Map());
+      return;
+    }
+
     const loadReturnsForAllSales = async () => {
-      const returnsMap = new Map<number, number>();
-
-      for (const sale of salesHistoryList) {
-        const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
-        if (returnsResponse.success && returnsResponse.data) {
+      const results = await Promise.all(
+        salesHistoryList.map(async (sale) => {
+          const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
+          if (!returnsResponse.success || !returnsResponse.data) {
+            return [sale.saleId, 0] as const;
+          }
           const returnTotal = returnsResponse.data.reduce((sum, ret) => sum + ret.total, 0);
-          returnsMap.set(sale.saleId, returnTotal);
-        }
-      }
+          return [sale.saleId, returnTotal] as const;
+        })
+      );
 
-      setSaleReturnsMap(returnsMap);
+      if (requestSeq !== returnsRequestSeqRef.current) return;
+      setSaleReturnsMap(new Map(results));
     };
 
-    if (salesHistoryList.length > 0) {
-      loadReturnsForAllSales();
-    }
+    void loadReturnsForAllSales();
   }, [salesHistoryList]); // Fixed: Use full salesHistoryList instead of just length
 
   // Reset to new bill when sales history is loaded and no bill is selected
@@ -779,18 +820,16 @@ const SellingPanel: React.FC = () => {
     const updateDateTime = () => {
       const now = new Date();
 
-      // Update time
-      setCurrentTime(
-        now.toLocaleTimeString('en-US', {
-          hour12: true,
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        })
-      );
-
-      // Update date (only when creating new sale, not viewing old ones)
+      // Update date/time only when creating a new sale (no need to tick while viewing old ones)
       if (currentBillIndex === -1) {
+        setCurrentTime(
+          now.toLocaleTimeString('en-US', {
+            hour12: true,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        );
         const day = String(now.getDate()).padStart(2, '0');
         const month = now.toLocaleString('default', { month: 'short' });
         const year = now.getFullYear();

@@ -50,6 +50,8 @@ interface Supplier {
 }
 
 const MIN_EXPIRY_DAYS = 0;
+const SEARCH_RESULT_LIMIT = 100;
+const SUPPLIER_FETCH_THROTTLE_MS = 3000;
 
 
 /** Same column template for cart header, item row, and insights line layer — keeps vertical borders aligned. */
@@ -248,6 +250,13 @@ const PurchasingPanel: React.FC = () => {
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
   const supplierDropdownRef = useRef<HTMLDivElement | null>(null);
+  const supplierFetchInFlightRef = useRef(false);
+  const supplierLastFetchRef = useRef(0);
+  const supplierRequestSeqRef = useRef(0);
+  const supplierByIdRequestSeqRef = useRef(0);
+  const searchRequestSeqRef = useRef(0);
+  const batchNoCacheRef = useRef<Map<number, string>>(new Map());
+  const batchNoInFlightRef = useRef<Map<number, Promise<string>>>(new Map());
   const [showPaymentSection, setShowPaymentSection] = useState(false);
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>(() => {
@@ -292,28 +301,47 @@ const PurchasingPanel: React.FC = () => {
 
   // Function to generate auto-increment batch number for a medicine
   const generateAutoBatchNumber = useCallback(async (medicineId: number, medicineName: string): Promise<string> => {
-    try {
-      // Get the highest existing batch number for this medicine from purchase items
-      const response = await window.electron.ipcRenderer.invoke('get-next-batch-number', medicineId) as {
-        success: boolean;
-        nextBatchNumber?: string;
-        error?: string;
-      };
-      if (response.success && response.nextBatchNumber) {
-        return response.nextBatchNumber;
-      }
+    const cached = batchNoCacheRef.current.get(medicineId);
+    if (cached) return cached;
+    const inflight = batchNoInFlightRef.current.get(medicineId);
+    if (inflight) return inflight;
 
-      // Fallback: generate batch number based on medicine name and current date
-      const date = new Date();
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
-      return `${medicineAbbr}${dateStr}-01`;
+    try {
+      const request = window.electron.ipcRenderer
+        .invoke('get-next-batch-number', medicineId)
+        .then((response: any) => {
+          if (response.success && response.nextBatchNumber) {
+            batchNoCacheRef.current.set(medicineId, response.nextBatchNumber);
+            return response.nextBatchNumber as string;
+          }
+
+          const date = new Date();
+          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+          const medicineAbbr = medicineName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 3).toUpperCase();
+          const fallback = `${medicineAbbr}${dateStr}-01`;
+          batchNoCacheRef.current.set(medicineId, fallback);
+          return fallback;
+        })
+        .catch(() => {
+          const date = new Date();
+          const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
+          const fallback = `BATCH${dateStr}-01`;
+          batchNoCacheRef.current.set(medicineId, fallback);
+          return fallback;
+        })
+        .finally(() => {
+          batchNoInFlightRef.current.delete(medicineId);
+        });
+
+      batchNoInFlightRef.current.set(medicineId, request);
+      return await request;
     } catch (error) {
       console.error('Error generating batch number:', error);
-      // Fallback to simple format
       const date = new Date();
       const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      return `BATCH${dateStr}-01`;
+      const fallback = `BATCH${dateStr}-01`;
+      batchNoCacheRef.current.set(medicineId, fallback);
+      return fallback;
     }
   }, []);
 
@@ -366,21 +394,38 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const loadSuppliers = useCallback(async () => {
+  const loadSuppliers = useCallback(async (force = false) => {
+    const now = Date.now();
+    if (!force) {
+      if (supplierFetchInFlightRef.current) return;
+      if (
+        suppliers.length > 0 &&
+        now - supplierLastFetchRef.current < SUPPLIER_FETCH_THROTTLE_MS
+      ) {
+        return;
+      }
+    }
+
+    const requestSeq = ++supplierRequestSeqRef.current;
+    supplierFetchInFlightRef.current = true;
     setLoadingSuppliers(true);
     try {
       window.electron.ipcRenderer.once('supplier-get-all-reply', (response: any) => {
+        if (requestSeq !== supplierRequestSeqRef.current) return;
+        supplierFetchInFlightRef.current = false;
         setLoadingSuppliers(false);
         if (response.success) {
           setSuppliers(response.data || []);
+          supplierLastFetchRef.current = Date.now();
         }
       });
       window.electron.ipcRenderer.sendMessage('supplier-get-all', []);
     } catch (error) {
+      supplierFetchInFlightRef.current = false;
       setLoadingSuppliers(false);
       console.error('Error loading suppliers:', error);
     }
-  }, []);
+  }, [suppliers.length]);
 
   useEffect(() => {
     loadMedicines();
@@ -408,11 +453,14 @@ const PurchasingPanel: React.FC = () => {
   /** When catalog loads, refresh pricing fields on existing cart rows */
   useEffect(() => {
     if (medicines.length === 0) return;
+    const medicinesById = new Map(medicines.map((m) => [m.id, m]));
     setCart((prev) =>
       prev.map((row) => {
-        const fresh = medicines.find((m) => m.id === row.medicine.id);
+        const fresh = medicinesById.get(row.medicine.id);
         if (!fresh) return row;
-        return { ...row, medicine: { ...row.medicine, ...fresh } };
+        const mergedMedicine = { ...row.medicine, ...fresh };
+        if (mergedMedicine === row.medicine) return row;
+        return { ...row, medicine: mergedMedicine };
       })
     );
   }, [medicines]);
@@ -431,7 +479,9 @@ const PurchasingPanel: React.FC = () => {
         const supplierExists = currentSuppliers.find(s => s.id === selectedSupplierId);
         if (!supplierExists && currentSuppliers.length >= 0) {
           // Supplier not in list, fetch it
+          const requestSeq = ++supplierByIdRequestSeqRef.current;
           window.electron.ipcRenderer.once('supplier-get-by-id-reply', (response: any) => {
+            if (requestSeq !== supplierByIdRequestSeqRef.current) return;
             if (response.success && response.data) {
               setSuppliers(prev => {
                 const exists = prev.find(s => s.id === response.data.id);
@@ -472,20 +522,24 @@ const PurchasingPanel: React.FC = () => {
       return;
     }
 
+    const requestSeq = ++searchRequestSeqRef.current;
     setIsSearching(true);
     setShowSearchResults(true);
 
     try {
       window.electron.ipcRenderer.once('medicine-search-reply', (response: any) => {
+        if (requestSeq !== searchRequestSeqRef.current) return;
         setIsSearching(false);
         if (response.success) {
-          setMedicines(response.data || []);
+          setMedicines((response.data || []).slice(0, SEARCH_RESULT_LIMIT));
         }
       });
       window.electron.ipcRenderer.sendMessage('medicine-search', [term.trim()]);
     } catch (error) {
       console.error('Error searching medicines:', error);
-      setIsSearching(false);
+      if (requestSeq === searchRequestSeqRef.current) {
+        setIsSearching(false);
+      }
     }
   }, []);
 
@@ -595,6 +649,14 @@ const PurchasingPanel: React.FC = () => {
       handleSearch(value);
     }, 300);
   };
+
+  useEffect(() => {
+    return () => {
+      if (debouncedSearch.current) {
+        clearTimeout(debouncedSearch.current);
+      }
+    };
+  }, []);
 
   const updateCartItemField = useCallback(
     (medicineId: number, field: keyof PurchaseItem, value: any) => {
@@ -979,9 +1041,6 @@ const PurchasingPanel: React.FC = () => {
 
   const loadPurchaseForEdit = useCallback(async (purchaseId: number) => {
     try {
-      // Ensure suppliers are loaded first
-      loadSuppliers();
-
       window.electron.ipcRenderer.once('purchase-get-by-id-reply', (response: any) => {
         if (response.success && response.data) {
           const purchase = response.data;
@@ -1040,7 +1099,7 @@ const PurchasingPanel: React.FC = () => {
     } catch (err) {
       error('Error loading purchase. Please try again.');
     }
-  }, []);
+  }, [error]);
 
   const cancelEdit = useCallback(() => {
     setEditingPurchaseId(null);
@@ -1132,10 +1191,8 @@ const PurchasingPanel: React.FC = () => {
       setLoadingPurchaseDetails(false);
     }, 500);
 
-    // Reload suppliers to ensure they're up to date
-    loadSuppliers();
     loadPurchaseForEdit(purchase.id);
-  }, [loadPurchaseForEdit, loadSuppliers]);
+  }, [loadPurchaseForEdit]);
 
   // Navigate to previous/next purchase
   const navigateToPreviousPurchase = useCallback(() => {
@@ -1165,6 +1222,14 @@ const PurchasingPanel: React.FC = () => {
   }, [setHeader]);
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
+  const uniquePurchaseHistory = useMemo(
+    () => Array.from(new Map(purchaseHistoryList.map((p) => [p.id, p])).values()),
+    [purchaseHistoryList]
+  );
+  const purchaseIndexById = useMemo(
+    () => new Map(purchaseHistoryList.map((p, idx) => [p.id, idx])),
+    [purchaseHistoryList]
+  );
   const filteredSuppliers = useMemo(() => {
     const q = supplierSearchTerm.trim().toLowerCase();
     if (!q) return suppliers;
@@ -1737,7 +1802,7 @@ const PurchasingPanel: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.phone || 'N/A') : ''}
+                    value={selectedSupplierId ? (selectedSupplier?.phone || 'N/A') : ''}
                     readOnly
                     className="w-32 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
                   />
@@ -1750,7 +1815,7 @@ const PurchasingPanel: React.FC = () => {
                   </label>
                   <input
                     type="text"
-                    value={selectedSupplierId ? (suppliers.find(s => s.id === selectedSupplierId)?.company || suppliers.find(s => s.id === selectedSupplierId)?.companyName || 'N/A') : ''}
+                    value={selectedSupplierId ? (selectedSupplier?.company || selectedSupplier?.companyName || 'N/A') : ''}
                     readOnly
                     className="w-40 h-8 px-2.5 text-xs font-semibold border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-gray-700 dark:text-gray-300 rounded-md"
                   />
@@ -2706,19 +2771,19 @@ const PurchasingPanel: React.FC = () => {
                     <FiRefreshCw className="w-5 h-5 animate-spin text-emerald-500" />
                     Loading purchases...
                   </div>
-                ) : purchaseHistoryList.length === 0 ? (
+                ) : uniquePurchaseHistory.length === 0 ? (
                   <div className="py-8 text-center text-gray-400 text-xs">
                     No recent purchases
                   </div>
                 ) : (
-                  Array.from(new Map(purchaseHistoryList.map(p => [p.id, p])).values()).map((purchase) => {
+                  uniquePurchaseHistory.slice(0, SEARCH_RESULT_LIMIT).map((purchase) => {
                     const isSelected = selectedPurchaseId === purchase.id;
                     const dateObj = new Date(purchase.createdAt);
                     return (
                       <div
                         key={purchase.id}
                         onClick={() => {
-                          const index = purchaseHistoryList.findIndex(p => p.id === purchase.id);
+                          const index = purchaseIndexById.get(purchase.id) ?? -1;
                           loadPurchaseDetails(purchase, index);
                         }}
                         className={`p-3 rounded-lg border transition-all cursor-pointer ${isSelected
