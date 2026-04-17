@@ -308,6 +308,10 @@ const SellingPanel: React.FC = () => {
   const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState<string | null>(null);
+  const [saleDeleteConfirm, setSaleDeleteConfirm] = useState<{
+    saleId: number;
+    saleDate: string;
+  } | null>(null);
   const isCashier = getAuthUser()?.role === 'cashier';
 
   const isWithin24Hours = useCallback((dateString?: string): boolean => {
@@ -1118,7 +1122,7 @@ const SellingPanel: React.FC = () => {
     // If no items remain, delete the sale record itself.
     if (nextCart.length === 0) {
       if (selectedSale) {
-        await handleDeleteSale(selectedSale.saleId, selectedSale.createdAt);
+        requestDeleteSale(selectedSale.saleId, selectedSale.createdAt);
       }
       return;
     }
@@ -1854,19 +1858,19 @@ const SellingPanel: React.FC = () => {
     return isWithin24Hours(saleDate);
   }, [isCashier, isWithin24Hours]);
 
-  // Handle delete sale
-  const handleDeleteSale = useCallback(async (saleId: number, saleDate: string) => {
+  const requestDeleteSale = useCallback((saleId: number, saleDate: string) => {
     if (!canCurrentUserDeleteSale(saleDate)) {
       alert(isCashier ? 'Cashiers can only delete sales created within 24 hours' : 'You can only delete sales created today');
       return;
     }
+    setSaleDeleteConfirm({ saleId, saleDate });
+  }, [canCurrentUserDeleteSale, isCashier]);
 
-    if (!window.confirm('Are you sure you want to delete this sale? This action cannot be undone.')) {
-      return;
-    }
-
+  // Handle delete sale
+  const handleDeleteSale = useCallback(async (saleId: number) => {
     try {
       window.electron.ipcRenderer.once('sale-delete-reply', (response: any) => {
+        setSaleDeleteConfirm(null);
         if (response.success) {
           alert('Sale deleted successfully!');
           // If the deleted sale was selected, clear the form
@@ -1887,7 +1891,7 @@ const SellingPanel: React.FC = () => {
       console.error('Error deleting sale:', error);
       alert('Error deleting sale. Please try again.');
     }
-  }, [canCurrentUserDeleteSale, isCashier, selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
+  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -3391,7 +3395,7 @@ const SellingPanel: React.FC = () => {
                                 type="button"
                                 onClick={() => {
                                   if (sale) {
-                                    handleDeleteSale(sale.saleId, sale.createdAt);
+                                    requestDeleteSale(sale.saleId, sale.createdAt);
                                   }
                                 }}
                                 disabled={!canDelete}
@@ -3673,6 +3677,35 @@ const SellingPanel: React.FC = () => {
       </div>
 
       {/* Return Modal */}
+      {saleDeleteConfirm && (
+        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+              Delete Sale
+            </h3>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
+              Are you sure you want to delete this sale? This action cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setSaleDeleteConfirm(null)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteSale(saleDeleteConfirm.saleId)}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReturnModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-gray-900/40 backdrop-blur-sm" onClick={() => {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft } from 'react-icons/fi';
+import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft, FiUsers } from 'react-icons/fi';
 import { FaPlus, FaTrashAlt, FaDollarSign, FaCheck, FaPercent, FaList, FaEdit, FaEye } from 'react-icons/fa';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -81,6 +81,11 @@ interface PurchaseItem {
   /** Selling price per unit that the pharmacist sets at purchase time — stored per batch */
   sellingPricePerPill: number;
 }
+
+type DeleteConfirmState = {
+  purchaseId: number;
+  restoreOnCancel?: boolean;
+} | null;
 
 const recalculatePurchaseItem = (item: PurchaseItem): PurchaseItem => {
   const packetQuantity = Math.max(0, item.packetQuantity || 0);
@@ -185,6 +190,8 @@ const PurchasingPanel: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
@@ -228,7 +235,7 @@ const PurchasingPanel: React.FC = () => {
   const [pastPurchases, setPastPurchases] = useState<any[]>([]);
   const [loadingPurchases, setLoadingPurchases] = useState(false);
   const [loadingPurchaseDetails, setLoadingPurchaseDetails] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmState>(null);
   const [viewPurchase, setViewPurchase] = useState<any | null>(null);
   const [editingPurchaseId, setEditingPurchaseId] = useState<number | null>(null);
   const [purchaseHistoryList, setPurchaseHistoryList] = useState<any[]>([]);
@@ -240,6 +247,7 @@ const PurchasingPanel: React.FC = () => {
   const [hasMorePurchases, setHasMorePurchases] = useState(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const supplierDropdownRef = useRef<HTMLDivElement | null>(null);
   const [showPaymentSection, setShowPaymentSection] = useState(false);
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>(() => {
@@ -441,6 +449,23 @@ const PurchasingPanel: React.FC = () => {
     }
   }, [selectedSupplierId]);
 
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!showSupplierDropdown) return;
+      const target = event.target as Node;
+      if (
+        supplierDropdownRef.current &&
+        !supplierDropdownRef.current.contains(target)
+      ) {
+        setShowSupplierDropdown(false);
+        setSupplierSearchTerm('');
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [showSupplierDropdown]);
+
   const handleSearch = useCallback(async (term: string) => {
     if (!term || term.trim().length === 0) {
       setShowSearchResults(false);
@@ -589,6 +614,17 @@ const PurchasingPanel: React.FC = () => {
   );
 
   const adjustPacketQuantity = (medicineId: number, delta: number) => {
+    const target = cart.find((item) => item.medicine.id === medicineId);
+    if (
+      editingPurchaseId !== null &&
+      cart.length === 1 &&
+      target &&
+      target.packetQuantity + delta <= 0
+    ) {
+      setDeleteConfirm({ purchaseId: editingPurchaseId, restoreOnCancel: true });
+      return;
+    }
+
     setCart((prevCart) =>
       prevCart
         .map((item) => {
@@ -609,6 +645,14 @@ const PurchasingPanel: React.FC = () => {
   };
 
   const removeFromCart = (medicineId: number) => {
+    if (
+      editingPurchaseId !== null &&
+      cart.length === 1 &&
+      cart[0].medicine.id === medicineId
+    ) {
+      setDeleteConfirm({ purchaseId: editingPurchaseId, restoreOnCancel: true });
+      return;
+    }
     setCart((prevCart) => prevCart.filter((item) => item.medicine.id !== medicineId));
   };
 
@@ -1007,16 +1051,7 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const handleDeletePurchase = useCallback(
-    async (purchaseId: number, skipConfirm = false) => {
-      if (
-        !skipConfirm &&
-        !window.confirm(
-          `Permanently delete purchase PO-${purchaseId}? This removes the order from the database. This cannot be undone.`
-        )
-      ) {
-        return;
-      }
-
+    async (purchaseId: number) => {
       try {
         window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
           setDeleteConfirm(null);
@@ -1043,16 +1078,9 @@ const PurchasingPanel: React.FC = () => {
 
   const afterLastLineRemovedWhileEditing = useCallback(
     (purchaseId: number) => {
-      const del = window.confirm(
-        `If you press OK:\n- This purchase will be deleted permanently.\n- Payment records for this purchase will be deleted.\n- If sold items came from this purchase stock, related sale records will also be deleted.\n\nPress OK to delete.\nPress Cancel to restore saved items.`
-      );
-      if (del) {
-        void handleDeletePurchase(purchaseId, true);
-      } else {
-        void loadPurchaseForEdit(purchaseId);
-      }
+      setDeleteConfirm({ purchaseId, restoreOnCancel: true });
     },
-    [handleDeletePurchase, loadPurchaseForEdit]
+    []
   );
 
   useEffect(() => {
@@ -1137,6 +1165,17 @@ const PurchasingPanel: React.FC = () => {
   }, [setHeader]);
 
   const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
+  const filteredSuppliers = useMemo(() => {
+    const q = supplierSearchTerm.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter((s) => {
+      const company = (s.company || s.companyName || '').toLowerCase();
+      return (
+        s.name.toLowerCase().includes(q) ||
+        company.includes(q)
+      );
+    });
+  }, [suppliers, supplierSearchTerm]);
 
   // Memoize calculations to prevent recalculation on every render
   const subtotal = useMemo(() => calculateSubtotal(), [cart]);
@@ -1604,20 +1643,87 @@ const PurchasingPanel: React.FC = () => {
                   <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase whitespace-nowrap">
                     Supplier
                   </label>
-                  <div className="flex-1 min-w-0 relative">
-                    <select
-                      value={selectedSupplierId || ''}
-                      onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
-                      className="w-full h-8 pl-2.5 pr-8 text-xs font-semibold border-2 border-emerald-500/40 dark:border-emerald-500/40 bg-white dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 transition appearance-none cursor-pointer"
+                  <div className="flex-1 min-w-0 relative" ref={supplierDropdownRef}>
+                    <div className="absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500/80 dark:text-emerald-400/80">
+                      <FiUsers className="w-3.5 h-3.5" />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSupplierDropdown((v) => {
+                          const next = !v;
+                          if (!next) setSupplierSearchTerm('');
+                          return next;
+                        });
+                      }}
+                      className="w-full h-8 pl-8 pr-8 text-xs font-semibold border border-emerald-300/80 dark:border-emerald-600/70 bg-gradient-to-r from-emerald-50/70 to-white dark:from-emerald-900/20 dark:to-gray-700/60 text-gray-800 dark:text-gray-100 rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 focus:shadow-md transition-all hover:border-emerald-400 dark:hover:border-emerald-500 text-left"
                     >
-                      <option value="">Select Supplier...</option>
-                      {suppliers.map((s) => (
-                        <option key={s.id} value={s.id}>{s.name}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400 dark:text-gray-500">
+                      {selectedSupplier?.name || 'Select Supplier...'}
+                    </button>
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-emerald-500/80 dark:text-emerald-400/80">
                       <FiChevronDown className="w-3.5 h-3.5" />
                     </div>
+                    {showSupplierDropdown && (
+                      <div className="absolute z-50 mt-1 w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-xl overflow-hidden">
+                        <div className="px-3 py-2 bg-emerald-50/80 dark:bg-emerald-900/20 border-b border-gray-200 dark:border-gray-600">
+                          <label className="text-xs font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-2 mb-1">
+                            <FiSearch className="w-3.5 h-3.5" />
+                            Select Supplier
+                          </label>
+                          <input
+                            type="text"
+                            value={supplierSearchTerm}
+                            onChange={(e) => setSupplierSearchTerm(e.target.value)}
+                            placeholder="Search supplier..."
+                            autoFocus
+                            className="w-full h-8 px-2.5 rounded-md border border-emerald-200 dark:border-emerald-700 bg-white/90 dark:bg-gray-800 text-xs font-semibold text-gray-800 dark:text-gray-100 placeholder:text-gray-400 dark:placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setSelectedSupplierId(null);
+                            setShowSupplierDropdown(false);
+                            setSupplierSearchTerm('');
+                          }}
+                          className="w-full text-left px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 border-b border-gray-100 dark:border-gray-700"
+                        >
+                          Select Supplier...
+                        </button>
+                        <div className="max-h-56 overflow-y-auto">
+                          {filteredSuppliers.length === 0 && (
+                            <div className="px-3 py-2 text-xs text-gray-500 dark:text-gray-400">
+                              No supplier found
+                            </div>
+                          )}
+                          {filteredSuppliers.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setSelectedSupplierId(s.id);
+                                setShowSupplierDropdown(false);
+                                setSupplierSearchTerm('');
+                              }}
+                              className={`w-full text-left px-3 py-2 text-xs font-semibold transition-colors border-b border-gray-100 dark:border-gray-700 last:border-b-0 ${
+                                selectedSupplierId === s.id
+                                  ? 'bg-emerald-50 dark:bg-emerald-900/25 text-emerald-700 dark:text-emerald-300'
+                                  : 'text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate">{s.name}</span>
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 truncate">
+                                  {s.company || s.companyName || '—'}
+                                </span>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2563,7 +2669,7 @@ const PurchasingPanel: React.FC = () => {
                 {editingPurchaseId !== null && (
                   <button
                     type="button"
-                    onClick={() => handleDeletePurchase(editingPurchaseId)}
+                    onClick={() => setDeleteConfirm({ purchaseId: editingPurchaseId })}
                     disabled={
                       processing ||
                       (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
@@ -2573,7 +2679,12 @@ const PurchasingPanel: React.FC = () => {
                         ? 'Cashiers can only change purchases within 24 hours. Ask an administrator.'
                         : 'Removes this PO, its lines, and payments from the database (any sales linked to this order will also be removed).'
                     }
-                    className="w-full py-2 rounded-lg text-xs font-semibold border border-red-300 dark:border-red-800 text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 ${
+                      processing ||
+                      (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt))
+                        ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
+                        : 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
+                    }`}
                   >
                     Delete purchase PO-{editingPurchaseId} from database
                   </button>
@@ -2745,17 +2856,31 @@ const PurchasingPanel: React.FC = () => {
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-500 mb-6">
-                Are you sure you want to delete purchase PO-{deleteConfirm}? This action cannot be undone and will remove all associated items.
+                {deleteConfirm.restoreOnCancel
+                  ? `All lines were removed from screen for PO-${deleteConfirm.purchaseId}.`
+                  : `Delete PO-${deleteConfirm.purchaseId} permanently?`}
+                <br />
+                <br />
+                This will delete this purchase and payment records. If this stock was sold, related sales may also be deleted.
+                <br />
+                <br />
+                This action cannot be undone.
               </p>
               <div className="flex gap-3">
                 <button
-                  onClick={() => setDeleteConfirm(null)}
+                  onClick={() => {
+                    const pendingDelete = deleteConfirm;
+                    setDeleteConfirm(null);
+                    if (pendingDelete.restoreOnCancel) {
+                      void loadPurchaseForEdit(pendingDelete.purchaseId);
+                    }
+                  }}
                   className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 dark:text-gray-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700/50 transition-colors font-medium"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={() => handleDeletePurchase(deleteConfirm)}
+                  onClick={() => handleDeletePurchase(deleteConfirm.purchaseId)}
                   className="flex-1 px-4 py-2 bg-red-600 dark:bg-red-500 text-white rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors font-medium"
                 >
                   Delete
