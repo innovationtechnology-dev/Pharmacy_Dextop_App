@@ -242,9 +242,6 @@ const SellingPanel: React.FC = () => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [saleType, setSaleType] = useState<string>('Regular');
-  const [additionalDiscount, setAdditionalDiscount] = useState<number>(0);
-  const [additionalDiscountDraft, setAdditionalDiscountDraft] = useState<string>('');
-  const [isEditingAdditionalDiscount, setIsEditingAdditionalDiscount] = useState(false);
   const [prescriptionNumber, setPrescriptionNumber] = useState('');
   const [doctorName, setDoctorName] = useState('');
   const [processing, setProcessing] = useState(false);
@@ -704,8 +701,6 @@ const SellingPanel: React.FC = () => {
     setCustomerName('');
     setCustomerPhone('');
     setSaleType('Regular');
-    setAdditionalDiscount(0);
-    setAdditionalDiscountDraft('');
     setPrescriptionNumber('');
     setDoctorName('');
     setReceivedAmount('');
@@ -1202,10 +1197,7 @@ const SellingPanel: React.FC = () => {
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
-        additionalDiscount:
-          (saleType === 'Family/Relatives' || saleType === 'Charity')
-            ? additionalDiscount
-            : 0,
+        additionalDiscount: 0,
         prescriptionNumber: prescriptionNumber.trim() || undefined,
         doctorName: doctorName.trim() || undefined,
       };
@@ -1329,7 +1321,7 @@ const SellingPanel: React.FC = () => {
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
         saleType: saleType || 'Regular',
-        additionalDiscount: (saleType === 'Family/Relatives' || saleType === 'Charity') ? additionalDiscount : 0,
+        additionalDiscount: 0,
         prescriptionNumber: prescriptionNumber.trim() || undefined,
         doctorName: doctorName.trim() || undefined,
       };
@@ -1368,8 +1360,6 @@ const SellingPanel: React.FC = () => {
             setReturnedQuantities(new Map());
             setCustomerName('');
             setCustomerPhone('');
-            setAdditionalDiscount(0);
-            setAdditionalDiscountDraft('');
             setBarcodeInput('');
             setSelectedSaleId(null); // Clear selection after successful sale
             setCurrentBillIndex(-1); // Reset to new bill
@@ -1465,7 +1455,7 @@ const SellingPanel: React.FC = () => {
         currentBillIndex,
         returnedQuantities,
         saleType,
-        additionalDiscount,
+        additionalDiscount: 0,
         amountGiven: amountGivenForReceipt,
       },
       // The HTML printer script + our iframe onload print can both fire.
@@ -1495,7 +1485,7 @@ const SellingPanel: React.FC = () => {
       frameDoc.write(html);
       frameDoc.close();
     }
-  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount, saleType, additionalDiscount]);
+  }, [cart, customerName, customerPhone, currentBillIndex, returnedQuantities, receivedAmount, saleType]);
 
   const clearCart = () => {
     if (window.confirm('Clear cart and start a new sale?')) {
@@ -1503,8 +1493,6 @@ const SellingPanel: React.FC = () => {
       setReturnedQuantities(new Map());
       setSelectedSaleId(null);
       setCurrentBillIndex(-1);
-      setAdditionalDiscount(0);
-      setAdditionalDiscountDraft(''); // Reset to new bill
       clearFormForNewBill();
     }
   };
@@ -1536,14 +1524,8 @@ const SellingPanel: React.FC = () => {
   }, [cart]);
 
   const grandTotal = useMemo(() => {
-    const baseTotal = subtotalValue - discountValue + taxValue;
-    // Apply additional discount for Family/Relatives, Charity, or Employee
-    if (saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') {
-      const additionalDiscountAmount = (baseTotal * additionalDiscount) / 100;
-      return baseTotal - additionalDiscountAmount;
-    }
-    return baseTotal;
-  }, [subtotalValue, discountValue, taxValue, saleType, additionalDiscount]);
+    return subtotalValue - discountValue + taxValue;
+  }, [subtotalValue, discountValue, taxValue]);
 
   // Memoize net payable: grandTotal holds original total (based on originalPills),
   // so we subtract the returned amount to get the true net payable.
@@ -1576,14 +1558,6 @@ const SellingPanel: React.FC = () => {
         setCustomerPhone(sale.customerPhone || '0000');
         setSaleType(sale.saleType || 'Regular');
         setInvoiceNumber(`INV-${sale.saleId}`);
-
-        // Set additional discount from the first item (all items in a sale have the same additional discount)
-        const firstItem = sale.items[0];
-        if (firstItem && (firstItem.additionalDiscount !== undefined && firstItem.additionalDiscount !== null)) {
-          setAdditionalDiscount(firstItem.additionalDiscount);
-        } else {
-          setAdditionalDiscount(0);
-        }
 
         // Set date and time from sale
         const saleDate = new Date(sale.createdAt);
@@ -2397,7 +2371,7 @@ const SellingPanel: React.FC = () => {
                         </div>
                         <div
                           className="px-3 py-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 cursor-pointer text-xs font-medium text-gray-700 dark:text-gray-300 border-b border-gray-100 dark:border-gray-700"
-                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setAdditionalDiscount(0); setAdditionalDiscountDraft(''); setShowCustomerDropdown(false); }}
+                          onMouseDown={(e) => { e.preventDefault(); setCustomerName('');setSaleType('Regular'); setShowCustomerDropdown(false); }}
                         >
                           CASH CUSTOMER
                         </div>
@@ -3188,77 +3162,6 @@ const SellingPanel: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* SPECIAL DISCOUNT SECTION - Only show for Family/Relatives, Charity, or Employee */}
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
-                          <>
-                            <div
-                              className={`flex items-center justify-between gap-2 border-gray-100 dark:border-gray-600/50 ${
-                                expandedSaleSummary
-                                  ? 'pt-1.5 border-t-2'
-                                  : 'pt-1.5 border-t'
-                              }`}
-                            >
-                              <div
-                                className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
-                                  expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
-                                }`}
-                              >
-                                Exta Disc.%
-                              </div>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                autoComplete="off"
-                                aria-label="Extra Discount"
-                                value={
-                                  isEditingAdditionalDiscount
-                                    ? additionalDiscountDraft
-                                    : (additionalDiscount === 0 ? '' : String(Math.round(additionalDiscount)))
-                                }
-                                onFocus={(e) => {
-                                  setIsEditingAdditionalDiscount(true);
-                                  if (additionalDiscount === 0) {
-                                    setAdditionalDiscountDraft('');
-                                  } else {
-                                    setAdditionalDiscountDraft(String(Math.round(additionalDiscount)));
-                                  }
-                                  e.target.select();
-                                }}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  if (v === '') {
-                                    setAdditionalDiscountDraft('');
-                                    setAdditionalDiscount(0);
-                                  } else if (/^\d+$/.test(v)) {
-                                    const numVal = parseInt(v, 10);
-                                    if (numVal <= 100) {
-                                      setAdditionalDiscountDraft(v);
-                                      setAdditionalDiscount(numVal);
-                                    }
-                                  }
-                                }}
-                                onBlur={() => {
-                                  setIsEditingAdditionalDiscount(false);
-                                  const draft = additionalDiscountDraft;
-                                  setAdditionalDiscountDraft('');
-                                  if (draft === undefined || draft === '') {
-                                    setAdditionalDiscount(0);
-                                    return;
-                                  }
-                                  const trimmed = draft.trim();
-                                  let val = parseInt(trimmed, 10);
-                                  if (trimmed === '' || Number.isNaN(val) || val < 0) {
-                                    val = 0;
-                                  }
-                                  if (val > 100) val = 100;
-                                  setAdditionalDiscount(val);
-                                }}
-                                placeholder="0"
-                                className="w-12 px-1.5 py-1 text-[11px] font-semibold border border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-900/20 text-gray-900 dark:text-white rounded focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all text-center"
-                              />
-                            </div>
-                          </>
-                        )}
                       </div>
 
                       {/* Block 2: Values & Final Total */}
@@ -3285,26 +3188,6 @@ const SellingPanel: React.FC = () => {
                             {formatCurrency(subtotalValue)}
                           </div>
                         </div>
-
-                        {/* Additional Discount Amount - Only show when discount is applied */}
-                        {(saleType === 'Family/Relatives' || saleType === 'Charity' || saleType === 'Employee') && (
-                          <div className="flex items-center justify-between gap-4">
-                            <div
-                              className={`font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wide ${
-                                expandedSaleSummary ? 'text-xs' : 'text-[10px] font-semibold'
-                              }`}
-                            >
-                              Exta % Amount
-                              </div>
-                            <div
-                              className={`font-bold text-amber-600 dark:text-amber-400 tabular-nums ${
-                                expandedSaleSummary ? 'text-sm' : 'text-sm'
-                              }`}
-                            >
-                              -{formatCurrency((subtotalValue - discountValue + taxValue) * additionalDiscount / 100)}
-                            </div>
-                          </div>
-                        )}
 
                         <div className={`flex items-center justify-between gap-4 border-t border-gray-200 dark:border-gray-600 ${expandedSaleSummary ? 'pt-1 mt-0' : 'pt-1.5 mt-1.5'}`}>
                           <div
