@@ -69,6 +69,10 @@ const FinancialSummary = () => {
     trend: [],
   });
 
+  const netSales = useMemo(() => {
+    return Math.max(0, (financialData.sellingTotal || 0) - (financialData.saleReturnsTotal || 0));
+  }, [financialData.sellingTotal, financialData.saleReturnsTotal]);
+
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
 
   const formatCurrency = (value: number) => {
@@ -320,6 +324,17 @@ const FinancialSummary = () => {
                     </div>
                   </div>
 
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-red-50/50 dark:bg-red-900/10 p-3 rounded-lg border border-red-100 dark:border-red-800/30">
+                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Return amount</div>
+                      <div className="text-lg font-black text-red-600 dark:text-red-400">{formatCurrency(financialData.saleReturnsTotal)}</div>
+                    </div>
+                    <div className="bg-teal-50/50 dark:bg-teal-900/10 p-3 rounded-lg border border-teal-100 dark:border-teal-800/30">
+                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Net sales</div>
+                      <div className="text-lg font-black text-teal-600 dark:text-teal-400">{formatCurrency(netSales)}</div>
+                    </div>
+                  </div>
+
                   <div className="bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
@@ -371,7 +386,7 @@ const FinancialSummary = () => {
                     <div className="text-right">
                       <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Profit Margin %</p>
                       <p className={`text-xl font-bold ${financialData.profit >= 0 ? 'text-gray-700 dark:text-gray-300' : 'text-red-600'}`}>
-                         {financialData.sellingTotal > 0 ? Math.round((financialData.profit / financialData.sellingTotal) * 100) : 0}%
+                         {netSales > 0 ? Math.round((financialData.profit / netSales) * 100) : 0}%
                       </p>
                     </div>
                   </div>

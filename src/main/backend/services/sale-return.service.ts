@@ -243,20 +243,46 @@ export class SaleReturnService {
       returnedByMedicine.set(ret.medicine_id, ret.total_returned || 0);
     });
 
-    // Check each return item
-    for (const returnItem of returnItems) {
-      const saleItem = saleItems.find((si: any) => si.medicine_id === returnItem.medicineId);
-      if (!saleItem) {
-        throw new Error(`Medicine ${returnItem.medicineName} (ID: ${returnItem.medicineId}) was not part of sale ${saleId}`);
+    const soldByMedicine = new Map<number, { soldPills: number; medicineName: string }>();
+    saleItems.forEach((si: any) => {
+      const existing = soldByMedicine.get(si.medicine_id);
+      if (existing) {
+        existing.soldPills += si.pills || 0;
+      } else {
+        soldByMedicine.set(si.medicine_id, {
+          soldPills: si.pills || 0,
+          medicineName: si.medicine_name || `ID: ${si.medicine_id}`,
+        });
+      }
+    });
+
+    const requestedByMedicine = new Map<number, { requestedPills: number; medicineName: string }>();
+    returnItems.forEach((item) => {
+      const existing = requestedByMedicine.get(item.medicineId);
+      if (existing) {
+        existing.requestedPills += item.pills || 0;
+      } else {
+        requestedByMedicine.set(item.medicineId, {
+          requestedPills: item.pills || 0,
+          medicineName: item.medicineName || `ID: ${item.medicineId}`,
+        });
+      }
+    });
+
+    // Check each requested medicine as an aggregated quantity.
+    for (const [medicineId, requested] of requestedByMedicine.entries()) {
+      const soldInfo = soldByMedicine.get(medicineId);
+      if (!soldInfo) {
+        throw new Error(`Medicine ${requested.medicineName} (ID: ${medicineId}) was not part of sale ${saleId}`);
       }
 
-      const soldQuantity = saleItem.pills;
-      const previouslyReturned = returnedByMedicine.get(returnItem.medicineId) || 0;
+      const soldQuantity = soldInfo.soldPills;
+      const previouslyReturned = returnedByMedicine.get(medicineId) || 0;
       const availableToReturn = soldQuantity - previouslyReturned;
 
-      if (returnItem.pills > availableToReturn) {
+      if (requested.requestedPills > availableToReturn) {
         throw new Error(
-          `Cannot return ${returnItem.pills} pills of ${returnItem.medicineName}. ` +
+          `Cannot return ${requested.requestedPills} pills of ${requested.medicineName}. ` +
           `Only ${availableToReturn} pills available to return (${soldQuantity} sold, ${previouslyReturned} already returned)`
         );
       }
@@ -734,15 +760,14 @@ export class SaleReturnService {
    * Get sale returns total by date range
    */
   public async getSaleReturnsTotalByDateRange(fromDate: string, toDate: string): Promise<number> {
-    const fromDateTime = `${fromDate} 00:00:00`;
-    const toDateTime = `${toDate} 23:59:59`;
+    // Use local-date boundaries to avoid datetime parsing/timezone edge-cases.
     const sql = `
       SELECT COALESCE(SUM(total), 0) as total_returns
       FROM sale_returns 
-      WHERE datetime(created_at) >= datetime(?) 
-        AND datetime(created_at) <= datetime(?)
+      WHERE date(created_at, 'localtime') >= date(?)
+        AND date(created_at, 'localtime') <= date(?)
     `;
-    const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+    const result = await this.dbService.queryOne(sql, [fromDate, toDate]);
     return result?.total_returns || 0;
   }
 
@@ -750,16 +775,15 @@ export class SaleReturnService {
    * Get total cost of returned items by date range
    */
   public async getSaleReturnsCostByDateRange(fromDate: string, toDate: string): Promise<number> {
-    const fromDateTime = `${fromDate} 00:00:00`;
-    const toDateTime = `${toDate} 23:59:59`;
+    // Keep cost filtering consistent with return totals and local reporting date.
     const sql = `
       SELECT COALESCE(SUM(sri.cost_subtotal), 0) as total_return_cost
       FROM sale_return_items sri
       JOIN sale_returns sr ON sri.sale_return_id = sr.id
-      WHERE datetime(sr.created_at) >= datetime(?) 
-        AND datetime(sr.created_at) <= datetime(?)
+      WHERE date(sr.created_at, 'localtime') >= date(?)
+        AND date(sr.created_at, 'localtime') <= date(?)
     `;
-    const result = await this.dbService.queryOne(sql, [fromDateTime, toDateTime]);
+    const result = await this.dbService.queryOne(sql, [fromDate, toDate]);
     return result?.total_return_cost || 0;
   }
 }

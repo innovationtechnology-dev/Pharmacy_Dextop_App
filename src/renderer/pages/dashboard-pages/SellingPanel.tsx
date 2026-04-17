@@ -296,8 +296,8 @@ const SellingPanel: React.FC = () => {
     availableToReturn: number;
     returnPills: number;
     unitPrice: number;
-    discountAmount: number;
-    taxAmount: number;
+    discountPerUnit: number;
+    taxPerUnit: number;
     reason?: string;
   }>>([]);
   const [returnReason, setReturnReason] = useState('');
@@ -1733,24 +1733,52 @@ const SellingPanel: React.FC = () => {
           });
         });
 
-        // Always initialize from persisted sale rows (DB-backed history),
-        // not from current editable cart draft values.
-        const items = selectedSale.items.map((item) => {
+        const soldByMedicine = new Map<number, {
+          medicineId: number;
+          medicineName: string;
+          soldPills: number;
+          subtotal: number;
+          discountAmount: number;
+          taxAmount: number;
+        }>();
+        selectedSale.items.forEach((item) => {
+          const soldPills = item.originalPills || item.pills || 0;
+          const subtotal = item.originalSubtotal || item.subtotal || 0;
+          const discountAmount = item.originalDiscountAmount ?? item.discountAmount ?? 0;
+          const taxAmount = item.originalTaxAmount ?? item.taxAmount ?? 0;
+          const existing = soldByMedicine.get(item.medicineId);
+          if (existing) {
+            existing.soldPills += soldPills;
+            existing.subtotal += subtotal;
+            existing.discountAmount += discountAmount;
+            existing.taxAmount += taxAmount;
+          } else {
+            soldByMedicine.set(item.medicineId, {
+              medicineId: item.medicineId,
+              medicineName: item.medicineName,
+              soldPills,
+              subtotal,
+              discountAmount,
+              taxAmount,
+            });
+          }
+        });
+
+        const items = Array.from(soldByMedicine.values()).map((item) => {
           const alreadyReturned = returnedByMedicine.get(item.medicineId) || 0;
-          const soldPills = item.originalPills || item.pills;
-          const unitPrice = soldPills > 0
-            ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
-            : item.unitPrice;
-          const availableToReturn = Math.max(0, soldPills - alreadyReturned);
+          const availableToReturn = Math.max(0, item.soldPills - alreadyReturned);
+          const unitPrice = item.soldPills > 0 ? item.subtotal / item.soldPills : 0;
+          const discountPerUnit = item.soldPills > 0 ? item.discountAmount / item.soldPills : 0;
+          const taxPerUnit = item.soldPills > 0 ? item.taxAmount / item.soldPills : 0;
           return {
             medicineId: item.medicineId,
             medicineName: item.medicineName,
-            originalPills: soldPills,
+            originalPills: item.soldPills,
             availableToReturn,
-            returnPills: 0, // Start with 0 - user will select which items to return
+            returnPills: 0,
             unitPrice,
-            discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
-            taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
+            discountPerUnit,
+            taxPerUnit,
             reason: '',
           };
         }).filter(item => item.availableToReturn > 0);
@@ -1766,22 +1794,52 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error checking existing returns:', error);
       // Still allow return creation (start with 0 - user selects)
-      const items = selectedSale.items.map((item) => {
-        const soldPills = item.originalPills || item.pills;
-        const unitPrice = soldPills > 0
-          ? Number(((item.originalSubtotal || item.subtotal) / soldPills).toFixed(2))
-          : item.unitPrice;
+      const soldByMedicine = new Map<number, {
+        medicineId: number;
+        medicineName: string;
+        soldPills: number;
+        subtotal: number;
+        discountAmount: number;
+        taxAmount: number;
+      }>();
+      selectedSale.items.forEach((item) => {
+        const soldPills = item.originalPills || item.pills || 0;
+        const subtotal = item.originalSubtotal || item.subtotal || 0;
+        const discountAmount = item.originalDiscountAmount ?? item.discountAmount ?? 0;
+        const taxAmount = item.originalTaxAmount ?? item.taxAmount ?? 0;
+        const existing = soldByMedicine.get(item.medicineId);
+        if (existing) {
+          existing.soldPills += soldPills;
+          existing.subtotal += subtotal;
+          existing.discountAmount += discountAmount;
+          existing.taxAmount += taxAmount;
+        } else {
+          soldByMedicine.set(item.medicineId, {
+            medicineId: item.medicineId,
+            medicineName: item.medicineName,
+            soldPills,
+            subtotal,
+            discountAmount,
+            taxAmount,
+          });
+        }
+      });
+
+      const items = Array.from(soldByMedicine.values()).map((item) => {
+        const unitPrice = item.soldPills > 0 ? item.subtotal / item.soldPills : 0;
+        const discountPerUnit = item.soldPills > 0 ? item.discountAmount / item.soldPills : 0;
+        const taxPerUnit = item.soldPills > 0 ? item.taxAmount / item.soldPills : 0;
         return {
-        medicineId: item.medicineId,
-        medicineName: item.medicineName,
-        originalPills: soldPills,
-        availableToReturn: soldPills,
-        returnPills: 0, // Start with 0 - user will select which items to return
-        unitPrice,
-        discountAmount: item.originalDiscountAmount ?? item.discountAmount ?? 0,
-        taxAmount: item.originalTaxAmount ?? item.taxAmount ?? 0,
-        reason: '',
-      };
+          medicineId: item.medicineId,
+          medicineName: item.medicineName,
+          originalPills: item.soldPills,
+          availableToReturn: item.soldPills,
+          returnPills: 0,
+          unitPrice,
+          discountPerUnit,
+          taxPerUnit,
+          reason: '',
+        };
       }).filter(item => item.availableToReturn > 0);
       setReturnItems(items);
       setShowReturnModal(true);
@@ -1809,9 +1867,9 @@ const SellingPanel: React.FC = () => {
           medicineId: item.medicineId,
           medicineName: item.medicineName,
           pills: item.returnPills,
-          unitPrice: item.unitPrice,
-          discountAmount: item.discountAmount,
-          taxAmount: item.taxAmount,
+          unitPrice: Number(item.unitPrice.toFixed(2)),
+          discountAmount: Number((item.discountPerUnit * item.returnPills).toFixed(2)),
+          taxAmount: Number((item.taxPerUnit * item.returnPills).toFixed(2)),
           reason: item.reason || undefined,
         })),
         customerName: customerName || undefined,
@@ -2708,7 +2766,7 @@ const SellingPanel: React.FC = () => {
                       <div className="col-span-2 text-left">Company</div>
                       <div className="col-span-1 text-center">Pill QTY</div>
                       {showRetCol && (
-                        <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret.</div>
+                        <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret. Pill Qty</div>
                       )}
                       <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
                       <div className="col-span-1 text-center">Disc%</div>
@@ -3749,7 +3807,9 @@ const SellingPanel: React.FC = () => {
                   {returnItems.map((item, index) => {
                     const isSelected = item.returnPills > 0;
                     const subtotal = item.unitPrice * item.returnPills;
-                    const total = subtotal - item.discountAmount + item.taxAmount;
+                    const discountAmount = item.discountPerUnit * item.returnPills;
+                    const taxAmount = item.taxPerUnit * item.returnPills;
+                    const total = subtotal - discountAmount + taxAmount;
 
                     return (
                       <div
@@ -3799,11 +3859,11 @@ const SellingPanel: React.FC = () => {
                                     <div className="h-3 w-px bg-gray-200 dark:bg-gray-700 mx-1" />
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-[9px] font-bold text-orange-400 uppercase">Discount:</span>
-                                      <span className="text-[10px] font-bold text-orange-500">-{symbol}{item.discountAmount.toFixed(2)}</span>
+                                      <span className="text-[10px] font-bold text-orange-500">-{symbol}{discountAmount.toFixed(2)}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-[9px] font-bold text-blue-400 uppercase">Tax:</span>
-                                      <span className="text-[10px] font-bold text-blue-500">+{symbol}{item.taxAmount.toFixed(2)}</span>
+                                      <span className="text-[10px] font-bold text-blue-500">+{symbol}{taxAmount.toFixed(2)}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-[9px] font-bold text-gray-400 uppercase">Sub Total:</span>
@@ -3887,7 +3947,9 @@ const SellingPanel: React.FC = () => {
                               {returnItems
                                 .reduce((sum, item) => {
                                   const subtotal = item.unitPrice * item.returnPills;
-                                  return sum + subtotal - item.discountAmount + item.taxAmount;
+                                  const discountAmount = item.discountPerUnit * item.returnPills;
+                                  const taxAmount = item.taxPerUnit * item.returnPills;
+                                  return sum + subtotal - discountAmount + taxAmount;
                                 }, 0)
                                 .toFixed(2)}
                             </span>
