@@ -1084,8 +1084,8 @@ export class SalesService {
         COALESCE(SUM(CASE WHEN sale_type = 'Charity'           THEN total ELSE 0 END), 0) as charity_total,
         COALESCE(SUM(CASE WHEN sale_type = 'Employee'          THEN total ELSE 0 END), 0) as employee_total
       FROM sales
-      WHERE date(created_at, 'localtime') >= date(?)
-        AND date(created_at, 'localtime') <= date(?)
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
     `;
     const salesResult = await this.dbService.queryOne(salesSql, [fromDate, toDate]);
     const sellingTotal    = salesResult?.selling_total     || 0;
@@ -1101,7 +1101,8 @@ export class SalesService {
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
 
-    // COGS for ALL sales (the stock cost is real regardless of sale type)
+    // COGS for revenue-generating sales only (exclude charity/employee/relative)
+    // These are company expenses, not sales, so their cost should not be in COGS
     const cogsSql = `
       SELECT COALESCE(SUM(
         CASE
@@ -1119,7 +1120,9 @@ export class SalesService {
       ), 0) as total_cogs
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE date(s.created_at, 'localtime') >= date(?) AND date(s.created_at, 'localtime') <= date(?)
+      WHERE date(s.created_at) >= date(?) 
+        AND date(s.created_at) <= date(?)
+        AND (s.sale_type IS NULL OR s.sale_type NOT IN ('Family/Relatives', 'Charity', 'Employee'))
     `;
     const cogsResult = await this.dbService.queryOne(cogsSql, [fromDate, toDate]);
     const grossCogs = cogsResult?.total_cogs || 0;
@@ -1137,8 +1140,8 @@ export class SalesService {
         COALESCE(SUM(discount_total), 0) as purchase_discount_total,
         COALESCE(SUM(tax_total), 0) as purchase_tax_total
       FROM purchases
-      WHERE date(created_at, 'localtime') >= date(?)
-        AND date(created_at, 'localtime') <= date(?)
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
     `;
     const purchasingResult = await this.dbService.queryOne(purchasingSql, [fromDate, toDate]);
     const purchasingTotal = purchasingResult?.purchasing_total || 0;
@@ -1149,8 +1152,8 @@ export class SalesService {
     const remainingPaymentSql = `
       SELECT COALESCE(SUM(remaining_balance), 0) as total_remaining
       FROM purchases
-      WHERE date(created_at, 'localtime') >= date(?)
-        AND date(created_at, 'localtime') <= date(?)
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
         AND remaining_balance > 0
     `;
     const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDate, toDate]);
@@ -1159,32 +1162,34 @@ export class SalesService {
     // Profit = Net Revenue (gross − company expenses − returns) − Net COGS
     const profit = netRevenue - netCogs;
 
-    // Trend calculation
+    // Trend calculation - exclude charity/employee/relative from both sales and costs
     const salesTrendSql = `
       SELECT
-        date(s.created_at, 'localtime') as date,
+        date(s.created_at) as date,
         SUM(si.total) as amount,
         SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT sb.cost_price_per_pill FROM stock_batches sb WHERE sb.medicine_id = si.medicine_id AND sb.qty_remaining > 0 ORDER BY date(sb.expiry_date) ASC, sb.id ASC LIMIT 1), 0) END) as cost
       FROM sales s
       JOIN sale_items si ON s.id = si.sale_id
-      WHERE date(s.created_at, 'localtime') >= date(?) AND date(s.created_at, 'localtime') <= date(?)
-      GROUP BY date(s.created_at, 'localtime')
+      WHERE date(s.created_at) >= date(?) 
+        AND date(s.created_at) <= date(?)
+        AND (s.sale_type IS NULL OR s.sale_type NOT IN ('Family/Relatives', 'Charity', 'Employee'))
+      GROUP BY date(s.created_at)
     `;
     const purchasesTrendSql = `
-      SELECT date(created_at, 'localtime') as date, SUM(grand_total) as amount
+      SELECT date(created_at) as date, SUM(grand_total) as amount
       FROM purchases
-      WHERE date(created_at, 'localtime') >= date(?) AND date(created_at, 'localtime') <= date(?)
-      GROUP BY date(created_at, 'localtime')
+      WHERE date(created_at) >= date(?) AND date(created_at) <= date(?)
+      GROUP BY date(created_at)
     `;
     const returnsTrendSql = `
       SELECT
-        date(sr.created_at, 'localtime') as date,
+        date(sr.created_at) as date,
         SUM(sri.total) as return_amount,
         SUM(CASE WHEN sri.cost_subtotal > 0 THEN sri.cost_subtotal ELSE 0 END) as return_cost
       FROM sale_returns sr
       JOIN sale_return_items sri ON sr.id = sri.sale_return_id
-      WHERE date(sr.created_at, 'localtime') >= date(?) AND date(sr.created_at, 'localtime') <= date(?)
-      GROUP BY date(sr.created_at, 'localtime')
+      WHERE date(sr.created_at) >= date(?) AND date(sr.created_at) <= date(?)
+      GROUP BY date(sr.created_at)
     `;
 
     const salesTrend = await this.dbService.query(salesTrendSql, [fromDate, toDate]);
