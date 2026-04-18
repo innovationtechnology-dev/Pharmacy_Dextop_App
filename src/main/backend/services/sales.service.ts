@@ -1059,6 +1059,9 @@ export class SalesService {
     purchasingTotal: number;
     purchaseDiscountTotal: number;
     purchaseTaxTotal: number;
+    /** Sum of sale line subtotals (qty × price) before line discounts — what users expect as "gross" */
+    grossSubtotal: number;
+    /** Sum of invoice totals after line discounts & tax (includes charity/employee/relative bills) */
     sellingTotal: number;
     saleDiscountTotal: number;
     saleTaxTotal: number;
@@ -1066,17 +1069,21 @@ export class SalesService {
     familyTotal: number;
     charityTotal: number;
     employeeTotal: number;
+    /** Gross list (pre–line discount) − charity / relative / employee − returns; same basis as Financial Summary “Net sales” */
+    netSalesGrossBasis: number;
     netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
     profit: number;
     trend: Array<{ date: string; sales: number; purchases: number; profit: number }>;
   }> {
-    // Gross sales = ALL sales (including charity/employee/relative).
+    // gross_subtotal = merchandise value before discounts.
+    // selling_total    = SUM(invoice total) after line discounts & tax (still includes charity etc.).
     // Company expenses (charity/employee/relative) are tracked separately and
     // deducted when computing Net Sales and Profit.
     const salesSql = `
       SELECT
+        COALESCE(SUM(subtotal), 0)       as gross_subtotal,
         COALESCE(SUM(total), 0)          as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0)      as sale_tax_total,
@@ -1088,6 +1095,7 @@ export class SalesService {
         AND date(created_at) <= date(?)
     `;
     const salesResult = await this.dbService.queryOne(salesSql, [fromDate, toDate]);
+    const grossSubtotal = salesResult?.gross_subtotal || 0;
     const sellingTotal    = salesResult?.selling_total     || 0;
     const saleDiscountTotal = salesResult?.sale_discount_total || 0;
     const saleTaxTotal    = salesResult?.sale_tax_total    || 0;
@@ -1127,9 +1135,10 @@ export class SalesService {
     const cogsResult = await this.dbService.queryOne(cogsSql, [fromDate, toDate]);
     const grossCogs = cogsResult?.total_cogs || 0;
 
-    // Net Revenue = Gross Sales − Company Expenses (charity/emp/rel) − Returns
-    // This is what remains as real cash revenue.
+    // Net Revenue = invoiced total − company expenses − returns (basis for profit / “invoiced net”).
     const netRevenue = sellingTotal - companyExpenses - saleReturnsTotal;
+    // Net sales (merchandise KPI) = list subtotal − same expense buckets − returns (Financial Summary card).
+    const netSalesGrossBasis = Math.max(0, grossSubtotal - companyExpenses - saleReturnsTotal);
     // Net COGS = total COGS − cost of returned items
     const netCogs = grossCogs - saleReturnsCost;
 
@@ -1230,6 +1239,7 @@ export class SalesService {
       purchasingTotal,
       purchaseDiscountTotal,
       purchaseTaxTotal,
+      grossSubtotal,
       sellingTotal,
       saleDiscountTotal,
       saleTaxTotal,
@@ -1237,6 +1247,7 @@ export class SalesService {
       familyTotal,
       charityTotal,
       employeeTotal,
+      netSalesGrossBasis,
       netRevenue,
       paymentTotal: sellingTotal, // Restore paymentTotal (assumed to be sellingTotal based on original SQL)
       remainingPayment,

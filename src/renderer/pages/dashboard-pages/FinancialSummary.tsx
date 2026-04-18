@@ -31,6 +31,9 @@ import { getCurrencySymbol as getSymbol } from '../../../common/currency';
 
 type FinancialData = {
   purchasingTotal: number;
+  /** Sum of sale subtotals (qty × price) before line discounts */
+  grossSubtotal?: number;
+  /** Sum of invoice totals after discounts & tax (includes charity / employee / relative) */
   sellingTotal: number;
   saleReturnsTotal: number;
   purchaseDiscountTotal: number;
@@ -40,6 +43,10 @@ type FinancialData = {
   familyTotal: number;
   charityTotal: number;
   employeeTotal: number;
+  /** Gross list − charity / relative / employee − returns (same formula as Net sales card) */
+  netSalesGrossBasis?: number;
+  /** Invoiced counter revenue: selling total − charity/relative/employee − returns (basis for profit) */
+  netRevenue?: number;
   profit: number;
   trend: { date: string; sales: number; profit: number }[];
 };
@@ -65,6 +72,7 @@ const FinancialSummary = () => {
   const [loading, setLoading] = useState(true);
   const [financialData, setFinancialData] = useState<FinancialData>({
     purchasingTotal: 0,
+    grossSubtotal: 0,
     sellingTotal: 0,
     saleReturnsTotal: 0,
     purchaseDiscountTotal: 0,
@@ -74,6 +82,8 @@ const FinancialSummary = () => {
     familyTotal: 0,
     charityTotal: 0,
     employeeTotal: 0,
+    netSalesGrossBasis: 0,
+    netRevenue: 0,
     profit: 0,
     trend: [],
   });
@@ -82,10 +92,30 @@ const FinancialSummary = () => {
     return (financialData.familyTotal || 0) + (financialData.charityTotal || 0) + (financialData.employeeTotal || 0);
   }, [financialData.familyTotal, financialData.charityTotal, financialData.employeeTotal]);
 
-  // Net Sales = Gross Sales − Company Expenses (charity/emp/rel) − Returns
-  const netSales = useMemo(() => {
+  /** Invoiced net (after line discounts) — matches backend profit; charity/relative/employee are invoice totals */
+  const invoicedNetSales = useMemo(() => {
     return Math.max(0, (financialData.sellingTotal || 0) - companyExpenses - (financialData.saleReturnsTotal || 0));
   }, [financialData.sellingTotal, financialData.saleReturnsTotal, companyExpenses]);
+
+  /**
+   * Net sales (KPI): gross list (pre–line discount) minus charity, relative & employee billed totals and returns.
+   * Aligns with “gross − charity − relative − employee”. Program buckets use invoice totals, so this can exceed
+   * cash collected when regular line discounts exist; profit margin still uses invoiced net (netRevenue).
+   */
+  const netSales = useMemo(() => {
+    const fromApi = financialData.netSalesGrossBasis;
+    if (typeof fromApi === 'number' && !Number.isNaN(fromApi)) {
+      return Math.max(0, fromApi);
+    }
+    const gross = financialData.grossSubtotal ?? financialData.sellingTotal ?? 0;
+    return Math.max(0, gross - companyExpenses - (financialData.saleReturnsTotal || 0));
+  }, [
+    financialData.netSalesGrossBasis,
+    financialData.grossSubtotal,
+    financialData.sellingTotal,
+    financialData.saleReturnsTotal,
+    companyExpenses,
+  ]);
 
   /** Key totals for donut — matches detailed breakdown emphasis */
   const pieBreakdown = useMemo(() => {
@@ -186,10 +216,10 @@ const FinancialSummary = () => {
 
   const formatDisplayDate = (dateStr: string) => {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString(undefined, { 
-      month: 'short', 
-      day: 'numeric', 
-      year: 'numeric' 
+    return new Date(dateStr).toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
     });
   };
 
@@ -249,7 +279,7 @@ const FinancialSummary = () => {
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
       <div className="flex-1 flex flex-col min-h-0">
-        
+
         {/* Stats Bar */}
         <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
           <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
@@ -262,9 +292,11 @@ const FinancialSummary = () => {
 
           <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
             <FiDollarSign className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Gross Sales</span>
+            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide" title="Quantity × unit price before line discounts">
+              Gross sales
+            </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {formatCurrency(financialData.sellingTotal)}
+              {formatCurrency(financialData.grossSubtotal ?? financialData.sellingTotal)}
             </span>
           </div>
 
@@ -326,7 +358,7 @@ const FinancialSummary = () => {
               <FiCalendar className="w-4 h-4 text-emerald-500" />
               <span className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Reporting Period</span>
             </div>
-            
+
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">From</span>
@@ -397,19 +429,33 @@ const FinancialSummary = () => {
                   <div className="grid grid-cols-2 gap-3">
                     {[
                       { label: 'Purchasing total', value: financialData.purchasingTotal, accent: 'border-l-blue-500', val: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50/60 dark:bg-blue-950/30', icon: <FiPackage className="w-4 h-4 text-blue-500 shrink-0" /> },
-                      { label: 'Gross sales', value: financialData.sellingTotal, accent: 'border-l-amber-500', val: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50/60 dark:bg-amber-950/30', icon: <FiDollarSign className="w-4 h-4 text-amber-500 shrink-0" /> },
+                      { label: 'Gross sales', sub: 'Before line discounts', value: financialData.grossSubtotal ?? financialData.sellingTotal, accent: 'border-l-amber-500', val: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50/60 dark:bg-amber-950/30', icon: <FiDollarSign className="w-4 h-4 text-amber-500 shrink-0" /> },
                       { label: 'Return amount', value: financialData.saleReturnsTotal, accent: 'border-l-red-500', val: 'text-red-700 dark:text-red-300', bg: 'bg-red-50/60 dark:bg-red-950/30', icon: <FiTrendingDown className="w-4 h-4 text-red-500 shrink-0" /> },
-                      { label: 'Net sales', value: netSales, accent: 'border-l-teal-500', val: 'text-teal-700 dark:text-teal-300', bg: 'bg-teal-50/60 dark:bg-teal-950/30', icon: <FiTrendingUp className="w-4 h-4 text-teal-500 shrink-0" /> },
+                      {
+                        label: 'Net sales',
+                        sub: 'Gross list − charity, relative, employee & returns (program amounts at invoice)',
+                        value: netSales,
+                        accent: 'border-l-teal-500',
+                        val: 'text-teal-700 dark:text-teal-300',
+                        bg: 'bg-teal-50/60 dark:bg-teal-950/30',
+                        icon: <FiTrendingUp className="w-4 h-4 text-teal-500 shrink-0" />,
+                      },
                     ].map((item) => (
                       <div key={item.label} className={`flex flex-col rounded-xl border border-gray-200 dark:border-gray-600 border-l-4 ${item.accent} ${item.bg} px-4 py-4 shadow-sm`}>
-                        <div className="flex items-start justify-between gap-2 mb-3">
-                          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 leading-snug">{item.label}</span>
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <div>
+                            <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 leading-snug block">{item.label}</span>
+                            {'sub' in item && item.sub ? (
+                              <span className="text-[11px] text-gray-600 dark:text-gray-400 leading-snug mt-0.5 block">{item.sub}</span>
+                            ) : null}
+                          </div>
                           {item.icon}
                         </div>
                         <span className={`text-xl font-bold tabular-nums tracking-tight ${item.val}`}>{formatCurrency(item.value)}</span>
                       </div>
                     ))}
                   </div>
+
 
                   {/* Discounts and taxes */}
                   <div className="shrink-0 rounded-xl border-2 border-gray-200 bg-slate-50/90 dark:border-gray-600 dark:bg-gray-800/90 px-4 py-4">
@@ -460,7 +506,9 @@ const FinancialSummary = () => {
                     <div className="text-left sm:text-right border-t sm:border-t-0 border-gray-300/80 dark:border-gray-600 pt-3 sm:pt-0 sm:pl-6 sm:border-l sm:border-gray-300/80 dark:sm:border-gray-600">
                       <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Profit margin</p>
                       <p className={`text-3xl font-bold tabular-nums leading-tight mt-1 ${financialData.profit >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-700'}`}>
-                        {netSales > 0 ? Math.round((financialData.profit / netSales) * 100) : 0}%
+                        {(financialData.netRevenue ?? invoicedNetSales) > 0
+                          ? Math.round((financialData.profit / (financialData.netRevenue ?? invoicedNetSales)) * 100)
+                          : 0}
                       </p>
                     </div>
                   </div>

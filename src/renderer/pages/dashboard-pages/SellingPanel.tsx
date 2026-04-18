@@ -246,6 +246,7 @@ const SellingPanel: React.FC = () => {
   const [prescriptionNumber, setPrescriptionNumber] = useState('');
   const [doctorName, setDoctorName] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [showNoDiscountConfirm, setShowNoDiscountConfirm] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
   const [showSeedButton, setShowSeedButton] = useState(false);
@@ -1232,11 +1233,22 @@ const SellingPanel: React.FC = () => {
     return grandTotal;
   };
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (skipNoDiscountCheck = false) => {
     if (cart.length === 0) {
       alert('Cart is empty!');
       return;
     }
+
+    const specialTypes = ['Charity', 'Employee', 'Family/Relatives'];
+    const hasDiscount = cart.some((item) => (item.discount || 0) > 0);
+    if (specialTypes.includes(saleType) && !hasDiscount) {
+      if (!skipNoDiscountCheck) {
+        setShowNoDiscountConfirm(true);
+        return;
+      }
+    }
+    // If special type selected but no discount given, record as Regular
+    const effectiveSaleType = (specialTypes.includes(saleType) && !hasDiscount) ? 'Regular' : (saleType || 'Regular');
 
     setProcessing(true);
 
@@ -1275,7 +1287,7 @@ const SellingPanel: React.FC = () => {
         items: saleItems,
         customerName: customerName || undefined,
         customerPhone: customerPhone || undefined,
-        saleType: saleType || 'Regular',
+        saleType: effectiveSaleType,
         additionalDiscount: 0,
         prescriptionNumber: prescriptionNumber.trim() || undefined,
         doctorName: doctorName.trim() || undefined,
@@ -2809,7 +2821,12 @@ const SellingPanel: React.FC = () => {
                         <div className="col-span-1 text-center text-rose-600 dark:text-rose-400">Ret. Pill Qty</div>
                       )}
                       <div className={`${showRetCol ? 'col-span-1' : 'col-span-2'} text-center`}>Pill Price</div>
-                      <div className="col-span-1 text-center">Disc%</div>
+                      <div
+                        className="col-span-1 text-center"
+                        title="Percent off this line only. Example: 10 = 10% off. For Rs 50 off, use a smaller percent or change price."
+                      >
+                        Disc %
+                      </div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-3 text-right pr-1">Amount</div>
                       <div className="col-span-1 text-center">Remove</div>
@@ -3401,7 +3418,7 @@ const SellingPanel: React.FC = () => {
                         <div className="grid grid-cols-3 gap-2">
                           <button
                             type="button"
-                            onClick={handleCheckout}
+                            onClick={() => void handleCheckout()}
                             disabled={processing || cart.length === 0}
                             className="py-2.5 bg-blue-600 dark:bg-blue-700 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 dark:hover:bg-blue-600 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5"
                           >
@@ -3499,7 +3516,7 @@ const SellingPanel: React.FC = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={handleCheckout}
+                        onClick={() => void handleCheckout()}
                         disabled={processing || cart.length === 0}
                         className={`w-[70%] bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 dark:from-emerald-700 dark:via-emerald-600 dark:to-emerald-700 text-white rounded-xl font-bold hover:from-emerald-700 hover:via-emerald-600 hover:to-emerald-700 dark:hover:from-emerald-800 dark:hover:via-emerald-700 dark:hover:to-emerald-800 disabled:from-gray-400 disabled:via-gray-400 disabled:to-gray-400 dark:disabled:from-gray-600 dark:disabled:via-gray-600 dark:disabled:to-gray-600 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 ${
                           expandedSaleSummary ? 'py-2.5 text-sm rounded-lg' : 'py-2.5 text-sm rounded-lg'
@@ -3730,6 +3747,27 @@ Are you sure you want to continue?`}
       )}
 
       {/* Return Modal */}
+      {showNoDiscountConfirm && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setShowNoDiscountConfirm(false)}
+          onConfirm={() => {
+            setShowNoDiscountConfirm(false);
+            void handleCheckout(true);
+          }}
+          title="No Discount Applied"
+          message={
+            <span className="flex flex-col gap-2">
+              <span>You selected <span className="font-bold text-red-500">{saleType}</span> but no discount has been given.</span>
+              <span>Please add a discount for <span className="font-bold text-red-500">{saleType}</span> customers, or confirm to proceed at full price (only the customer type will be recorded — no cost reduction applies).</span>
+            </span>
+          }
+          confirmText="Proceed Anyway"
+          cancelText="Go Back & Add Discount"
+          type="danger"
+        />
+      )}
+
       {saleDeleteConfirm && (
         <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5">

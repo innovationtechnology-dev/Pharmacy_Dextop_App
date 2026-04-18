@@ -81,8 +81,22 @@ const getDateKey = (date: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+type FinancialRangeKpis = {
+  purchasingTotal: number;
+  grossSubtotal: number;
+  sellingTotal: number;
+  netSalesGrossBasis: number;
+  netRevenue: number;
+  familyTotal: number;
+  charityTotal: number;
+  employeeTotal: number;
+  saleReturnsTotal: number;
+  profit: number;
+};
+
 const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+  const grossSubtotal = sales.reduce((sum, sale) => sum + (sale.subtotal || 0), 0);
   
   // Calculate COGS using actual purchase costs from medicine inventory
   let costOfGoodsSold = 0;
@@ -109,9 +123,6 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
     });
   });
 
-  const netRevenue = revenue - saleReturnsTotal;
-  const profit = netRevenue - costOfGoodsSold;
-
   const familyTotal = sales
     .filter((sale) => sale.saleType === 'Family/Relatives')
     .reduce((sum, sale) => sum + (sale.total || 0), 0);
@@ -121,6 +132,11 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
   const employeeTotal = sales
     .filter((sale) => sale.saleType === 'Employee')
     .reduce((sum, sale) => sum + (sale.total || 0), 0);
+
+  const companyExpenses = familyTotal + charityTotal + employeeTotal;
+  const netRevenue = Math.max(0, revenue - companyExpenses - saleReturnsTotal);
+  const netSalesGrossBasis = Math.max(0, grossSubtotal - companyExpenses - saleReturnsTotal);
+  const profit = netRevenue - costOfGoodsSold;
 
   const uniqueCustomers = new Set(
     sales
@@ -133,6 +149,8 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
 
   return {
     revenue,
+    grossSubtotal,
+    netSalesGrossBasis,
     netRevenue,
     saleReturnsTotal,
     familyTotal,
@@ -381,42 +399,68 @@ const Dashboard = () => {
     return buildTotals(filteredSales, filteredPurchases, medicines, saleReturnsTotal);
   }, [filteredSales, filteredPurchases, medicines, saleReturnsTotal]);
 
-  // Fetch accurate profit from backend (same calculation as Financial Summary)
-  const [accurateProfit, setAccurateProfit] = useState<number | null>(null);
-  
+  /** Same date range as KPI strip — matches Financial Summary / sales.service aggregates */
+  const [financialRange, setFinancialRange] = useState<FinancialRangeKpis | null>(null);
+
   useEffect(() => {
-    const fetchAccurateProfit = async () => {
+    let cancelled = false;
+    const fetchFinancialRange = async () => {
       try {
-        console.log('Fetching accurate profit for date range:', kpiFromDate, 'to', kpiToDate);
-        const response = await invokeIpc<any>(
+        const response = await invokeIpc<FinancialRangeKpis & { saleReturnsTotal?: number }>(
           'financial-get-date-range',
           'financial-get-date-range-reply',
           [kpiFromDate, kpiToDate]
         );
-        console.log('Financial data received:', response);
-        
-        // invokeIpc already extracts response.data, so response IS the data object
-        if (response?.profit !== undefined) {
-          console.log('Setting accurate profit to:', response.profit);
-          setAccurateProfit(response.profit);
-        } else {
-          console.log('No profit data in response');
-        }
+        if (cancelled || !response || response.profit === undefined) return;
+        const family = response.familyTotal ?? 0;
+        const charity = response.charityTotal ?? 0;
+        const employee = response.employeeTotal ?? 0;
+        const company = family + charity + employee;
+        const gross = response.grossSubtotal ?? 0;
+        const selling = response.sellingTotal ?? 0;
+        const returns = response.saleReturnsTotal ?? 0;
+        const netSalesGrossBasis =
+          response.netSalesGrossBasis ??
+          Math.max(0, gross - company - returns);
+        setFinancialRange({
+          purchasingTotal: response.purchasingTotal ?? 0,
+          grossSubtotal: gross,
+          sellingTotal: selling,
+          netSalesGrossBasis,
+          netRevenue: response.netRevenue ?? Math.max(0, selling - company - returns),
+          familyTotal: family,
+          charityTotal: charity,
+          employeeTotal: employee,
+          saleReturnsTotal: returns,
+          profit: response.profit,
+        });
       } catch (err) {
-        console.error('Failed to fetch accurate profit:', err);
+        console.error('Failed to fetch financial summary for KPI range:', err);
+        if (!cancelled) setFinancialRange(null);
       }
     };
-    fetchAccurateProfit();
+    fetchFinancialRange();
+    return () => {
+      cancelled = true;
+    };
   }, [kpiFromDate, kpiToDate]);
 
-  // Use accurate profit from backend if available, otherwise use calculated
   const displayTotals = useMemo(() => {
-    console.log('displayTotals - accurateProfit:', accurateProfit, 'calculated profit:', totals.profit);
-    if (accurateProfit !== null) {
-      return { ...totals, profit: accurateProfit };
-    }
-    return totals;
-  }, [totals, accurateProfit]);
+    if (!financialRange) return totals;
+    return {
+      ...totals,
+      purchasesTotal: financialRange.purchasingTotal,
+      grossSubtotal: financialRange.grossSubtotal,
+      revenue: financialRange.sellingTotal,
+      netSalesGrossBasis: financialRange.netSalesGrossBasis,
+      netRevenue: financialRange.netRevenue,
+      familyTotal: financialRange.familyTotal,
+      charityTotal: financialRange.charityTotal,
+      employeeTotal: financialRange.employeeTotal,
+      saleReturnsTotal: financialRange.saleReturnsTotal,
+      profit: financialRange.profit,
+    };
+  }, [totals, financialRange]);
 
   const metrics = useMemo(
     () => [
@@ -429,13 +473,13 @@ const Dashboard = () => {
       {
         id: 'revenue',
         title: 'Gross Sales',
-        value: formatCurrency(displayTotals.revenue),
+        value: formatCurrency(displayTotals.grossSubtotal ?? displayTotals.revenue),
         icon: <FiDollarSign />,
       },
       {
         id: 'netRevenue',
         title: 'Net Sales',
-        value: formatCurrency(displayTotals.netRevenue),
+        value: formatCurrency(displayTotals.netSalesGrossBasis ?? displayTotals.netRevenue),
         icon: <FiShoppingBag />,
       },
       {
@@ -707,10 +751,10 @@ const Dashboard = () => {
               <div className="flex-1 flex flex-col min-h-0 p-4 overflow-y-auto">
                 <div className="mb-4">
                   <div className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-                    {formatCurrency(totals.revenue)}
+                    {formatCurrency(displayTotals.grossSubtotal ?? displayTotals.revenue)}
                   </div>
                   <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                    Total sales recorded
+                    Gross sales (before line discounts) for the KPI date range
                   </div>
                 </div>
 
