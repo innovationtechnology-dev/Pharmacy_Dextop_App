@@ -17,9 +17,12 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  AreaChart,
-  Area,
-  Legend,
+  ComposedChart,
+  Bar,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
 } from 'recharts';
 import { invokeIpc } from '../../utils/ipcHelpers';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -51,7 +54,13 @@ const FinancialSummary = () => {
     return `${d.getFullYear()}-${mm}-${dd}`;
   }, []);
 
-  const [fromDate, setFromDate] = useState<string>(today);
+  const monthStart = useMemo(() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}-01`;
+  }, []);
+
+  const [fromDate, setFromDate] = useState<string>(monthStart);
   const [toDate, setToDate] = useState<string>(today);
   const [loading, setLoading] = useState(true);
   const [financialData, setFinancialData] = useState<FinancialData>({
@@ -73,42 +82,101 @@ const FinancialSummary = () => {
     return Math.max(0, (financialData.sellingTotal || 0) - (financialData.saleReturnsTotal || 0));
   }, [financialData.sellingTotal, financialData.saleReturnsTotal]);
 
+  /** Key totals for donut — matches detailed breakdown emphasis */
+  const pieBreakdown = useMemo(() => {
+    const items = [
+      { name: 'Purchases', value: Math.max(0, financialData.purchasingTotal), color: '#3B82F6' },
+      { name: 'Net sales', value: Math.max(0, netSales), color: '#14B8A6' },
+      { name: 'Returns', value: Math.max(0, financialData.saleReturnsTotal), color: '#EF4444' },
+      { name: 'Net profit', value: Math.max(0, financialData.profit), color: '#10B981' },
+    ].filter((x) => x.value > 0);
+    const sum = items.reduce((a, b) => a + b.value, 0);
+    return { items, sum };
+  }, [financialData, netSales]);
+
+  const chartPalette = useMemo(
+    () => ({
+      profitLine: '#0d9488',
+      volUp: '#16a34a',
+      volDown: '#dc2626',
+    }),
+    []
+  );
+
+  /** Volume bar colors: day-over-day sales change (up = green, down = red) */
+  const trendChartData = useMemo(() => {
+    const { volUp, volDown } = chartPalette;
+    const t = financialData.trend || [];
+    return t.map((row, i) => {
+      if (i === 0) {
+        return { ...row, barFill: volUp };
+      }
+      const prevSales = t[i - 1].sales;
+      const salesUp = row.sales >= prevSales;
+      return {
+        ...row,
+        barFill: salesUp ? volUp : volDown,
+      };
+    });
+  }, [financialData.trend, chartPalette]);
+
   const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
 
   const formatCurrency = (value: number) => {
-    return `${getCurrencySymbol()}${value.toLocaleString(undefined, {
+    const sym = getCurrencySymbol().trim();
+    const num = value.toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    })}`;
+    });
+    return `${sym} ${num}`;
   };
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur-md border border-gray-200/50 dark:border-gray-700/50 p-3 rounded-xl shadow-xl space-y-2 min-w-[150px] z-[1000]">
-          <p className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-widest border-b border-gray-100 dark:border-gray-700/50 pb-1.5 mb-1.5">
-            {new Date(label).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-          </p>
-          {payload.map((entry: any, index: number) => (
-            <div key={index} className="flex items-center justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <div 
-                  className="w-2 h-2 rounded-full" 
-                  style={{ backgroundColor: entry.color }}
-                />
-                <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 capitalize">
-                  {entry.name}
-                </span>
-              </div>
-              <span className="text-xs font-black text-gray-900 dark:text-white">
-                {formatCurrency(Math.max(0, entry.value))}
-              </span>
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return null;
+  const formatAxisCompact = (value: number) => {
+    const sym = getCurrencySymbol().trim();
+    const v = Math.abs(value);
+    if (v >= 1_000_000) return `${sym} ${(value / 1_000_000).toFixed(1)}M`;
+    if (v >= 1_000) return `${sym} ${(value / 1_000).toFixed(1)}k`;
+    return `${sym} ${Math.round(value)}`;
+  };
+
+  const TradingTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="min-w-[180px] rounded-lg border border-gray-200 bg-white px-3 py-2.5 shadow-lg backdrop-blur-sm dark:border-gray-600 dark:bg-gray-800">
+        <p className="mb-2 border-b border-gray-100 pb-2 text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:border-gray-600 dark:text-gray-400">
+          {new Date(label).toLocaleDateString(undefined, {
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          })}
+        </p>
+        {payload.map((p: any) => (
+          <div key={String(p.dataKey)} className="flex justify-between gap-6 text-[11px]">
+            <span className="font-semibold capitalize" style={{ color: p.color }}>
+              {p.name}
+            </span>
+            <span className="font-mono font-bold tabular-nums text-gray-900 dark:text-gray-100">
+              {formatCurrency(Number(p.value))}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const PieTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const p = payload[0];
+    const pct = pieBreakdown.sum > 0 ? ((p.value / pieBreakdown.sum) * 100).toFixed(1) : '0';
+    return (
+      <div className="rounded-xl border border-gray-200/80 bg-white/95 px-3 py-2.5 text-xs shadow-xl backdrop-blur-sm dark:border-gray-600 dark:bg-gray-800/95">
+        <p className="font-bold text-gray-900 dark:text-white">{p.name}</p>
+        <p className="mt-0.5 font-mono text-gray-600 dark:text-gray-300">
+          {formatCurrency(p.value)} <span className="text-gray-400">({pct}%)</span>
+        </p>
+      </div>
+    );
   };
 
   const formatDisplayDate = (dateStr: string) => {
@@ -303,171 +371,285 @@ const FinancialSummary = () => {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 flex-1 overflow-hidden min-h-0">
-            {/* Left side: Breakdown */}
-            <div className="flex flex-col gap-4 overflow-y-auto pr-1">
-              <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md p-4 flex flex-col min-h-0">
-                <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-4 flex items-center gap-2">
-                  <FiPieChart className="text-blue-500" />
-                  Detailed Breakdown
-                </h3>
-                
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-blue-50/50 dark:bg-blue-900/10 p-3 rounded-lg border border-blue-100 dark:border-blue-800/30">
-                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Purchasing total</div>
-                      <div className="text-lg font-black text-blue-600 dark:text-blue-400">{formatCurrency(financialData.purchasingTotal)}</div>
-                    </div>
-                    <div className="bg-emerald-50/50 dark:bg-emerald-900/10 p-3 rounded-lg border border-emerald-100 dark:border-emerald-800/30">
-                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Gross sales</div>
-                      <div className="text-lg font-black text-emerald-600 dark:text-emerald-400">{formatCurrency(financialData.sellingTotal)}</div>
-                    </div>
-                  </div>
+          <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2 flex-1 overflow-hidden min-h-0">
+            {/* Left: Detailed Breakdown */}
+            <div className="flex h-full min-h-0 flex-col self-stretch pr-1">
+              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-gray-200 bg-white shadow-md dark:border-gray-700 dark:bg-gray-800 overflow-hidden">
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-red-50/50 dark:bg-red-900/10 p-3 rounded-lg border border-red-100 dark:border-red-800/30">
-                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Return amount</div>
-                      <div className="text-lg font-black text-red-600 dark:text-red-400">{formatCurrency(financialData.saleReturnsTotal)}</div>
-                    </div>
-                    <div className="bg-teal-50/50 dark:bg-teal-900/10 p-3 rounded-lg border border-teal-100 dark:border-teal-800/30">
-                      <div className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1">Net sales</div>
-                      <div className="text-lg font-black text-teal-600 dark:text-teal-400">{formatCurrency(netSales)}</div>
-                    </div>
+                {/* Panel header */}
+                <div className="shrink-0 flex items-center gap-3 px-5 py-4 border-b-2 border-gray-200 dark:border-gray-600 bg-gradient-to-r from-slate-50 to-white dark:from-gray-800/60 dark:to-gray-800">
+                  <FiPieChart className="w-5 h-5 text-blue-600 shrink-0" />
+                  <div>
+                    <h3 className="text-base font-bold text-gray-900 dark:text-gray-50 leading-tight">Detailed breakdown</h3>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">These figures use the dates you selected above</p>
                   </div>
+                </div>
 
-                  <div className="bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-800 dark:to-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Purchase Discounts</p>
-                        <p className="text-sm font-bold text-green-600">{formatCurrency(financialData.purchaseDiscountTotal)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Sale Discounts</p>
-                        <p className="text-sm font-bold text-orange-600">{formatCurrency(financialData.saleDiscountTotal)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Purchase Taxes</p>
-                        <p className="text-sm font-bold text-red-600">{formatCurrency(financialData.purchaseTaxTotal)}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Sale Taxes</p>
-                        <p className="text-sm font-bold text-blue-600">{formatCurrency(financialData.saleTaxTotal)}</p>
-                      </div>
-                      <div className="border-t border-gray-200 dark:border-gray-600 pt-3 col-span-2">
-                        <div className="grid grid-cols-3 gap-4">
-                          <div className="bg-purple-50/50 dark:bg-purple-900/10 p-2.5 rounded-lg border border-purple-100/50 dark:border-purple-800/30">
-                            <p className="text-[9px] font-bold text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wider mb-0.5">Relative</p>
-                            <p className="text-xs font-bold text-purple-700 dark:text-purple-300">{formatCurrency(financialData.familyTotal)}</p>
-                          </div>
-                          <div className="bg-pink-50/50 dark:bg-pink-900/10 p-2.5 rounded-lg border border-pink-100/50 dark:border-pink-800/30">
-                            <p className="text-[9px] font-bold text-pink-600/70 dark:text-pink-400/70 uppercase tracking-wider mb-0.5">Charity</p>
-                            <p className="text-xs font-bold text-pink-700 dark:text-pink-300">{formatCurrency(financialData.charityTotal)}</p>
-                          </div>
-                          <div className="bg-orange-50/50 dark:bg-orange-900/10 p-2.5 rounded-lg border border-orange-100/50 dark:border-orange-800/30">
-                            <p className="text-[9px] font-bold text-orange-600/70 dark:text-orange-400/70 uppercase tracking-wider mb-0.5">Employee</p>
-                            <p className="text-xs font-bold text-orange-700 dark:text-orange-300">{formatCurrency(financialData.employeeTotal)}</p>
-                          </div>
+                {/* Body — comfortable spacing; KPI grid does not stretch vertically */}
+                <div className="flex flex-1 flex-col gap-4 p-5 min-h-0 overflow-y-auto">
+
+                  {/* Primary KPIs */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { label: 'Purchasing total', value: financialData.purchasingTotal, accent: 'border-l-blue-500', val: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50/60 dark:bg-blue-950/30', icon: <FiPackage className="w-4 h-4 text-blue-500 shrink-0" /> },
+                      { label: 'Gross sales', value: financialData.sellingTotal, accent: 'border-l-amber-500', val: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50/60 dark:bg-amber-950/30', icon: <FiDollarSign className="w-4 h-4 text-amber-500 shrink-0" /> },
+                      { label: 'Return amount', value: financialData.saleReturnsTotal, accent: 'border-l-red-500', val: 'text-red-700 dark:text-red-300', bg: 'bg-red-50/60 dark:bg-red-950/30', icon: <FiTrendingDown className="w-4 h-4 text-red-500 shrink-0" /> },
+                      { label: 'Net sales', value: netSales, accent: 'border-l-teal-500', val: 'text-teal-700 dark:text-teal-300', bg: 'bg-teal-50/60 dark:bg-teal-950/30', icon: <FiTrendingUp className="w-4 h-4 text-teal-500 shrink-0" /> },
+                    ].map((item) => (
+                      <div key={item.label} className={`flex flex-col rounded-xl border border-gray-200 dark:border-gray-600 border-l-4 ${item.accent} ${item.bg} px-4 py-4 shadow-sm`}>
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                          <span className="text-sm font-semibold text-gray-800 dark:text-gray-100 leading-snug">{item.label}</span>
+                          {item.icon}
                         </div>
+                        <span className={`text-xl font-bold tabular-nums tracking-tight ${item.val}`}>{formatCurrency(item.value)}</span>
                       </div>
+                    ))}
+                  </div>
+
+                  {/* Discounts and taxes */}
+                  <div className="shrink-0 rounded-xl border-2 border-gray-200 bg-slate-50/90 dark:border-gray-600 dark:bg-gray-800/90 px-4 py-4">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 pb-2 border-b border-gray-200 dark:border-gray-600">Discounts and taxes</p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {[
+                        { label: 'Purchase discounts', value: financialData.purchaseDiscountTotal, color: 'text-emerald-700 dark:text-emerald-300' },
+                        { label: 'Sale discounts', value: financialData.saleDiscountTotal, color: 'text-amber-700 dark:text-amber-300' },
+                        { label: 'Purchase taxes', value: financialData.purchaseTaxTotal, color: 'text-red-700 dark:text-red-300' },
+                        { label: 'Sale taxes', value: financialData.saleTaxTotal, color: 'text-blue-700 dark:text-blue-300' },
+                      ].map((d) => (
+                        <div key={d.label} className="min-w-0 rounded-lg bg-white dark:bg-gray-900/50 px-3 py-2.5 border border-gray-200 dark:border-gray-600">
+                          <p className="text-xs font-medium text-gray-800 dark:text-gray-100 leading-snug">{d.label}</p>
+                          <p className={`mt-2 text-base font-semibold tabular-nums ${d.color}`}>{formatCurrency(d.value)}</p>
+                        </div>
+                      ))}
                     </div>
                   </div>
 
-                  <div className={`p-4 rounded-lg border flex items-center justify-between ${
-                    financialData.profit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'
+                  {/* Relative, charity, employee */}
+                  <div className="shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {[
+                      { label: 'Relative', value: financialData.familyTotal, border: 'border-violet-300 dark:border-violet-600', bg: 'bg-violet-50 dark:bg-violet-950/40', label_c: 'text-violet-900 dark:text-violet-100', val_c: 'text-violet-950 dark:text-white' },
+                      { label: 'Charity', value: financialData.charityTotal, border: 'border-pink-300 dark:border-pink-600', bg: 'bg-pink-50 dark:bg-pink-950/40', label_c: 'text-pink-900 dark:text-pink-100', val_c: 'text-pink-950 dark:text-white' },
+                      { label: 'Employee', value: financialData.employeeTotal, border: 'border-orange-300 dark:border-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/40', label_c: 'text-orange-900 dark:text-orange-100', val_c: 'text-orange-950 dark:text-white' },
+                    ].map((b) => (
+                      <div key={b.label} className={`rounded-xl border-2 ${b.border} ${b.bg} px-4 py-3`}>
+                        <p className={`text-xs font-semibold ${b.label_c}`}>{b.label}</p>
+                        <p className={`mt-2 text-base font-bold tabular-nums ${b.val_c}`}>{formatCurrency(b.value)}</p>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Net profit */}
+                  <div className={`shrink-0 rounded-xl border-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 px-5 py-5 shadow-md ${
+                    financialData.profit >= 0
+                      ? 'border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 dark:border-emerald-600 dark:from-emerald-950/50 dark:to-teal-950/30'
+                      : 'border-red-300 bg-gradient-to-r from-red-50 to-rose-50 dark:border-red-600 dark:from-red-950/50 dark:to-rose-950/30'
                   }`}>
                     <div>
-                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">
-                        {financialData.profit >= 0 ? 'Net Profit' : 'Net Loss'}
+                      <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                        {financialData.profit >= 0 ? 'Net profit' : 'Net loss'}
                       </p>
-                      <p className={`text-2xl font-black ${financialData.profit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <p className={`text-3xl font-bold tabular-nums leading-tight mt-1 ${financialData.profit >= 0 ? 'text-emerald-700 dark:text-emerald-300' : 'text-red-700 dark:text-red-300'}`}>
                         {formatCurrency(Math.abs(financialData.profit))}
                       </p>
                     </div>
-                    <div className="text-right">
-                      <p className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest">Profit Margin %</p>
-                      <p className={`text-xl font-bold ${financialData.profit >= 0 ? 'text-gray-700 dark:text-gray-300' : 'text-red-600'}`}>
-                         {netSales > 0 ? Math.round((financialData.profit / netSales) * 100) : 0}%
+                    <div className="text-left sm:text-right border-t sm:border-t-0 border-gray-300/80 dark:border-gray-600 pt-3 sm:pt-0 sm:pl-6 sm:border-l sm:border-gray-300/80 dark:sm:border-gray-600">
+                      <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">Profit margin</p>
+                      <p className={`text-3xl font-bold tabular-nums leading-tight mt-1 ${financialData.profit >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-700'}`}>
+                        {netSales > 0 ? Math.round((financialData.profit / netSales) * 100) : 0}%
                       </p>
                     </div>
                   </div>
+
                 </div>
               </div>
             </div>
 
-            {/* Right side: Trend */}
-            <div className="flex flex-col gap-4 overflow-y-auto">
-              <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md p-4 flex-1 flex flex-col min-h-0">
-                <h3 className="text-sm font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-4 flex items-center gap-2">
-                  <FiTrendingUp className="text-emerald-500" />
-                  Profit Trend
-                </h3>
-                
-                <div className="flex-1 min-h-0 relative">
-                  {financialData.trend?.length > 0 ? (
+            {/* Right: trading-style trend + composition pie */}
+            <div className="flex h-full min-h-0 flex-col gap-4 self-stretch overflow-y-auto">
+              <div className="flex min-h-[360px] flex-1 flex-col overflow-hidden rounded-xl border border-blue-200/50 bg-gradient-to-br from-white via-white to-blue-50/30 shadow-md dark:border-blue-800/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10">
+                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200/70 px-4 py-3 dark:border-gray-700/80">
+                  <div>
+                    <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-gray-800 dark:text-gray-100">
+                      <FiTrendingUp className="text-teal-600" />
+                      Sales &amp; profit
+                    </h3>
+                    <p className="mt-1 max-w-md text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
+                      Bars show each day&apos;s sales (green if higher than the day before, red if lower). The teal line is net profit.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-3 text-xs font-medium text-gray-700 dark:text-gray-300">
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: chartPalette.profitLine }}
+                      />
+                      Net profit
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: chartPalette.volUp }}
+                      />
+                      Sales up
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: chartPalette.volDown }}
+                      />
+                      Sales down
+                    </span>
+                  </div>
+                </div>
+                <div className="relative mx-3 mb-3 mt-1 min-h-[280px] flex-1 rounded-lg border border-gray-200 bg-white px-2 pb-2 pt-2 shadow-inner dark:border-gray-600 dark:bg-gray-800/80">
+                  {trendChartData.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={financialData.trend} margin={{ top: 10, right: 30, left: 20, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
-                            <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                          </linearGradient>
-                          <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10B981" stopOpacity={0.4} />
-                            <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="4 4" vertical={false} stroke="rgba(0,0,0,0.05)" />
-                        <XAxis 
-                          dataKey="date" 
-                          axisLine={false} 
+                      <ComposedChart
+                        data={trendChartData}
+                        margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
+                      >
+                        <CartesianGrid stroke="#cbd5e1" strokeDasharray="3 3" vertical={false} />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fill: '#64748b', fontSize: 10, fontWeight: 500 }}
+                          axisLine={{ stroke: '#cbd5e1' }}
                           tickLine={false}
-                          tick={{ fill: '#9CA3AF', fontSize: 10, fontWeight: 600 }}
-                          tickFormatter={(val) => new Date(val).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                          dy={10}
+                          tickFormatter={(val) =>
+                            new Date(val).toLocaleDateString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                            })
+                          }
+                          minTickGap={28}
                         />
-                        <YAxis 
-                          axisLine={false} 
+                        <YAxis
+                          yAxisId="profit"
+                          orientation="left"
+                          tick={{ fill: '#64748b', fontSize: 10 }}
+                          axisLine={false}
                           tickLine={false}
-                          tick={{ fill: '#9CA3AF', fontSize: 10, fontWeight: 600 }}
-                          tickFormatter={(val) => formatCurrency(val).split('.')[0]} // Hide decimal in ticks to keep it clean
-                          dx={-10}
+                          tickFormatter={formatAxisCompact}
+                          width={58}
                         />
-                        <Tooltip content={<CustomTooltip />} />
-                        <Legend 
-                          iconType="circle" 
-                          verticalAlign="top" 
-                          align="right" 
-                          iconSize={8}
-                          wrapperStyle={{ fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#9CA3AF', paddingBottom: '20px' }} 
+                        <YAxis
+                          yAxisId="vol"
+                          orientation="right"
+                          tick={{ fill: '#64748b', fontSize: 9 }}
+                          axisLine={false}
+                          tickLine={false}
+                          tickFormatter={formatAxisCompact}
+                          width={54}
                         />
-                        <Area 
-                          name="sales"
-                          type="monotone" 
-                          dataKey="sales" 
-                          stroke="#3B82F6" 
-                          strokeWidth={3} 
-                          fillOpacity={1} 
-                          fill="url(#colorSales)" 
-                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        <Tooltip
+                          content={<TradingTooltip />}
+                          cursor={{ fill: 'rgba(13, 148, 136, 0.12)' }}
                         />
-                        <Area 
-                          name="profit"
-                          type="monotone" 
-                          dataKey="profit" 
-                          stroke="#10B981" 
-                          strokeWidth={3} 
-                          fillOpacity={1} 
-                          fill="url(#colorProfit)" 
-                          activeDot={{ r: 6, strokeWidth: 0 }}
+                        <Bar
+                          yAxisId="vol"
+                          dataKey="sales"
+                          name="Daily sales"
+                          radius={[2, 2, 0, 0]}
+                          maxBarSize={32}
+                        >
+                          {trendChartData.map((entry, index) => (
+                            <Cell
+                              key={`${entry.date}-${index}`}
+                              fill={entry.barFill}
+                              fillOpacity={0.72}
+                            />
+                          ))}
+                        </Bar>
+                        <Line
+                          yAxisId="profit"
+                          type="monotone"
+                          dataKey="profit"
+                          name="Net profit"
+                          stroke={chartPalette.profitLine}
+                          strokeWidth={2.5}
+                          dot={false}
+                          isAnimationActive={false}
+                          activeDot={{
+                            r: 5,
+                            strokeWidth: 2,
+                            stroke: '#fff',
+                            fill: chartPalette.profitLine,
+                          }}
                         />
-                      </AreaChart>
+                      </ComposedChart>
                     </ResponsiveContainer>
                   ) : (
-                    <div className="h-full flex items-center justify-center text-gray-400 text-xs italic">
+                    <div className="flex h-full min-h-[220px] items-center justify-center text-xs italic text-gray-400 dark:text-gray-500">
                       No trend data for selected range
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-blue-200/50 bg-gradient-to-br from-white via-white to-emerald-50/25 p-4 shadow-md dark:border-blue-800/30 dark:from-gray-800 dark:via-gray-800 dark:to-emerald-950/25">
+                <h3 className="mb-1 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-gray-800 dark:text-gray-100">
+                  <FiPieChart className="text-emerald-500" />
+                  Period composition
+                </h3>
+                <p className="mb-4 text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Share of purchases, net sales, returns &amp; net profit (same period)
+                </p>
+                {pieBreakdown.items.length > 0 && pieBreakdown.sum > 0 ? (
+                  <div className="flex flex-col items-stretch gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="mx-auto h-[260px] w-full max-w-[300px] lg:mx-0 lg:flex-1">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={pieBreakdown.items}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius="56%"
+                            outerRadius="86%"
+                            paddingAngle={2}
+                            dataKey="value"
+                            nameKey="name"
+                            label={false}
+                          >
+                            {pieBreakdown.items.map((entry) => (
+                              <Cell
+                                key={entry.name}
+                                fill={entry.color}
+                                stroke="rgba(255,255,255,0.12)"
+                                strokeWidth={1}
+                              />
+                            ))}
+                          </Pie>
+                          <Tooltip content={<PieTooltip />} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <ul className="flex w-full min-w-0 flex-col gap-2 lg:max-w-[220px]">
+                      {pieBreakdown.items.map((item) => {
+                        const pct = ((item.value / pieBreakdown.sum) * 100).toFixed(1);
+                        return (
+                          <li
+                            key={item.name}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-gray-100 bg-white/80 px-3 py-2.5 text-[11px] shadow-sm dark:border-gray-600 dark:bg-gray-800/70"
+                          >
+                            <span className="flex min-w-0 items-center gap-2 font-semibold text-gray-700 dark:text-gray-200">
+                              <span
+                                className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                style={{ backgroundColor: item.color }}
+                              />
+                              <span className="truncate">{item.name}</span>
+                            </span>
+                            <span className="shrink-0 font-mono text-xs font-bold tabular-nums text-gray-900 dark:text-white">
+                              {pct}%
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className="flex h-36 items-center justify-center rounded-lg border border-dashed border-gray-200 text-xs italic text-gray-400 dark:border-gray-600 dark:text-gray-500">
+                    No amounts to chart for this period
+                  </div>
+                )}
               </div>
             </div>
           </div>

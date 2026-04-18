@@ -805,10 +805,13 @@ export class SalesService {
       newPillsByMedicine.set(item.medicineId, (newPillsByMedicine.get(item.medicineId) || 0) + item.pills);
     });
 
+    // Items being completely removed (newPills === 0) will have their return records
+    // cleaned up inside the transaction below. Items being partially reduced below
+    // their returned qty still throw.
     for (const ret of previousReturns) {
       const newPills = newPillsByMedicine.get(ret.medicine_id) || 0;
       const returnedPills = ret.total_returned || 0;
-      if (newPills < returnedPills) {
+      if (newPills > 0 && newPills < returnedPills) {
         throw new Error(
           `Cannot reduce ${ret.medicine_name} to ${newPills} pills because ${returnedPills} pills have already been returned. ` +
           `Please adjust the return records first.`
@@ -836,8 +839,65 @@ export class SalesService {
     const taxTotal = computedItems.reduce((sum, item) => sum + (item.taxAmount ?? 0), 0);
     const total = subtotal - discountTotal + taxTotal;
 
+    // Collect medicines being completely removed that have return records so we
+    // can clean up those returns inside the transaction.
+    const medicinesBeingRemoved = previousReturns
+      .filter((ret: any) => (newPillsByMedicine.get(ret.medicine_id) || 0) === 0)
+      .map((ret: any) => ret.medicine_id as number);
+
     await this.dbService.execute('BEGIN TRANSACTION');
     try {
+      // If any medicines with existing returns are being fully removed, reverse
+      // the return inventory effects and delete those return records first.
+      if (medicinesBeingRemoved.length > 0) {
+        const placeholders = medicinesBeingRemoved.map(() => '?').join(',');
+        const returnItems = await this.dbService.query(
+          `SELECT sri.id, sri.sale_return_id
+           FROM sale_return_items sri
+           INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+           WHERE sr.sale_id = ? AND sri.medicine_id IN (${placeholders})`,
+          [saleId, ...medicinesBeingRemoved]
+        );
+
+        for (const sri of returnItems) {
+          const batches = await this.dbService.query(
+            'SELECT stock_batch_id, qty_restored FROM return_item_batches WHERE sale_return_item_id = ?',
+            [sri.id]
+          );
+          for (const b of batches) {
+            await this.dbService.execute(
+              'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
+              [b.qty_restored, b.stock_batch_id]
+            );
+          }
+          await this.dbService.execute('DELETE FROM return_item_batches WHERE sale_return_item_id = ?', [sri.id]);
+        }
+
+        if (returnItems.length > 0) {
+          const sriIds = returnItems.map((r: any) => r.id);
+          const sriPlaceholders = sriIds.map(() => '?').join(',');
+          await this.dbService.execute(
+            `DELETE FROM sale_return_items WHERE id IN (${sriPlaceholders})`,
+            sriIds
+          );
+        }
+
+        // Remove any sale_returns that are now empty
+        const emptyReturns = await this.dbService.query(
+          `SELECT sr.id FROM sale_returns sr
+           WHERE sr.sale_id = ?
+           AND NOT EXISTS (SELECT 1 FROM sale_return_items sri2 WHERE sri2.sale_return_id = sr.id)`,
+          [saleId]
+        );
+        if (emptyReturns.length > 0) {
+          const erPlaceholders = emptyReturns.map(() => '?').join(',');
+          await this.dbService.execute(
+            `DELETE FROM sale_returns WHERE id IN (${erPlaceholders})`,
+            emptyReturns.map((r: any) => r.id)
+          );
+        }
+      }
+
       // Fetch old sale_items with their IDs BEFORE deleting them, so
       // restoreInventory can reverse batch allocations from sale_item_batches.
       const oldSaleItems = await this.dbService.query(
@@ -1012,22 +1072,19 @@ export class SalesService {
     profit: number;
     trend: Array<{ date: string; sales: number; purchases: number; profit: number }>;
   }> {
-    const fromDateTime = `${fromDate} 00:00:00`;
-    const toDateTime = `${toDate} 23:59:59`;
-
     const salesSql = `
-      SELECT 
+      SELECT
         COALESCE(SUM(total), 0) as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
         COALESCE(SUM(tax_total), 0) as sale_tax_total,
         0 as family_total,
         0 as charity_total,
         0 as employee_total
-      FROM sales 
-      WHERE datetime(created_at) >= datetime(?) 
-        AND datetime(created_at) <= datetime(?)
+      FROM sales
+      WHERE date(created_at, 'localtime') >= date(?)
+        AND date(created_at, 'localtime') <= date(?)
     `;
-    const salesResult = await this.dbService.queryOne(salesSql, [fromDateTime, toDateTime]);
+    const salesResult = await this.dbService.queryOne(salesSql, [fromDate, toDate]);
     const sellingTotal = salesResult?.selling_total || 0;
     const saleDiscountTotal = salesResult?.sale_discount_total || 0;
     const saleTaxTotal = salesResult?.sale_tax_total || 0;
@@ -1057,9 +1114,9 @@ export class SalesService {
       ), 0) as total_cogs
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
-      WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)
+      WHERE date(s.created_at, 'localtime') >= date(?) AND date(s.created_at, 'localtime') <= date(?)
     `;
-    const cogsResult = await this.dbService.queryOne(cogsSql, [fromDateTime, toDateTime]);
+    const cogsResult = await this.dbService.queryOne(cogsSql, [fromDate, toDate]);
     const grossCogs = cogsResult?.total_cogs || 0;
     
     // Calculate net revenue (sales - returns)
@@ -1073,11 +1130,11 @@ export class SalesService {
         COALESCE(SUM(grand_total), 0) as purchasing_total,
         COALESCE(SUM(discount_total), 0) as purchase_discount_total,
         COALESCE(SUM(tax_total), 0) as purchase_tax_total
-      FROM purchases 
-      WHERE datetime(created_at) >= datetime(?) 
-        AND datetime(created_at) <= datetime(?)
+      FROM purchases
+      WHERE date(created_at, 'localtime') >= date(?)
+        AND date(created_at, 'localtime') <= date(?)
     `;
-    const purchasingResult = await this.dbService.queryOne(purchasingSql, [fromDateTime, toDateTime]);
+    const purchasingResult = await this.dbService.queryOne(purchasingSql, [fromDate, toDate]);
     const purchasingTotal = purchasingResult?.purchasing_total || 0;
     const purchaseDiscountTotal = purchasingResult?.purchase_discount_total || 0;
     const purchaseTaxTotal = purchasingResult?.purchase_tax_total || 0;
@@ -1085,12 +1142,12 @@ export class SalesService {
     // Get remaining payments (debt) for purchases in this date range
     const remainingPaymentSql = `
       SELECT COALESCE(SUM(remaining_balance), 0) as total_remaining
-      FROM purchases 
-      WHERE datetime(created_at) >= datetime(?) 
-        AND datetime(created_at) <= datetime(?)
+      FROM purchases
+      WHERE date(created_at, 'localtime') >= date(?)
+        AND date(created_at, 'localtime') <= date(?)
         AND remaining_balance > 0
     `;
-    const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDateTime, toDateTime]);
+    const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDate, toDate]);
     const remainingPayment = remainingPaymentResult?.total_remaining || 0;
 
     // Calculate profit as margin: Net Revenue - Net COGS
@@ -1098,36 +1155,35 @@ export class SalesService {
 
     // Trend calculation
     const salesTrendSql = `
-      SELECT 
-        date(s.created_at) as date, 
+      SELECT
+        date(s.created_at, 'localtime') as date,
         SUM(si.total) as amount,
         SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT sb.cost_price_per_pill FROM stock_batches sb WHERE sb.medicine_id = si.medicine_id AND sb.qty_remaining > 0 ORDER BY date(sb.expiry_date) ASC, sb.id ASC LIMIT 1), 0) END) as cost
       FROM sales s
       JOIN sale_items si ON s.id = si.sale_id
-      WHERE datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) <= datetime(?)
-      GROUP BY date(s.created_at)
+      WHERE date(s.created_at, 'localtime') >= date(?) AND date(s.created_at, 'localtime') <= date(?)
+      GROUP BY date(s.created_at, 'localtime')
     `;
     const purchasesTrendSql = `
-      SELECT date(created_at) as date, SUM(grand_total) as amount
+      SELECT date(created_at, 'localtime') as date, SUM(grand_total) as amount
       FROM purchases
-      WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) <= datetime(?)
-      GROUP BY date(created_at)
+      WHERE date(created_at, 'localtime') >= date(?) AND date(created_at, 'localtime') <= date(?)
+      GROUP BY date(created_at, 'localtime')
     `;
-    // Step 2: Get return data and subtract costs from trend cost
     const returnsTrendSql = `
-      SELECT 
-        date(sr.created_at) as date, 
+      SELECT
+        date(sr.created_at, 'localtime') as date,
         SUM(sri.total) as return_amount,
         SUM(CASE WHEN sri.cost_subtotal > 0 THEN sri.cost_subtotal ELSE 0 END) as return_cost
       FROM sale_returns sr
       JOIN sale_return_items sri ON sr.id = sri.sale_return_id
-      WHERE datetime(sr.created_at) >= datetime(?) AND datetime(sr.created_at) <= datetime(?)
-      GROUP BY date(sr.created_at)
+      WHERE date(sr.created_at, 'localtime') >= date(?) AND date(sr.created_at, 'localtime') <= date(?)
+      GROUP BY date(sr.created_at, 'localtime')
     `;
 
-    const salesTrend = await this.dbService.query(salesTrendSql, [fromDateTime, toDateTime]);
-    const purchasesTrend = await this.dbService.query(purchasesTrendSql, [fromDateTime, toDateTime]);
-    const returnsTrend = await this.dbService.query(returnsTrendSql, [fromDateTime, toDateTime]);
+    const salesTrend = await this.dbService.query(salesTrendSql, [fromDate, toDate]);
+    const purchasesTrend = await this.dbService.query(purchasesTrendSql, [fromDate, toDate]);
+    const returnsTrend = await this.dbService.query(returnsTrendSql, [fromDate, toDate]);
 
     const trendMap = new Map<string, { sales: number; purchases: number; cost: number }>();
 

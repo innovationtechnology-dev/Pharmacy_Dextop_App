@@ -38,6 +38,7 @@ import { getAuthUser } from '../../utils/auth';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { buildThermalReceiptHtml } from '../../utils/thermalReceipt';
 import { useToast, ToastContainer } from '../../components/common/Toast';
+import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import {
   looksLikeBarcodeInput,
   normalizeScannedBarcode,
@@ -309,6 +310,11 @@ const SellingPanel: React.FC = () => {
   const [saleDeleteConfirm, setSaleDeleteConfirm] = useState<{
     saleId: number;
     saleDate: string;
+  } | null>(null);
+  const [removeLineConfirm, setRemoveLineConfirm] = useState<{
+    medicineId: number;
+    itemName: string;
+    returnedQty: number;
   } | null>(null);
   const isCashier = getAuthUser()?.role === 'cashier';
 
@@ -1153,70 +1159,19 @@ const SellingPanel: React.FC = () => {
       return;
     }
 
-    // If no items remain, delete the sale record itself.
-    if (nextCart.length === 0) {
-      if (selectedSale) {
-        requestDeleteSale(selectedSale.saleId, selectedSale.createdAt);
-      }
+    // Warn if this medicine has return records that will also be deleted.
+    const returnedQtyForItem = returnedQuantities.get(medicineId) || 0;
+    if (returnedQtyForItem > 0) {
+      const itemName = cart.find(i => i.medicine.id === medicineId)?.medicine.name || 'this medicine';
+      setRemoveLineConfirm({
+        medicineId,
+        itemName,
+        returnedQty: returnedQtyForItem,
+      });
       return;
     }
 
-    setProcessing(true);
-    try {
-      const saleItems = nextCart.flatMap((item) => {
-        const breakdown = item.batchBreakdown;
-        if (breakdown && breakdown.length > 1) {
-          return breakdown.map((seg) => {
-            const segSubtotal = seg.pills * seg.price;
-            const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
-            const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
-            return {
-              medicineId: item.medicine.id,
-              medicineName: item.medicine.name,
-              pills: seg.pills,
-              unitPrice: seg.price,
-              discountAmount: discountAmt,
-              taxAmount: taxAmt,
-            };
-          });
-        }
-        return [{
-          medicineId: item.medicine.id,
-          medicineName: item.medicine.name,
-          pills: item.pills,
-          unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
-            ? item.batchBreakdown[0].price
-            : item.unitPrice,
-          discountAmount: item.discountAmount || 0,
-          taxAmount: item.taxAmount || 0,
-        }];
-      });
-
-      const sale = {
-        items: saleItems,
-        customerName: customerName || undefined,
-        customerPhone: customerPhone || undefined,
-        saleType: saleType || 'Regular',
-        additionalDiscount: 0,
-        prescriptionNumber: prescriptionNumber.trim() || undefined,
-        doctorName: doctorName.trim() || undefined,
-      };
-
-      const result = await updateSale(selectedSaleId, sale);
-      if (result.success) {
-        setCart(nextCart);
-        loadMedicines();
-        loadSalesHistory();
-        refreshExpiringAlerts();
-      } else {
-        alert(`Error updating sale: ${result.error || 'Unknown error'}`);
-      }
-    } catch (error) {
-      console.error('Error updating sale after removing item:', error);
-      alert('Error updating sale. Please try again.');
-    } finally {
-      setProcessing(false);
-    }
+    await performPersistedLineRemoval(medicineId);
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
@@ -1974,6 +1929,91 @@ const SellingPanel: React.FC = () => {
       alert('Error deleting sale. Please try again.');
     }
   }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
+
+  /** After user confirms (or when no return rows exist), persist removing one line from an edited sale. */
+  const performPersistedLineRemoval = useCallback(
+    async (medicineId: number) => {
+      const nextCart = cart.filter((item) => item.medicine.id !== medicineId);
+
+      if (nextCart.length === 0) {
+        if (selectedSale) {
+          requestDeleteSale(selectedSale.saleId, selectedSale.createdAt);
+        }
+        return;
+      }
+
+      setProcessing(true);
+      try {
+        const saleItems = nextCart.flatMap((item) => {
+          const breakdown = item.batchBreakdown;
+          if (breakdown && breakdown.length > 1) {
+            return breakdown.map((seg) => {
+              const segSubtotal = seg.pills * seg.price;
+              const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
+              const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
+              return {
+                medicineId: item.medicine.id,
+                medicineName: item.medicine.name,
+                pills: seg.pills,
+                unitPrice: seg.price,
+                discountAmount: discountAmt,
+                taxAmount: taxAmt,
+              };
+            });
+          }
+          return [{
+            medicineId: item.medicine.id,
+            medicineName: item.medicine.name,
+            pills: item.pills,
+            unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
+              ? item.batchBreakdown[0].price
+              : item.unitPrice,
+            discountAmount: item.discountAmount || 0,
+            taxAmount: item.taxAmount || 0,
+          }];
+        });
+
+        const sale = {
+          items: saleItems,
+          customerName: customerName || undefined,
+          customerPhone: customerPhone || undefined,
+          saleType: saleType || 'Regular',
+          additionalDiscount: 0,
+          prescriptionNumber: prescriptionNumber.trim() || undefined,
+          doctorName: doctorName.trim() || undefined,
+        };
+
+        const result = await updateSale(selectedSaleId!, sale);
+        if (result.success) {
+          setCart(nextCart);
+          loadMedicines();
+          loadSalesHistory();
+          refreshExpiringAlerts();
+        } else {
+          alert(`Error updating sale: ${result.error || 'Unknown error'}`);
+        }
+      } catch (error) {
+        console.error('Error updating sale after removing item:', error);
+        alert('Error updating sale. Please try again.');
+      } finally {
+        setProcessing(false);
+      }
+    },
+    [
+      cart,
+      selectedSale,
+      selectedSaleId,
+      customerName,
+      customerPhone,
+      saleType,
+      prescriptionNumber,
+      doctorName,
+      requestDeleteSale,
+      loadMedicines,
+      loadSalesHistory,
+      refreshExpiringAlerts,
+    ]
+  );
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -3666,6 +3706,28 @@ const SellingPanel: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {removeLineConfirm && (
+        <ConfirmDialog
+          isOpen
+          onClose={() => setRemoveLineConfirm(null)}
+          onConfirm={() => {
+            if (!removeLineConfirm) return;
+            void performPersistedLineRemoval(removeLineConfirm.medicineId);
+          }}
+          title="Remove line item"
+          message={`"${removeLineConfirm.itemName}" has ${removeLineConfirm.returnedQty} pill(s) already returned.
+
+Removing it will permanently delete:
+• The sale record for this item
+• All associated return records
+
+Are you sure you want to continue?`}
+          confirmText="Continue"
+          cancelText="Cancel"
+          type="danger"
+        />
+      )}
 
       {/* Return Modal */}
       {saleDeleteConfirm && (
