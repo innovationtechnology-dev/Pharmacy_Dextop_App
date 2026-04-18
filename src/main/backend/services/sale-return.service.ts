@@ -95,6 +95,17 @@ export class SaleReturnService {
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_sale_returns_created_at ON sale_returns(created_at)
     `);
+
+    // Link each restoration row to the original sale_item_batches allocation (partial returns / multi-line same medicine).
+    const ribInfo = await this.dbService.query(`PRAGMA table_info(return_item_batches)`);
+    if (!ribInfo.some((c: any) => c.name === 'sale_item_batch_id')) {
+      await this.dbService.execute(
+        `ALTER TABLE return_item_batches ADD COLUMN sale_item_batch_id INTEGER REFERENCES sale_item_batches(id)`
+      );
+    }
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_return_item_batches_sale_item_batch_id ON return_item_batches(sale_item_batch_id)
+    `);
   }
 
   /**
@@ -126,48 +137,73 @@ export class SaleReturnService {
    * Restore inventory for a return item.
    * Uses sale_item_batches to find the exact batches the original sale consumed,
    * restores pills to those batches, and records the restoration in return_item_batches.
+   * `unitPrice` scopes the return to the matching sale line (old vs new batch / different prices).
    * Falls back to FEFO on stock_batches for pre-migration data.
    */
   private async restoreInventory(
     saleReturnItemId: number,
     saleId: number,
     medicineId: number,
-    pillsToRestore: number
+    pillsToRestore: number,
+    unitPrice: number
   ): Promise<void> {
-    // Find the original sale_items for this medicine in this sale
-    const saleItemRows = await this.dbService.query(
+    const priceKey = Math.round(unitPrice * 100) / 100;
+
+    // Prefer sale line(s) that match this return's unit price (multi-line same medicine).
+    let saleItemRows = await this.dbService.query(
       `SELECT si.id
        FROM sale_items si
        WHERE si.sale_id = ? AND si.medicine_id = ?
+         AND ROUND(si.unit_price, 2) = ROUND(?, 2)
        ORDER BY si.id ASC`,
-      [saleId, medicineId]
+      [saleId, medicineId, priceKey]
     );
+
+    if (saleItemRows.length === 0) {
+      saleItemRows = await this.dbService.query(
+        `SELECT si.id
+         FROM sale_items si
+         WHERE si.sale_id = ? AND si.medicine_id = ?
+         ORDER BY si.id ASC`,
+        [saleId, medicineId]
+      );
+    }
 
     let restored = 0;
 
     for (const saleItemRow of saleItemRows) {
       if (restored >= pillsToRestore) break;
 
-      // Get the batch allocations for this sale_item
+      // Reversible qty per allocation row (prior returns may have consumed part of this row's cap).
       const batchRows = await this.dbService.query(
-        `SELECT sib.stock_batch_id, sib.qty_deducted
+        `SELECT sib.id AS sale_item_batch_id,
+                sib.stock_batch_id,
+                sib.qty_deducted,
+                (sib.qty_deducted - COALESCE((
+                  SELECT SUM(r2.qty_restored)
+                  FROM return_item_batches r2
+                  WHERE r2.sale_item_batch_id = sib.id
+                ), 0)) AS qty_reversible
          FROM sale_item_batches sib
-         JOIN stock_batches sb ON sb.id = sib.stock_batch_id
+         INNER JOIN stock_batches sb ON sb.id = sib.stock_batch_id AND sb.medicine_id = ?
          WHERE sib.sale_item_id = ?
-         ORDER BY sb.expiry_date ASC, sb.id ASC`,
-        [saleItemRow.id]
+         ORDER BY date(sb.expiry_date) ASC, sb.id ASC`,
+        [medicineId, saleItemRow.id]
       );
 
       for (const row of batchRows) {
         if (restored >= pillsToRestore) break;
-        const restoreQty = Math.min(row.qty_deducted, pillsToRestore - restored);
+        const reversible = Math.max(0, Math.floor(Number(row.qty_reversible) || 0));
+        if (reversible <= 0) continue;
+        const restoreQty = Math.min(reversible, pillsToRestore - restored);
         await this.dbService.execute(
-          'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
-          [restoreQty, row.stock_batch_id]
+          'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ? AND medicine_id = ?',
+          [restoreQty, row.stock_batch_id, medicineId]
         );
         await this.dbService.execute(
-          'INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored) VALUES (?, ?, ?)',
-          [saleReturnItemId, row.stock_batch_id, restoreQty]
+          `INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored, sale_item_batch_id)
+           VALUES (?, ?, ?, ?)`,
+          [saleReturnItemId, row.stock_batch_id, restoreQty, row.sale_item_batch_id]
         );
         restored += restoreQty;
       }
@@ -201,11 +237,12 @@ export class SaleReturnService {
 
     const firstBatch = batches[0];
     await this.dbService.execute(
-      'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
-      [remaining, firstBatch.id]
+      'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ? AND medicine_id = ?',
+      [remaining, firstBatch.id, medicineId]
     );
     await this.dbService.execute(
-      'INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored) VALUES (?, ?, ?)',
+      `INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored, sale_item_batch_id)
+       VALUES (?, ?, ?, NULL)`,
       [saleReturnItemId, firstBatch.id, remaining]
     );
   }
@@ -393,8 +430,14 @@ export class SaleReturnService {
         ]);
         const saleReturnItemId = (saleReturnItemResult as any).lastID;
 
-        // Restore inventory using exact audit trail from sale_item_batches
-        await this.restoreInventory(saleReturnItemId, payload.saleId, item.medicineId, item.pills);
+        // Restore inventory using exact audit trail from sale_item_batches (scoped by unit price line).
+        await this.restoreInventory(
+          saleReturnItemId,
+          payload.saleId,
+          item.medicineId,
+          item.pills,
+          item.unitPrice
+        );
       }
 
       await this.dbService.execute('COMMIT');

@@ -453,8 +453,8 @@ export class SalesService {
       if (remaining <= 0) break;
       const consume = Math.min(batch.available_pills, remaining);
       await this.dbService.execute(
-        'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ?',
-        [consume, batch.id]
+        'UPDATE stock_batches SET qty_remaining = qty_remaining - ? WHERE id = ? AND medicine_id = ?',
+        [consume, batch.id, medicineId]
       );
       await this.dbService.execute(
         'INSERT INTO sale_item_batches (sale_item_id, stock_batch_id, qty_deducted) VALUES (?, ?, ?)',
