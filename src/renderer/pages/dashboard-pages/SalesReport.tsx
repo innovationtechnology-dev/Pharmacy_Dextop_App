@@ -186,8 +186,10 @@ export default function SalesReport() {
         map.set(row.saleId, {
           ...row,
           itemDetails: [itemDetail],
-          items: [row]
-        });
+          items: [row],
+          returnedPills: row.returnedPills || 0,
+          returnedTotal: row.returnedTotal || 0,
+        } as FlatSaleRow & { itemDetails: string[]; items: FlatSaleRow[] });
       } else {
         const existing = map.get(row.saleId)!;
         existing.itemDetails.push(itemDetail);
@@ -199,7 +201,8 @@ export default function SalesReport() {
         existing.subtotal += row.subtotal;
         existing.discountAmount += row.discountAmount;
         existing.taxAmount += row.taxAmount;
-        (existing as any).returnedPills = ((existing as any).returnedPills || 0) + (row.returnedPills || 0);
+        existing.returnedPills = (existing.returnedPills || 0) + (row.returnedPills || 0);
+        existing.returnedTotal = (existing.returnedTotal || 0) + (row.returnedTotal || 0);
       }
     });
 
@@ -242,6 +245,10 @@ export default function SalesReport() {
   const totalItemsSold = useMemo(() => filteredRows.reduce((sum, row) => sum + row.pills, 0), [filteredRows]);
   const totalTax = useMemo(() => filteredRows.reduce((sum, row) => sum + (row.taxAmount || 0), 0), [filteredRows]);
   const totalDiscount = useMemo(() => filteredRows.reduce((sum, row) => sum + (row.discountAmount || 0), 0), [filteredRows]);
+  const totalReturnsValue = useMemo(
+    () => filteredRows.reduce((sum, row) => sum + (row.returnedTotal || 0), 0),
+    [filteredRows]
+  );
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -314,6 +321,20 @@ export default function SalesReport() {
           </div>
         </div>
 
+        {/* Returns (value of returned goods in range) */}
+        {totalReturnsValue > 0 && (
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 bg-rose-50 dark:bg-rose-900/20 px-2.5 py-1.5 rounded-md border border-rose-200 dark:border-rose-600/50 shadow-sm">
+              <FaUndo className="w-3.5 h-3.5 text-rose-500" />
+              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+                Returns
+              </span>
+              <span className="text-xs font-bold text-rose-600 dark:text-rose-400 ml-1">
+                {getCurrencySymbol()}{totalReturnsValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           {/* Back to Selling Button */}
@@ -528,9 +549,9 @@ export default function SalesReport() {
                           <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-semibold">
                             {row.pills}
                           </span>
-                          {((row as any).returnedPills > 0) && (
+                          {(row.returnedPills ?? 0) > 0 && (
                             <span className="text-[8px] font-black text-rose-500 mt-0.5 uppercase tracking-tighter">
-                              { (row as any).returnedPills } Ret.
+                              {row.returnedPills} Ret.
                             </span>
                           )}
                         </div>
@@ -632,9 +653,40 @@ export default function SalesReport() {
                         {/* Inline Footer */}
                         <div className="px-8 py-3 bg-emerald-50/80 dark:bg-emerald-900/10 border-b border-emerald-100/50 dark:border-emerald-900/30 flex flex-wrap justify-between gap-6 text-[10px] text-emerald-800 dark:text-emerald-400 tracking-wide">
                             <div className="flex flex-wrap gap-6 items-center">
-                              <div><span className="font-bold opacity-70 uppercase mr-1">Subtotal:</span> {getCurrencySymbol()}{(row.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              {(() => {
+                                const ch = row.children || [];
+                                const detailReturns = ch.reduce((s, it) => s + (it.returnedTotal || 0), 0);
+                                const grossTotal = ch.reduce((s, it) => s + (it.originalTotal ?? 0), 0);
+                                const hasReturns = detailReturns > 0;
+                                return (
+                                  <>
+                                    {hasReturns && grossTotal > 0 && (
+                                      <div className="text-gray-800 dark:text-gray-200">
+                                        <span className="font-bold opacity-70 uppercase mr-1">Gross total:</span>
+                                        {getCurrencySymbol()}
+                                        {grossTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <span className="ml-1 text-[9px] font-medium opacity-60 normal-case">(before returns)</span>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <span className="font-bold opacity-70 uppercase mr-1">
+                                        {hasReturns ? 'Net subtotal:' : 'Subtotal:'}
+                                      </span>
+                                      {getCurrencySymbol()}
+                                      {(row.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                  </>
+                                );
+                              })()}
                               <div><span className="font-bold opacity-70 uppercase mr-1">Tax:</span> +{getCurrencySymbol()}{(row.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                               <div><span className="font-bold opacity-70 uppercase mr-1">Discount:</span> -{getCurrencySymbol()}{(row.discountAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                              {(row.children || []).reduce((s, it) => s + (it.returnedTotal || 0), 0) > 0 && (
+                                <div className="text-rose-700 dark:text-rose-400">
+                                  <span className="font-bold opacity-70 uppercase mr-1">Returns:</span>
+                                  -{getCurrencySymbol()}
+                                  {(row.children || []).reduce((s, it) => s + (it.returnedTotal || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                              )}
                               {(row.additionalDiscountAmount ?? 0) > 0 && (
                                 <div><span className="font-bold opacity-70 uppercase mr-1">Extra Disc:</span> -{getCurrencySymbol()}{row.additionalDiscountAmount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                               )}

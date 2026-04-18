@@ -3235,7 +3235,7 @@ const SellingPanel: React.FC = () => {
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1">
                         <span className="text-white/80">Returned:</span>
-                        <span className="text-red-200 font-semibold">-{formatCurrency(selectedSale.items.reduce((sum, i) => sum + (i.returnedTotal || 0), 0))}</span>
+                        <span className="text-red-200 font-semibold">-{formatCurrency(currentSaleReturnTotal)}</span>
                       </div>
                       <div className="flex items-center justify-between text-xs mt-1 pt-1 border-t border-white/10">
                         <span className="text-white/80 font-semibold">Net Total:</span>

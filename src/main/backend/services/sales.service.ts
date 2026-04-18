@@ -40,6 +40,139 @@ export class SalesService {
   private saleReturnService = new SaleReturnService();
 
   /**
+   * Flat sale rows SQL: allocates returns per sale line by (medicine_id + rounded unit_price)
+   * and FIFO order of sale_items.id so multi-batch lines (old/new stock) do not double-count.
+   * @param salesWhereSql — predicate on `s` (e.g. `WHERE 1=1` or date range on s.created_at)
+   */
+  private buildFlatSalesRowsQuery(salesWhereSql: string): string {
+    return `
+      WITH filtered AS (
+        SELECT
+          si.id AS si_id,
+          si.sale_id,
+          si.medicine_id,
+          si.medicine_name,
+          si.pills,
+          si.unit_price,
+          si.subtotal,
+          si.discount_amount,
+          si.tax_amount,
+          si.total,
+          s.created_at,
+          s.customer_name,
+          s.customer_phone,
+          s.sale_type
+        FROM sale_items si
+        INNER JOIN sales s ON s.id = si.sale_id
+        ${salesWhereSql}
+      ),
+      returns_by_key AS (
+        SELECT
+          sr.sale_id,
+          sri.medicine_id,
+          ROUND(sri.unit_price, 2) AS price_key,
+          SUM(sri.pills) AS ret_pills,
+          SUM(sri.subtotal) AS ret_subtotal,
+          SUM(sri.discount_amount) AS ret_discount,
+          SUM(sri.tax_amount) AS ret_tax,
+          SUM(sri.total) AS ret_total
+        FROM sale_return_items sri
+        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+        GROUP BY sr.sale_id, sri.medicine_id, ROUND(sri.unit_price, 2)
+      ),
+      enriched AS (
+        SELECT
+          f.*,
+          ROUND(f.unit_price, 2) AS price_key,
+          SUM(f.pills) OVER (
+            PARTITION BY f.sale_id, f.medicine_id, ROUND(f.unit_price, 2)
+            ORDER BY f.si_id
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+          ) AS prev_cum_pills
+        FROM filtered f
+      ),
+      allocated AS (
+        SELECT
+          base.si_id,
+          base.sale_id,
+          base.created_at,
+          base.customer_name,
+          base.customer_phone,
+          base.sale_type,
+          base.medicine_id,
+          base.medicine_name,
+          base.pills,
+          base.unit_price,
+          base.subtotal,
+          base.discount_amount,
+          base.tax_amount,
+          base.total,
+          base.returned_pills_alloc,
+          CASE WHEN base.ret_pills > 0 THEN base.ret_subtotal * (base.returned_pills_alloc * 1.0 / base.ret_pills) ELSE 0 END AS returned_subtotal_alloc,
+          CASE WHEN base.ret_pills > 0 THEN base.ret_discount * (base.returned_pills_alloc * 1.0 / base.ret_pills) ELSE 0 END AS returned_discount_alloc,
+          CASE WHEN base.ret_pills > 0 THEN base.ret_tax * (base.returned_pills_alloc * 1.0 / base.ret_pills) ELSE 0 END AS returned_tax_alloc,
+          CASE WHEN base.ret_pills > 0 THEN base.ret_total * (base.returned_pills_alloc * 1.0 / base.ret_pills) ELSE 0 END AS returned_total_alloc
+        FROM (
+          SELECT
+            e.si_id,
+            e.sale_id,
+            e.created_at,
+            e.customer_name,
+            e.customer_phone,
+            e.sale_type,
+            e.medicine_id,
+            e.medicine_name,
+            e.pills,
+            e.unit_price,
+            e.subtotal,
+            e.discount_amount,
+            e.tax_amount,
+            e.total,
+            COALESCE(rk.ret_pills, 0) AS ret_pills,
+            COALESCE(rk.ret_subtotal, 0) AS ret_subtotal,
+            COALESCE(rk.ret_discount, 0) AS ret_discount,
+            COALESCE(rk.ret_tax, 0) AS ret_tax,
+            COALESCE(rk.ret_total, 0) AS ret_total,
+            CAST(
+              MIN(e.pills, MAX(0, COALESCE(rk.ret_pills, 0) - COALESCE(e.prev_cum_pills, 0)))
+              AS INTEGER
+            ) AS returned_pills_alloc
+          FROM enriched e
+          LEFT JOIN returns_by_key rk
+            ON rk.sale_id = e.sale_id
+            AND rk.medicine_id = e.medicine_id
+            AND rk.price_key = e.price_key
+        ) base
+      )
+      SELECT
+        a.sale_id AS saleId,
+        a.created_at AS createdAt,
+        a.customer_name AS customerName,
+        a.customer_phone AS customerPhone,
+        a.sale_type AS saleType,
+        0 AS additionalDiscount,
+        0 AS additionalDiscountAmount,
+        a.medicine_id AS medicineId,
+        a.medicine_name AS medicineName,
+        a.pills AS originalPills,
+        COALESCE(a.returned_pills_alloc, 0) AS returnedPills,
+        (a.pills - COALESCE(a.returned_pills_alloc, 0)) AS pills,
+        a.unit_price AS unitPrice,
+        a.subtotal AS originalSubtotal,
+        (a.subtotal - COALESCE(a.returned_subtotal_alloc, 0)) AS subtotal,
+        a.discount_amount AS originalDiscountAmount,
+        (a.discount_amount - COALESCE(a.returned_discount_alloc, 0)) AS discountAmount,
+        a.tax_amount AS originalTaxAmount,
+        (a.tax_amount - COALESCE(a.returned_tax_alloc, 0)) AS taxAmount,
+        a.total AS originalTotal,
+        COALESCE(a.returned_total_alloc, 0) AS returnedTotal,
+        (a.total - COALESCE(a.returned_total_alloc, 0)) AS total
+      FROM allocated a
+      ORDER BY a.created_at DESC, a.sale_id DESC, a.si_id ASC
+    `;
+  }
+
+  /**
    * Flat sale rows by date range [fromDate..toDate]
    */
   public async getAllSalesFlatRowsByRange(fromDate: string, toDate: string): Promise<Array<{
@@ -61,95 +194,16 @@ export class SalesService {
   }>> {
     // If both dates are empty, return all records
     if (!fromDate && !toDate) {
-      const sql = `
-        SELECT 
-          s.id AS saleId,
-          s.created_at AS createdAt,
-          s.customer_name AS customerName,
-          s.customer_phone AS customerPhone,
-          s.sale_type AS saleType,
-          0 AS additionalDiscount,
-          0 AS additionalDiscountAmount,
-          si.medicine_id AS medicineId,
-          si.medicine_name AS medicineName,
-          si.pills AS originalPills,
-          COALESCE(returns.returned_pills, 0) AS returnedPills,
-          (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
-          si.unit_price AS unitPrice,
-          si.subtotal AS originalSubtotal,
-          (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
-          si.discount_amount AS originalDiscountAmount,
-          (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
-          si.tax_amount AS originalTaxAmount,
-          (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
-          si.total AS originalTotal,
-          COALESCE(returns.returned_total, 0) AS returnedTotal,
-          (si.total - COALESCE(returns.returned_total, 0)) AS total
-        FROM sale_items si
-        INNER JOIN sales s ON s.id = si.sale_id
-        LEFT JOIN (
-          SELECT 
-            sr.sale_id, 
-            sri.medicine_id,
-            SUM(sri.pills) as returned_pills,
-            SUM(sri.total) as returned_total,
-            SUM(sri.subtotal) as returned_subtotal,
-            SUM(sri.discount_amount) as returned_discount,
-            SUM(sri.tax_amount) as returned_tax
-          FROM sale_return_items sri
-          INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
-          GROUP BY sr.sale_id, sri.medicine_id
-        ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
-        ORDER BY s.created_at DESC, s.id DESC, si.id ASC
-      `;
+      const sql = this.buildFlatSalesRowsQuery('WHERE 1=1');
       const rows = await this.dbService.query(sql, []);
       return rows as any;
     }
-    
+
     const fromDateOnly = fromDate;
     const toDateOnly = toDate;
-    const sql = `
-      SELECT 
-        s.id AS saleId,
-        s.created_at AS createdAt,
-        s.customer_name AS customerName,
-        s.customer_phone AS customerPhone,
-        s.sale_type AS saleType,
-        0 AS additionalDiscount,
-        0 AS additionalDiscountAmount,
-        si.medicine_id AS medicineId,
-        si.medicine_name AS medicineName,
-        si.pills AS originalPills,
-        COALESCE(returns.returned_pills, 0) AS returnedPills,
-        (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
-        si.unit_price AS unitPrice,
-        si.subtotal AS originalSubtotal,
-        (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
-        si.discount_amount AS originalDiscountAmount,
-        (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
-        si.tax_amount AS originalTaxAmount,
-        (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
-        si.total AS originalTotal,
-        COALESCE(returns.returned_total, 0) AS returnedTotal,
-        (si.total - COALESCE(returns.returned_total, 0)) AS total
-      FROM sale_items si
-      INNER JOIN sales s ON s.id = si.sale_id
-      LEFT JOIN (
-        SELECT 
-          sr.sale_id, 
-          sri.medicine_id,
-          SUM(sri.pills) as returned_pills,
-          SUM(sri.total) as returned_total,
-          SUM(sri.subtotal) as returned_subtotal,
-          SUM(sri.discount_amount) as returned_discount,
-          SUM(sri.tax_amount) as returned_tax
-        FROM sale_return_items sri
-        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
-        GROUP BY sr.sale_id, sri.medicine_id
-      ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
-      WHERE date(s.created_at) >= date(?) AND date(s.created_at) <= date(?)
-      ORDER BY s.created_at DESC, s.id DESC, si.id ASC
-    `;
+    const sql = this.buildFlatSalesRowsQuery(
+      `WHERE date(s.created_at) >= date(?) AND date(s.created_at) <= date(?)`
+    );
     const rows = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
     return rows as any;
   }
@@ -196,47 +250,7 @@ export class SalesService {
     taxAmount: number;
     total: number;
   }>> {
-    const sql = `
-      SELECT 
-        s.id AS saleId,
-        s.created_at AS createdAt,
-        s.customer_name AS customerName,
-        s.customer_phone AS customerPhone,
-        s.sale_type AS saleType,
-        0 AS additionalDiscount,
-        0 AS additionalDiscountAmount,
-        si.medicine_id AS medicineId,
-        si.medicine_name AS medicineName,
-        si.pills AS originalPills,
-        COALESCE(returns.returned_pills, 0) AS returnedPills,
-        (si.pills - COALESCE(returns.returned_pills, 0)) AS pills,
-        si.unit_price AS unitPrice,
-        si.subtotal AS originalSubtotal,
-        (si.subtotal - COALESCE(returns.returned_subtotal, 0)) AS subtotal,
-        si.discount_amount AS originalDiscountAmount,
-        (si.discount_amount - COALESCE(returns.returned_discount, 0)) AS discountAmount,
-        si.tax_amount AS originalTaxAmount,
-        (si.tax_amount - COALESCE(returns.returned_tax, 0)) AS taxAmount,
-        si.total AS originalTotal,
-        COALESCE(returns.returned_total, 0) AS returnedTotal,
-        (si.total - COALESCE(returns.returned_total, 0)) AS total
-      FROM sale_items si
-      INNER JOIN sales s ON s.id = si.sale_id
-      LEFT JOIN (
-        SELECT 
-          sr.sale_id, 
-          sri.medicine_id,
-          SUM(sri.pills) as returned_pills,
-          SUM(sri.total) as returned_total,
-          SUM(sri.subtotal) as returned_subtotal,
-          SUM(sri.discount_amount) as returned_discount,
-          SUM(sri.tax_amount) as returned_tax
-        FROM sale_return_items sri
-        INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
-        GROUP BY sr.sale_id, sri.medicine_id
-      ) AS returns ON returns.sale_id = s.id AND returns.medicine_id = si.medicine_id
-      ORDER BY s.created_at DESC, s.id DESC, si.id ASC
-    `;
+    const sql = this.buildFlatSalesRowsQuery('WHERE 1=1');
     const rows = await this.dbService.query(sql, []);
     return rows as any;
   }
