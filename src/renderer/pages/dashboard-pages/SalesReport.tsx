@@ -250,35 +250,88 @@ export default function SalesReport() {
     [filteredRows]
   );
 
+  /** Original invoice line totals in range (net kept + returned); clarifies revenue vs gross. */
+  const totalGrossInvoice = useMemo(
+    () => totalRevenue + totalReturnsValue,
+    [totalRevenue, totalReturnsValue]
+  );
+
+  const totalReturnedUnits = useMemo(
+    () => filteredRows.reduce((sum, row) => sum + (row.returnedPills || 0), 0),
+    [filteredRows]
+  );
+
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
 
       {/* Stats Header - Single Row Design matching Medicines Page */}
       <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
 
-        {/* Total Revenue */}
+        {/* Net revenue (after returns) — primary KPI */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
-            <FaCreditCard className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Revenue
-            </span>
-            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
+          <div
+            className="flex flex-col gap-0.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm"
+            title="Total of kept invoice lines after returns (what stayed sold in this period)."
+          >
+            <div className="flex items-center gap-1.5">
+              <FaCreditCard className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+                Net revenue
+              </span>
+              <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1 tabular-nums">
+                {getCurrencySymbol()}{totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+            {totalReturnsValue > 0 && (
+              <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 pl-5 leading-tight">
+                After returns (excludes returned value)
+              </span>
+            )}
           </div>
         </div>
 
+        {/* Gross invoice total when returns exist — original rang-up before returns */}
+        {totalReturnsValue > 0 && (
+          <div className="flex items-center gap-2">
+            <div
+              className="flex items-center gap-1.5 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-md border border-amber-200 dark:border-amber-600/50 shadow-sm"
+              title="Net revenue + returns in this report: total originally invoiced before customer returns."
+            >
+              <FaCreditCard className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+                Gross invoice
+              </span>
+              <span className="text-xs font-bold text-amber-700 dark:text-amber-300 ml-1 tabular-nums">
+                {getCurrencySymbol()}{totalGrossInvoice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Medicines Sold */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-            <FaShoppingCart className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Sold Medicine
-            </span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {totalItemsSold.toLocaleString()}
-            </span>
+          <div
+            className="flex flex-col gap-0.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm"
+            title={
+              totalReturnedUnits > 0
+                ? `Net units kept after returns. Invoiced before returns: ${(totalItemsSold + totalReturnedUnits).toLocaleString()}.`
+                : 'Units sold in this report (net of returns).'
+            }
+          >
+            <div className="flex items-center gap-1.5">
+              <FaShoppingCart className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
+                Units (net)
+              </span>
+              <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1 tabular-nums">
+                {totalItemsSold.toLocaleString()}
+              </span>
+            </div>
+            {totalReturnedUnits > 0 && (
+              <span className="text-[9px] font-medium text-gray-500 dark:text-gray-400 pl-5 leading-tight">
+                {totalItemsSold + totalReturnedUnits} invoiced before returns
+              </span>
+            )}
           </div>
         </div>
 

@@ -186,6 +186,14 @@ const medicineCompanyLine = (m: {
   return a || b || '—';
 };
 
+/** Line total shown in cart when viewing a past bill with returns (original line total × net qty / sold qty). */
+const lineFinalPriceAfterReturns = (item: CartItem, returnedQty: number): number => {
+  if (returnedQty <= 0 || item.pills <= 0) return item.finalPrice;
+  const netPills = item.pills - returnedQty;
+  if (netPills <= 0) return 0;
+  return (item.finalPrice * netPills) / item.pills;
+};
+
 const recalculateSaleItem = (item: CartItem): CartItem => {
   const discountPercent = Math.min(Math.max(item.discount || 0, 0), 100);
   const taxPercent = Math.min(Math.max(item.tax || 0, 0), 100);
@@ -2861,6 +2869,10 @@ const SellingPanel: React.FC = () => {
                       const companyLabel = medicineCompanyLine(item.medicine);
                       const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
                       const returnedQty = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
+                      const displayLineAmount =
+                        currentBillIndex >= 0 && returnedQty > 0
+                          ? lineFinalPriceAfterReturns(item, returnedQty)
+                          : item.finalPrice;
                       return (
                       <div
                         key={item.medicine.id}
@@ -3133,8 +3145,24 @@ const SellingPanel: React.FC = () => {
                             placeholder="0"
                           />
                         </div>
-                        <div className="col-span-3 flex items-center justify-end pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap">
-                          {symbol}{item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <div
+                          className="col-span-3 flex flex-col items-end justify-center pr-1 font-bold text-emerald-600 dark:text-emerald-400 text-[11px] min-w-0 tabular-nums whitespace-nowrap"
+                          title={
+                            returnedQty > 0 && currentBillIndex >= 0
+                              ? `Net line total after ${returnedQty} returned (original line ${symbol}${item.finalPrice.toFixed(2)})`
+                              : undefined
+                          }
+                        >
+                          {returnedQty > 0 && currentBillIndex >= 0 && (
+                            <span className="text-[9px] font-medium text-gray-400 line-through decoration-rose-400/80 mb-0.5">
+                              {symbol}
+                              {item.finalPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </span>
+                          )}
+                          <span>
+                            {symbol}
+                            {displayLineAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
                         </div>
                         <div className="col-span-1 text-center">
                           <button

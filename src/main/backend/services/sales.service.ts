@@ -1073,7 +1073,7 @@ export class SalesService {
     purchasingTotal: number;
     purchaseDiscountTotal: number;
     purchaseTaxTotal: number;
-    /** Sum of sale line subtotals (qty × price) before line discounts — what users expect as "gross" */
+    /** Sum of sale header subtotals at checkout (qty × list price before line discounts); returns not deducted — use with saleReturnsTotal for “gross after returns” in UI */
     grossSubtotal: number;
     /** Sum of invoice totals after line discounts & tax (includes charity/employee/relative bills) */
     sellingTotal: number;

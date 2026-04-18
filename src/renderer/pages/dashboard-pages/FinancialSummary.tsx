@@ -92,30 +92,28 @@ const FinancialSummary = () => {
     return (financialData.familyTotal || 0) + (financialData.charityTotal || 0) + (financialData.employeeTotal || 0);
   }, [financialData.familyTotal, financialData.charityTotal, financialData.employeeTotal]);
 
+  /** List-price merchandise kept after returns (invoice list subtotal − returns). Avoids treating returned goods as sold twice. */
+  const grossSalesNetOfReturns = useMemo(
+    () => Math.max(0, (financialData.grossSubtotal ?? 0) - (financialData.saleReturnsTotal ?? 0)),
+    [financialData.grossSubtotal, financialData.saleReturnsTotal]
+  );
+
   /** Invoiced net (after line discounts) — matches backend profit; charity/relative/employee are invoice totals */
   const invoicedNetSales = useMemo(() => {
     return Math.max(0, (financialData.sellingTotal || 0) - companyExpenses - (financialData.saleReturnsTotal || 0));
   }, [financialData.sellingTotal, financialData.saleReturnsTotal, companyExpenses]);
 
   /**
-   * Net sales (KPI): gross list (pre–line discount) minus charity, relative & employee billed totals and returns.
-   * Aligns with “gross − charity − relative − employee”. Program buckets use invoice totals, so this can exceed
-   * cash collected when regular line discounts exist; profit margin still uses invoiced net (netRevenue).
+   * Net sales (KPI): list value after returns, minus charity / relative / employee programme invoices.
+   * Matches backend netSalesGrossBasis (grossSubtotal − returns − company expenses).
    */
   const netSales = useMemo(() => {
     const fromApi = financialData.netSalesGrossBasis;
     if (typeof fromApi === 'number' && !Number.isNaN(fromApi)) {
       return Math.max(0, fromApi);
     }
-    const gross = financialData.grossSubtotal ?? financialData.sellingTotal ?? 0;
-    return Math.max(0, gross - companyExpenses - (financialData.saleReturnsTotal || 0));
-  }, [
-    financialData.netSalesGrossBasis,
-    financialData.grossSubtotal,
-    financialData.sellingTotal,
-    financialData.saleReturnsTotal,
-    companyExpenses,
-  ]);
+    return Math.max(0, grossSalesNetOfReturns - companyExpenses);
+  }, [financialData.netSalesGrossBasis, grossSalesNetOfReturns, companyExpenses]);
 
   /** Key totals for donut — matches detailed breakdown emphasis */
   const pieBreakdown = useMemo(() => {
@@ -292,11 +290,14 @@ const FinancialSummary = () => {
 
           <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
             <FiDollarSign className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide" title="Quantity × unit price before line discounts">
+            <span
+              className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide"
+              title="Invoice list subtotal at checkout, minus customer returns (goods came back to stock; not counted as sold twice)."
+            >
               Gross sales
             </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {formatCurrency(financialData.grossSubtotal ?? financialData.sellingTotal)}
+              {formatCurrency(grossSalesNetOfReturns)}
             </span>
           </div>
 
@@ -429,11 +430,19 @@ const FinancialSummary = () => {
                   <div className="grid grid-cols-2 gap-3">
                     {[
                       { label: 'Purchasing total', value: financialData.purchasingTotal, accent: 'border-l-blue-500', val: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50/60 dark:bg-blue-950/30', icon: <FiPackage className="w-4 h-4 text-blue-500 shrink-0" /> },
-                      { label: 'Gross sales', sub: 'Before line discounts', value: financialData.grossSubtotal ?? financialData.sellingTotal, accent: 'border-l-amber-500', val: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50/60 dark:bg-amber-950/30', icon: <FiDollarSign className="w-4 h-4 text-amber-500 shrink-0" /> },
+                      {
+                        label: 'Gross sales',
+                        sub: 'List value after returns (checkout list subtotal − returns; before charity / relative / employee)',
+                        value: grossSalesNetOfReturns,
+                        accent: 'border-l-amber-500',
+                        val: 'text-amber-700 dark:text-amber-300',
+                        bg: 'bg-amber-50/60 dark:bg-amber-950/30',
+                        icon: <FiDollarSign className="w-4 h-4 text-amber-500 shrink-0" />,
+                      },
                       { label: 'Return amount', value: financialData.saleReturnsTotal, accent: 'border-l-red-500', val: 'text-red-700 dark:text-red-300', bg: 'bg-red-50/60 dark:bg-red-950/30', icon: <FiTrendingDown className="w-4 h-4 text-red-500 shrink-0" /> },
                       {
                         label: 'Net sales',
-                        sub: 'Gross list − charity, relative, employee & returns (program amounts at invoice)',
+                        sub: 'Same basis as Gross sales card, minus charity / relative / employee invoices',
                         value: netSales,
                         accent: 'border-l-teal-500',
                         val: 'text-teal-700 dark:text-teal-300',
