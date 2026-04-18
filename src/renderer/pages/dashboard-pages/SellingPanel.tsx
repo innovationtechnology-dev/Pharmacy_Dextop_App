@@ -300,12 +300,13 @@ const SellingPanel: React.FC = () => {
     unitPrice: number;
     discountPerUnit: number;
     taxPerUnit: number;
+    batchLabel: string;
     reason?: string;
   }>>([]);
   const [returnReason, setReturnReason] = useState('');
   const [returnNotes, setReturnNotes] = useState('');
   const [processingReturn, setProcessingReturn] = useState(false);
-  const [returnedQuantities, setReturnedQuantities] = useState<Map<number, number>>(new Map());
+  const [returnedQuantities, setReturnedQuantities] = useState<Map<string, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState<string | null>(null);
   const [saleDeleteConfirm, setSaleDeleteConfirm] = useState<{
@@ -1161,7 +1162,9 @@ const SellingPanel: React.FC = () => {
     }
 
     // Warn if this medicine has return records that will also be deleted.
-    const returnedQtyForItem = returnedQuantities.get(medicineId) || 0;
+    const returnedQtyForItem = Array.from(returnedQuantities.entries())
+      .filter(([k]) => k.startsWith(`${medicineId}_`))
+      .reduce((sum, [, v]) => sum + v, 0);
     if (returnedQtyForItem > 0) {
       const itemName = cart.find(i => i.medicine.id === medicineId)?.medicine.name || 'this medicine';
       setRemoveLineConfirm({
@@ -1366,20 +1369,20 @@ const SellingPanel: React.FC = () => {
 
     // Calculate values locally to avoid dependency issues
     const localSubtotal = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       return sum + (item.unitPrice * netPills);
     }, 0);
 
     const localDiscount = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       return sum + ((itemSubtotal * item.discount) / 100);
     }, 0);
 
     const localTax = cart.reduce((sum, item) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;
@@ -1543,15 +1546,16 @@ const SellingPanel: React.FC = () => {
 
         // Fetch returns for this sale to show returned quantities
         const returnsResponse = await getSaleReturnsBySaleId(sale.saleId);
-        const returnedByMedicine = new Map<number, number>();
+        const returnedByMedicine = new Map<string, number>();
         let totalReturned = 0;
 
         if (returnsResponse.success && returnsResponse.data) {
           returnsResponse.data.forEach((ret) => {
             totalReturned += ret.total;
             ret.items.forEach((item) => {
-              const current = returnedByMedicine.get(item.medicineId) || 0;
-              returnedByMedicine.set(item.medicineId, current + item.pills);
+              const key = `${item.medicineId}_${item.unitPrice}`;
+              const current = returnedByMedicine.get(key) || 0;
+              returnedByMedicine.set(key, current + item.pills);
             });
           });
         }
@@ -1691,18 +1695,21 @@ const SellingPanel: React.FC = () => {
     try {
       const existingReturns = await getSaleReturnsBySaleId(selectedSaleId);
       if (existingReturns.success && existingReturns.data) {
-        // Calculate already returned quantities
-        const returnedByMedicine = new Map<number, number>();
+        // Calculate already returned quantities keyed by medicineId_unitPrice
+        const returnedByKey = new Map<string, number>();
         existingReturns.data.forEach((ret) => {
           ret.items.forEach((item) => {
-            const current = returnedByMedicine.get(item.medicineId) || 0;
-            returnedByMedicine.set(item.medicineId, current + item.pills);
+            const key = `${item.medicineId}_${item.unitPrice}`;
+            const current = returnedByKey.get(key) || 0;
+            returnedByKey.set(key, current + item.pills);
           });
         });
 
-        const soldByMedicine = new Map<number, {
+        // Group sold items by medicineId + unitPrice to keep batches separate
+        const soldByKey = new Map<string, {
           medicineId: number;
           medicineName: string;
+          unitPrice: number;
           soldPills: number;
           subtotal: number;
           discountAmount: number;
@@ -1713,16 +1720,19 @@ const SellingPanel: React.FC = () => {
           const subtotal = item.originalSubtotal || item.subtotal || 0;
           const discountAmount = item.originalDiscountAmount ?? item.discountAmount ?? 0;
           const taxAmount = item.originalTaxAmount ?? item.taxAmount ?? 0;
-          const existing = soldByMedicine.get(item.medicineId);
+          const unitPrice = soldPills > 0 ? subtotal / soldPills : item.unitPrice;
+          const key = `${item.medicineId}_${unitPrice}`;
+          const existing = soldByKey.get(key);
           if (existing) {
             existing.soldPills += soldPills;
             existing.subtotal += subtotal;
             existing.discountAmount += discountAmount;
             existing.taxAmount += taxAmount;
           } else {
-            soldByMedicine.set(item.medicineId, {
+            soldByKey.set(key, {
               medicineId: item.medicineId,
               medicineName: item.medicineName,
+              unitPrice,
               soldPills,
               subtotal,
               discountAmount,
@@ -1731,21 +1741,25 @@ const SellingPanel: React.FC = () => {
           }
         });
 
-        const items = Array.from(soldByMedicine.values()).map((item) => {
-          const alreadyReturned = returnedByMedicine.get(item.medicineId) || 0;
+        const batchCountPerMedicine = new Map<number, number>();
+        const items = Array.from(soldByKey.entries()).map(([key, item]) => {
+          const alreadyReturned = returnedByKey.get(key) || 0;
           const availableToReturn = Math.max(0, item.soldPills - alreadyReturned);
-          const unitPrice = item.soldPills > 0 ? item.subtotal / item.soldPills : 0;
           const discountPerUnit = item.soldPills > 0 ? item.discountAmount / item.soldPills : 0;
           const taxPerUnit = item.soldPills > 0 ? item.taxAmount / item.soldPills : 0;
+          const batchIdx = (batchCountPerMedicine.get(item.medicineId) || 0) + 1;
+          batchCountPerMedicine.set(item.medicineId, batchIdx);
+          const batchLabel = batchIdx === 1 ? 'Old Stock' : batchIdx === 2 ? 'New Stock' : `Batch ${batchIdx}`;
           return {
             medicineId: item.medicineId,
             medicineName: item.medicineName,
             originalPills: item.soldPills,
             availableToReturn,
             returnPills: 0,
-            unitPrice,
+            unitPrice: item.unitPrice,
             discountPerUnit,
             taxPerUnit,
+            batchLabel,
             reason: '',
           };
         }).filter(item => item.availableToReturn > 0);
@@ -1761,9 +1775,10 @@ const SellingPanel: React.FC = () => {
     } catch (error) {
       console.error('Error checking existing returns:', error);
       // Still allow return creation (start with 0 - user selects)
-      const soldByMedicine = new Map<number, {
+      const soldByKey2 = new Map<string, {
         medicineId: number;
         medicineName: string;
+        unitPrice: number;
         soldPills: number;
         subtotal: number;
         discountAmount: number;
@@ -1774,16 +1789,19 @@ const SellingPanel: React.FC = () => {
         const subtotal = item.originalSubtotal || item.subtotal || 0;
         const discountAmount = item.originalDiscountAmount ?? item.discountAmount ?? 0;
         const taxAmount = item.originalTaxAmount ?? item.taxAmount ?? 0;
-        const existing = soldByMedicine.get(item.medicineId);
+        const unitPrice = soldPills > 0 ? subtotal / soldPills : item.unitPrice;
+        const key = `${item.medicineId}_${unitPrice}`;
+        const existing = soldByKey2.get(key);
         if (existing) {
           existing.soldPills += soldPills;
           existing.subtotal += subtotal;
           existing.discountAmount += discountAmount;
           existing.taxAmount += taxAmount;
         } else {
-          soldByMedicine.set(item.medicineId, {
+          soldByKey2.set(key, {
             medicineId: item.medicineId,
             medicineName: item.medicineName,
+            unitPrice,
             soldPills,
             subtotal,
             discountAmount,
@@ -1792,19 +1810,23 @@ const SellingPanel: React.FC = () => {
         }
       });
 
-      const items = Array.from(soldByMedicine.values()).map((item) => {
-        const unitPrice = item.soldPills > 0 ? item.subtotal / item.soldPills : 0;
+      const batchCountPerMedicine2 = new Map<number, number>();
+      const items = Array.from(soldByKey2.values()).map((item) => {
         const discountPerUnit = item.soldPills > 0 ? item.discountAmount / item.soldPills : 0;
         const taxPerUnit = item.soldPills > 0 ? item.taxAmount / item.soldPills : 0;
+        const batchIdx = (batchCountPerMedicine2.get(item.medicineId) || 0) + 1;
+        batchCountPerMedicine2.set(item.medicineId, batchIdx);
+        const batchLabel = batchIdx === 1 ? 'Old Stock' : batchIdx === 2 ? 'New Stock' : `Batch ${batchIdx}`;
         return {
           medicineId: item.medicineId,
           medicineName: item.medicineName,
           originalPills: item.soldPills,
           availableToReturn: item.soldPills,
           returnPills: 0,
-          unitPrice,
+          unitPrice: item.unitPrice,
           discountPerUnit,
           taxPerUnit,
+          batchLabel,
           reason: '',
         };
       }).filter(item => item.availableToReturn > 0);
@@ -1857,11 +1879,12 @@ const SellingPanel: React.FC = () => {
         if (selectedSaleId) {
           const returnsResp = await getSaleReturnsBySaleId(selectedSaleId);
           if (returnsResp.success && returnsResp.data) {
-            const returnedByMed = new Map<number, number>();
+            const returnedByMed = new Map<string, number>();
             returnsResp.data.forEach((ret) => {
               ret.items.forEach((it) => {
-                const cur = returnedByMed.get(it.medicineId) || 0;
-                returnedByMed.set(it.medicineId, cur + it.pills);
+                const key = `${it.medicineId}_${it.unitPrice}`;
+                const cur = returnedByMed.get(key) || 0;
+                returnedByMed.set(key, cur + it.pills);
               });
             });
             setReturnedQuantities(returnedByMed);
@@ -2837,7 +2860,7 @@ const SellingPanel: React.FC = () => {
                     {cart.map((item, index) => {
                       const companyLabel = medicineCompanyLine(item.medicine);
                       const showRetCol = currentBillIndex >= 0 && returnedQuantities.size > 0;
-                      const returnedQty = returnedQuantities.get(item.medicine.id) || 0;
+                      const returnedQty = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
                       return (
                       <div
                         key={item.medicine.id}
@@ -3942,9 +3965,20 @@ Are you sure you want to continue?`}
                           <div className="flex-1 min-w-0">
                             <div className="flex justify-between items-start">
                               <div>
-                                <h4 className={`text-[15px] font-semibold tracking-tight truncate ${isSelected ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
-                                  {item.medicineName}
-                                </h4>
+                                <div className="flex items-center gap-2">
+                                  <h4 className={`text-[15px] font-semibold tracking-tight truncate ${isSelected ? 'text-red-700 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                                    {item.medicineName}
+                                  </h4>
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                    item.batchLabel === 'Old Stock'
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400'
+                                      : item.batchLabel === 'New Stock'
+                                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
+                                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400'
+                                  }`}>
+                                    {item.batchLabel}
+                                  </span>
+                                </div>
                                 <div className="flex items-center gap-2 mt-1.5">
                                   <div className="flex items-center gap-1.5 px-2 py-0.5 bg-gray-100/80 dark:bg-gray-700/50 rounded-full text-[9px] font-semibold text-gray-500 dark:text-gray-400">
                                     <div className={`w-1 h-1 rounded-full ${item.availableToReturn > 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />

@@ -175,21 +175,30 @@ export class SaleReturnService {
 
     if (restored >= pillsToRestore) return;
 
-    // Fallback: pre-migration data — use FEFO on stock_batches
+    // Fallback: pre-migration data — prefer unexpired batches so returned pills are sellable
     console.warn(`[sale-return restoreInventory] No sale_item_batches found for sale ${saleId} medicine ${medicineId}. Using FEFO fallback.`);
     const remaining = pillsToRestore - restored;
-    const batches = await this.dbService.query(
+
+    // Try unexpired batches first; fall back to all batches if none found
+    let batches = await this.dbService.query(
       `SELECT id, qty_received, qty_remaining FROM stock_batches
-       WHERE medicine_id = ? ORDER BY date(expiry_date) ASC, id ASC`,
+       WHERE medicine_id = ? AND date(expiry_date) >= date('now')
+       ORDER BY date(expiry_date) ASC, id ASC`,
       [medicineId]
     );
+    if (batches.length === 0) {
+      batches = await this.dbService.query(
+        `SELECT id, qty_received, qty_remaining FROM stock_batches
+         WHERE medicine_id = ? ORDER BY date(expiry_date) DESC, id ASC`,
+        [medicineId]
+      );
+    }
 
     if (batches.length === 0) {
       console.warn(`[sale-return restoreInventory] No stock_batches found for medicine ${medicineId}. Return accepted but inventory not restored.`);
       return;
     }
 
-    // Restore to the first available batch (same strategy as old code)
     const firstBatch = batches[0];
     await this.dbService.execute(
       'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ?',
