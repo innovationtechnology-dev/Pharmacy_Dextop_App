@@ -78,9 +78,14 @@ const FinancialSummary = () => {
     trend: [],
   });
 
+  const companyExpenses = useMemo(() => {
+    return (financialData.familyTotal || 0) + (financialData.charityTotal || 0) + (financialData.employeeTotal || 0);
+  }, [financialData.familyTotal, financialData.charityTotal, financialData.employeeTotal]);
+
+  // Net Sales = Gross Sales − Company Expenses (charity/emp/rel) − Returns
   const netSales = useMemo(() => {
-    return Math.max(0, (financialData.sellingTotal || 0) - (financialData.saleReturnsTotal || 0));
-  }, [financialData.sellingTotal, financialData.saleReturnsTotal]);
+    return Math.max(0, (financialData.sellingTotal || 0) - companyExpenses - (financialData.saleReturnsTotal || 0));
+  }, [financialData.sellingTotal, financialData.saleReturnsTotal, companyExpenses]);
 
   /** Key totals for donut — matches detailed breakdown emphasis */
   const pieBreakdown = useMemo(() => {

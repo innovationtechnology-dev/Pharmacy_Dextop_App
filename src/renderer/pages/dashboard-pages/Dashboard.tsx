@@ -114,13 +114,13 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
 
   const familyTotal = sales
     .filter((sale) => sale.saleType === 'Family/Relatives')
-    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
+    .reduce((sum, sale) => sum + (sale.total || 0), 0);
   const charityTotal = sales
     .filter((sale) => sale.saleType === 'Charity')
-    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
+    .reduce((sum, sale) => sum + (sale.total || 0), 0);
   const employeeTotal = sales
     .filter((sale) => sale.saleType === 'Employee')
-    .reduce((sum, sale) => sum + (sale.additionalDiscountAmount || 0), 0);
+    .reduce((sum, sale) => sum + (sale.total || 0), 0);
 
   const uniqueCustomers = new Set(
     sales

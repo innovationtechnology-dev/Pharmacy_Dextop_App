@@ -1072,31 +1072,36 @@ export class SalesService {
     profit: number;
     trend: Array<{ date: string; sales: number; purchases: number; profit: number }>;
   }> {
+    // Gross sales = ALL sales (including charity/employee/relative).
+    // Company expenses (charity/employee/relative) are tracked separately and
+    // deducted when computing Net Sales and Profit.
     const salesSql = `
       SELECT
-        COALESCE(SUM(total), 0) as selling_total,
+        COALESCE(SUM(total), 0)          as selling_total,
         COALESCE(SUM(discount_total), 0) as sale_discount_total,
-        COALESCE(SUM(tax_total), 0) as sale_tax_total,
-        0 as family_total,
-        0 as charity_total,
-        0 as employee_total
+        COALESCE(SUM(tax_total), 0)      as sale_tax_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN total ELSE 0 END), 0) as family_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Charity'           THEN total ELSE 0 END), 0) as charity_total,
+        COALESCE(SUM(CASE WHEN sale_type = 'Employee'          THEN total ELSE 0 END), 0) as employee_total
       FROM sales
       WHERE date(created_at, 'localtime') >= date(?)
         AND date(created_at, 'localtime') <= date(?)
     `;
     const salesResult = await this.dbService.queryOne(salesSql, [fromDate, toDate]);
-    const sellingTotal = salesResult?.selling_total || 0;
+    const sellingTotal    = salesResult?.selling_total     || 0;
     const saleDiscountTotal = salesResult?.sale_discount_total || 0;
-    const saleTaxTotal = salesResult?.sale_tax_total || 0;
-    const familyTotal = salesResult?.family_total || 0;
-    const charityTotal = salesResult?.charity_total || 0;
-    const employeeTotal = salesResult?.employee_total || 0;
+    const saleTaxTotal    = salesResult?.sale_tax_total    || 0;
+    const familyTotal     = salesResult?.family_total      || 0;
+    const charityTotal    = salesResult?.charity_total     || 0;
+    const employeeTotal   = salesResult?.employee_total    || 0;
+    // Company expenses = medicines given to relatives / charity / employees
+    const companyExpenses = familyTotal + charityTotal + employeeTotal;
 
     // Get sale returns total and their cost for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
-    
-    // Get total COGS (Cost of Goods Sold) using sale_item_batches for exact cost
+
+    // COGS for ALL sales (the stock cost is real regardless of sale type)
     const cogsSql = `
       SELECT COALESCE(SUM(
         CASE
@@ -1118,10 +1123,11 @@ export class SalesService {
     `;
     const cogsResult = await this.dbService.queryOne(cogsSql, [fromDate, toDate]);
     const grossCogs = cogsResult?.total_cogs || 0;
-    
-    // Calculate net revenue (sales - returns)
-    const netRevenue = sellingTotal - saleReturnsTotal;
-    // Calculate net COGS (COGS - cost of returns)
+
+    // Net Revenue = Gross Sales − Company Expenses (charity/emp/rel) − Returns
+    // This is what remains as real cash revenue.
+    const netRevenue = sellingTotal - companyExpenses - saleReturnsTotal;
+    // Net COGS = total COGS − cost of returned items
     const netCogs = grossCogs - saleReturnsCost;
 
     // Get purchase totals with discount and tax breakdown
@@ -1150,7 +1156,7 @@ export class SalesService {
     const remainingPaymentResult = await this.dbService.queryOne(remainingPaymentSql, [fromDate, toDate]);
     const remainingPayment = remainingPaymentResult?.total_remaining || 0;
 
-    // Calculate profit as margin: Net Revenue - Net COGS
+    // Profit = Net Revenue (gross − company expenses − returns) − Net COGS
     const profit = netRevenue - netCogs;
 
     // Trend calculation

@@ -243,3 +243,15 @@ For more packaging options, including packaging for other platforms and debuggin
 ## License
 
 MIT © [Electron React Boilerplate](https://github.com/electron-react-boilerplate)
+
+
+Details:
+
+Now the numbers flow correctly:
+
+Field	           Formula	                          Example
+Gross Sales   	   All sales total	                  Rs.1,198.55
+Return Amount	   Returns	Rs.0.00
+Company Expenses.  Relative + Charity + Employee	  Rs249.50
+Net Sales	       Gross − Expenses − Returns	      Rs.949.05
+Net Profit	       Net Sales − COGS	Rs.xxx
