@@ -171,6 +171,7 @@ const Payments: React.FC = () => {
   const [checkNumber, setCheckNumber] = useState('');
   const [bankName, setBankName] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
+  const [senderNumber, setSenderNumber] = useState('');
   const [paymentNotes, setPaymentNotes] = useState('');
   const today = useMemo(() => {
     const d = new Date();
@@ -185,6 +186,9 @@ const Payments: React.FC = () => {
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
   const [purchasePayments, setPurchasePayments] = useState<PaymentRecord[]>([]);
   const [loadingPurchasePayments, setLoadingPurchasePayments] = useState(false);
+  const [expandedPurchaseId, setExpandedPurchaseId] = useState<number | null>(null);
+  const [expandedPayments, setExpandedPayments] = useState<Map<number, PaymentRecord[]>>(new Map());
+  const [loadingExpandedId, setLoadingExpandedId] = useState<number | null>(null);
   const [expandedAccount, setExpandedAccount] = useState<number | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportSupplierId, setExportSupplierId] = useState<number | null>(null);
@@ -475,6 +479,31 @@ const Payments: React.FC = () => {
     });
   }, []);
 
+  const toggleExpandPurchase = useCallback(async (purchaseId: number) => {
+    if (expandedPurchaseId === purchaseId) {
+      setExpandedPurchaseId(null);
+      return;
+    }
+    setExpandedPurchaseId(purchaseId);
+    if (expandedPayments.has(purchaseId)) return; // already loaded
+    setLoadingExpandedId(purchaseId);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
+          if (response.success) {
+            setExpandedPayments(prev => new Map(prev).set(purchaseId, response.data || []));
+            resolve();
+          } else reject(response.error);
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
+      });
+    } catch (err) {
+      console.error('Error loading payments for PO:', err);
+    } finally {
+      setLoadingExpandedId(null);
+    }
+  }, [expandedPurchaseId, expandedPayments]);
+
   const loadAllData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -640,8 +669,13 @@ const Payments: React.FC = () => {
     setCheckNumber('');
     setBankName('');
     setAccountNumber('');
+    setSenderNumber('');
     setPaymentNotes('');
     setPaymentDate(toLocalIsoDate(new Date()));
+    // Auto-expand the row so user can see payments as they're added
+    if (expandedPurchaseId !== purchase.id) {
+      toggleExpandPurchase(purchase.id);
+    }
   };
 
   const handleViewPaymentHistory = (purchase: Purchase) => {
@@ -657,6 +691,7 @@ const Payments: React.FC = () => {
     setCheckNumber('');
     setBankName('');
     setAccountNumber('');
+    setSenderNumber('');
     setPaymentNotes('');
     setPaymentDate(toLocalIsoDate(new Date()));
   };
@@ -689,16 +724,26 @@ const Payments: React.FC = () => {
         checkNumber: checkNumber || undefined,
         bankName: bankName || undefined,
         accountNumber: accountNumber || undefined,
-        notes: paymentNotes || undefined,
+        notes: [senderNumber ? `Sender: ${senderNumber}` : '', paymentNotes].filter(Boolean).join(' | ') || undefined,
         paymentDate,
       };
 
-      window.electron.ipcRenderer.once('payment-create-reply' as any, (response: any) => {
+      const poId = selectedPurchase.id;
+      window.electron.ipcRenderer.once('payment-create-reply' as any, async (response: any) => {
         setProcessing(false);
         if (response.success) {
           resetPaymentForm();
-          loadAllData();
-          alert('Payment recorded successfully!');
+          // Reload all data first so purchase totals update
+          await loadAllData();
+          // Clear cached payments for this PO and reload them fresh, then auto-expand
+          setExpandedPayments(prev => { const m = new Map(prev); m.delete(poId); return m; });
+          setExpandedPurchaseId(poId);
+          setLoadingExpandedId(poId);
+          window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (r: any) => {
+            if (r.success) setExpandedPayments(prev => new Map(prev).set(poId, r.data || []));
+            setLoadingExpandedId(null);
+          });
+          window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [poId]);
         } else {
           alert('Error recording payment: ' + (response.error || 'Unknown error'));
         }
@@ -1114,7 +1159,190 @@ const Payments: React.FC = () => {
 
       {/* Make Payments Tab */}
       {activeTab === 'payments' && (
-        <div className="overflow-y-auto">
+        <div className="overflow-y-auto space-y-3">
+
+          {/* ── Add Payment Panel ── */}
+          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+            {/* Panel header */}
+            <div className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50/40 dark:from-emerald-950/30 dark:to-teal-950/10 border-b border-emerald-100 dark:border-emerald-900/40">
+              <div className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center shrink-0">
+                <FiPlus className="w-4 h-4 text-white" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">Add Payment</h3>
+                <p className="text-[10px] text-gray-500 dark:text-gray-400">Select a purchase order and enter payment details</p>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {/* Row 1: PO selector + Date */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Supplier / Purchase Order</label>
+                  <select
+                    value={selectedPurchase?.id ?? ''}
+                    onChange={(e) => {
+                      const po = purchases.find(p => p.id === Number(e.target.value)) || null;
+                      if (po) handleMakePayment(po); else setSelectedPurchase(null);
+                    }}
+                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="">— Select a purchase order —</option>
+                    {purchases.filter(p => p.remainingBalance > 0).map(p => (
+                      <option key={p.id} value={p.id}>
+                        PO-{p.id} · {p.supplierName} · Remaining: {formatCurrency(p.remainingBalance)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Payment Date</label>
+                  <input type="date" value={paymentDate} max={today} onChange={(e) => setPaymentDate(e.target.value)}
+                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none" />
+                </div>
+              </div>
+
+              {/* PO balance summary */}
+              {selectedPurchase && (
+                <div className="grid grid-cols-3 gap-3">
+                  {[
+                    { label: 'Grand Total', value: selectedPurchase.grandTotal, color: 'text-gray-800 dark:text-white', bg: 'bg-gray-50 dark:bg-gray-700/50' },
+                    { label: 'Already Paid', value: selectedPurchase.paymentAmount, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50/60 dark:bg-emerald-950/20' },
+                    { label: 'Remaining', value: selectedPurchase.remainingBalance, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50/60 dark:bg-orange-950/20' },
+                  ].map(s => (
+                    <div key={s.label} className={`rounded-lg px-4 py-3 border ${s.bg} ${s.label === 'Remaining' ? 'border-orange-200 dark:border-orange-800' : s.label === 'Already Paid' ? 'border-emerald-200 dark:border-emerald-800' : 'border-gray-200 dark:border-gray-600'}`}>
+                      <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1">{s.label}</p>
+                      <p className={`text-base font-extrabold tabular-nums ${s.color}`}>{formatCurrency(s.value)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Row 2: Amount + Method */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Amount</label>
+                  <input type="number" min="0" max={selectedPurchase?.remainingBalance} step="0.01"
+                    value={paymentAmount}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (selectedPurchase && parseFloat(val) > selectedPurchase.remainingBalance) {
+                        setPaymentAmount(selectedPurchase.remainingBalance.toString());
+                      } else {
+                        setPaymentAmount(val);
+                      }
+                    }}
+                    placeholder="0.00" disabled={!selectedPurchase}
+                    className={`w-full px-3 py-2.5 border rounded-lg text-sm font-semibold bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 outline-none disabled:opacity-40 ${
+                      selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance
+                        ? 'border-red-400 focus:ring-red-400'
+                        : 'border-gray-300 dark:border-gray-600 focus:ring-emerald-500'
+                    }`} />
+                  {selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance && (
+                    <p className="text-[10px] text-red-500 mt-1 font-medium">
+                      Amount cannot exceed remaining balance of {formatCurrency(selectedPurchase.remainingBalance)}
+                    </p>
+                  )}
+                  {selectedPurchase && !(parseFloat(paymentAmount) > selectedPurchase.remainingBalance) && (
+                    <button type="button" onClick={() => setPaymentAmount(selectedPurchase.remainingBalance.toString())}
+                      className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline mt-1 font-medium">
+                      Pay full balance — {formatCurrency(selectedPurchase.remainingBalance)}
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Payment Method</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['cash', 'bank_transfer', 'check', 'online'] as PaymentMethod[]).map((m) => {
+                      const c = getPaymentMethodColor(m);
+                      const active = paymentMethod === m;
+                      return (
+                        <button key={m} onClick={() => setPaymentMethod(m)}
+                          className={`px-3 py-2 rounded-lg border text-xs font-semibold transition-all ${active ? `${c.bg} ${c.text} ${c.border} shadow-sm` : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500 bg-gray-50 dark:bg-gray-700/40'}`}>
+                          {getPaymentMethodLabel(m)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 3: Bank/Online extra fields (conditional) */}
+              {(paymentMethod === 'bank_transfer' || paymentMethod === 'online') && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40">
+                  <div>
+                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
+                      {paymentMethod === 'online' ? 'Account / Wallet Name' : 'Bank Account Name'}
+                    </label>
+                    <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)}
+                      placeholder={paymentMethod === 'online' ? 'e.g. JazzCash / Easypaisa name' : 'e.g. HBL Current Account'}
+                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
+                      {paymentMethod === 'online' ? 'Account / Wallet Number' : 'Account Number / IBAN'}
+                    </label>
+                    <input type="text" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)}
+                      placeholder={paymentMethod === 'online' ? 'e.g. 03001234567' : 'e.g. PK36HABB0000...'}
+                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
+                      {paymentMethod === 'online' ? 'Sender Number / TxID' : 'Transaction Reference'}
+                    </label>
+                    <input type="text" value={senderNumber} onChange={(e) => setSenderNumber(e.target.value)}
+                      placeholder={paymentMethod === 'online' ? 'e.g. 03009876543' : 'e.g. TXN-20260418'}
+                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  </div>
+                </div>
+              )}
+
+              {/* Cheque extra fields */}
+              {paymentMethod === 'check' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40">
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1.5">Cheque Number</label>
+                    <input type="text" value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)}
+                      placeholder="e.g. 001234"
+                      className="w-full px-3 py-2 border border-amber-200 dark:border-amber-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1.5">Bank Name</label>
+                    <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)}
+                      placeholder="e.g. MCB, HBL..."
+                      className="w-full px-3 py-2 border border-amber-200 dark:border-amber-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none" />
+                  </div>
+                </div>
+              )}
+
+              {/* Notes + Actions */}
+              <div className="flex items-end gap-3">
+                <div className="flex-1">
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Notes (Optional)</label>
+                  <input type="text" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)}
+                    placeholder="Any additional notes..."
+                    disabled={!selectedPurchase}
+                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-40" />
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  {selectedPurchase && (
+                    <button onClick={resetPaymentForm}
+                      className="px-4 py-2.5 text-sm border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium">
+                      Clear
+                    </button>
+                  )}
+                  <button onClick={handleSubmitPayment}
+                    disabled={processing || !selectedPurchase || !paymentAmount || parseFloat(paymentAmount) <= 0 || (!!selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance)}
+                    className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 shadow-sm">
+                    {processing
+                      ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Processing...</>
+                      : <><FiCheck className="w-4 h-4" /> Record Payment</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Status Filter Tabs */}
           <div className="flex gap-2 m-2">
             <button
@@ -1182,56 +1410,125 @@ const Payments: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                    {filteredPurchases.map((p) => (
-                      <tr key={p.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                        <td className="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">PO-{p.id}</td>
-                        <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{p.supplierName}</td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 dark:text-white">{formatCurrency(p.grandTotal)}</td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(p.paymentAmount)}</td>
-                        <td className="px-4 py-3 text-sm text-right font-medium text-orange-600 dark:text-orange-400">{formatCurrency(p.remainingBalance)}</td>
-                        <td className="px-4 py-3 text-center">
-                          {p.remainingBalance <= 0 ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-                              <FiCheck className="w-3 h-3" /> Paid
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300">
-                              <FiAlertCircle className="w-3 h-3" /> Pending
-                            </span>
+                    {filteredPurchases.map((p) => {
+                      const isExpanded = expandedPurchaseId === p.id;
+                      const payments = expandedPayments.get(p.id) || [];
+                      const isLoadingThis = loadingExpandedId === p.id;
+                      // Compute running balance oldest-first, display newest-first
+                      const paymentsAsc = [...payments].reverse();
+                      let rb = p.grandTotal;
+                      const balanceAfterMap = new Map<number, number>();
+                      paymentsAsc.forEach((pay) => {
+                        rb -= pay.amount;
+                        balanceAfterMap.set(pay.id, rb);
+                      });
+                      const paymentsDesc = [...paymentsAsc].reverse();
+
+                      return (
+                        <React.Fragment key={p.id}>
+                          {/* Purchase row */}
+                          <tr
+                            className={`transition-colors cursor-pointer select-none ${isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
+                            onClick={() => toggleExpandPurchase(p.id)}
+                          >
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">
+                              <span className="flex items-center gap-1.5">
+                                {isExpanded ? <FiChevronUp className="w-3.5 h-3.5 text-blue-500" /> : <FiChevronDown className="w-3.5 h-3.5 text-gray-400" />}
+                                PO-{p.id}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{p.supplierName}</td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 dark:text-white">{formatCurrency(p.grandTotal)}</td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(p.paymentAmount)}</td>
+                            <td className="px-4 py-3 text-sm text-right font-medium text-orange-600 dark:text-orange-400">{formatCurrency(p.remainingBalance)}</td>
+                            <td className="px-4 py-3 text-center">
+                              {p.remainingBalance <= 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
+                                  <FiCheck className="w-3 h-3" /> Paid
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300">
+                                  <FiAlertCircle className="w-3 h-3" /> Pending
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{formatDate(p.createdAt)}</td>
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => handleViewPaymentHistory(p)}
+                                  className="inline-flex items-center justify-center w-8 h-8 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                                  title="View Payment History"
+                                >
+                                  <FiEye className="w-4 h-4" />
+                                </button>
+                                {isToday(p.createdAt) && (
+                                  <button
+                                    onClick={() => setDeleteConfirm(p.id)}
+                                    className="inline-flex items-center justify-center w-8 h-8 text-white bg-red-600 dark:bg-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600"
+                                    title="Delete Purchase (Today Only)"
+                                  >
+                                    <FiTrash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+
+                          {/* Expanded payment sub-rows */}
+                          {isExpanded && (
+                            <tr>
+                              <td colSpan={8} className="p-0 bg-blue-50/40 dark:bg-blue-900/10 border-b border-blue-200/50 dark:border-blue-800/30">
+                                {isLoadingThis ? (
+                                  <div className="flex items-center gap-2 px-8 py-3 text-xs text-gray-500 dark:text-gray-400">
+                                    <FiRefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading payments...
+                                  </div>
+                                ) : paymentsAsc.length === 0 ? (
+                                  <div className="px-8 py-3 text-xs text-gray-400 dark:text-gray-500 italic">No payments recorded yet for this purchase.</div>
+                                ) : (
+                                  <table className="w-full">
+                                    <thead>
+                                      <tr className="border-b border-blue-200/60 dark:border-blue-800/40">
+                                        <th className="pl-12 pr-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">#</th>
+                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Date</th>
+                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Method</th>
+                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Reference</th>
+                                        <th className="px-4 py-2 text-right text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Amount Paid</th>
+                                        <th className="px-4 py-2 text-right text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Balance After</th>
+                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Notes</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {paymentsDesc.map((pay, idx) => {
+                                        const balAfter = balanceAfterMap.get(pay.id) ?? 0;
+                                        const mc = getPaymentMethodColor(pay.paymentMethod);
+                                        return (
+                                          <tr key={pay.id} className="border-b border-blue-100/50 dark:border-blue-900/30 last:border-0 hover:bg-blue-100/30 dark:hover:bg-blue-900/20 transition-colors">
+                                            <td className="pl-12 pr-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400">{paymentsDesc.length - idx}</td>
+                                            <td className="px-4 py-2 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatDate(pay.paymentDate)}</td>
+                                            <td className="px-4 py-2">
+                                              <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${mc.bg} ${mc.text} ${mc.border}`}>
+                                                {getPaymentMethodLabel(pay.paymentMethod)}
+                                              </span>
+                                            </td>
+                                            <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">{pay.referenceNumber || pay.checkNumber || '—'}</td>
+                                            <td className="px-4 py-2 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">{formatCurrency(pay.amount)}</td>
+                                            <td className={`px-4 py-2 text-xs font-bold text-right ${balAfter <= 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
+                                              {formatCurrency(Math.max(0, balAfter))}
+                                            </td>
+                                            <td className="px-4 py-2 text-xs text-gray-400 dark:text-gray-500 max-w-[160px] truncate">{pay.notes || '—'}</td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </td>
+                            </tr>
                           )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{formatDate(p.createdAt)}</td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={() => handleViewPaymentHistory(p)}
-                              className="inline-flex items-center justify-center w-8 h-8 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                              title="View Payment History"
-                            >
-                              <FiEye className="w-4 h-4" />
-                            </button>
-                            {p.remainingBalance > 0 && (
-                              <button
-                                onClick={() => handleMakePayment(p)}
-                                className="inline-flex items-center justify-center w-8 h-8 text-white bg-emerald-600 dark:bg-emerald-500 rounded-lg hover:bg-emerald-700 dark:hover:bg-emerald-600"
-                                title="Make Payment"
-                              >
-                                <FiPlus className="w-4 h-4" />
-                              </button>
-                            )}
-                            {isToday(p.createdAt) && (
-                              <button
-                                onClick={() => setDeleteConfirm(p.id)}
-                                className="inline-flex items-center justify-center w-8 h-8 text-white bg-red-600 dark:bg-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600"
-                                title="Delete Purchase (Today Only)"
-                              >
-                                <FiTrash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <div ref={loadMoreRef} className="h-1" />
@@ -1678,7 +1975,7 @@ const Payments: React.FC = () => {
       )}
 
       {/* Payment Modal */}
-          {selectedPurchase && (
+          {false && selectedPurchase && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200 dark:border-gray-700">
