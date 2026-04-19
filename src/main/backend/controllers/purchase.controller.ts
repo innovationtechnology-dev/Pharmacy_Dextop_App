@@ -1,13 +1,15 @@
 import { ipcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { PurchaseService, Purchase } from '../services/purchase.service';
+import { PaymentService } from '../services/payment.service';
 import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
-import { web } from 'webpack';
 
 export class PurchaseController {
   private purchaseService: PurchaseService;
+  private paymentService: PaymentService;
 
   constructor() {
     this.purchaseService = new PurchaseService();
+    this.paymentService = new PaymentService();
     this.registerHandlers();
   }
 
@@ -140,6 +142,7 @@ export class PurchaseController {
         const purchaseId = args[0] as number;
         const additionalPayment = args[1] as number;
         await this.purchaseService.updatePurchasePayment(purchaseId, additionalPayment);
+        await this.paymentService.repersistSupplierRunningBalances();
         event.reply('purchase-update-payment-reply', { success: true });
       } catch (error) {
         console.error('Update purchase payment error:', error);
@@ -162,6 +165,7 @@ export class PurchaseController {
           paymentDate?: string;
         };
         await this.purchaseService.recordSupplierRefund(purchaseId, payload);
+        await this.paymentService.repersistSupplierRunningBalances();
         event.reply('purchase-record-supplier-refund-reply', { success: true });
       } catch (error) {
         console.error('Record supplier refund error:', error);
@@ -175,6 +179,7 @@ export class PurchaseController {
         const purchaseId = args[0] as number;
         const purchase = args[1] as Purchase;
         await this.purchaseService.updatePurchase(purchaseId, purchase);
+        await this.paymentService.repersistSupplierRunningBalances();
         event.reply('purchase-update-reply', { success: true });
       } catch (error) {
         console.error('Update purchase error:', error);
@@ -187,6 +192,7 @@ export class PurchaseController {
       try {
         const purchaseId = args[0] as number;
         await this.purchaseService.deletePurchase(purchaseId);
+        await this.paymentService.repersistSupplierRunningBalances();
         event.reply('purchase-delete-reply', { success: true });
       } catch (error) {
         console.error('Delete purchase error:', error);

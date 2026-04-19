@@ -126,6 +126,10 @@ export class PurchaseService {
     if (!hasInvoiceNumber) {
       await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN invoice_number TEXT`);
     }
+    const hasSupplierBalanceAfter = purchasesInfo.some((col: any) => col.name === 'supplier_balance_after');
+    if (!hasSupplierBalanceAfter) {
+      await this.dbService.execute(`ALTER TABLE purchases ADD COLUMN supplier_balance_after REAL`);
+    }
 
     await this.dbService.execute(`
       CREATE TABLE IF NOT EXISTS purchase_items (

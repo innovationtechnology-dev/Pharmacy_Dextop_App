@@ -80,6 +80,27 @@ interface PaymentSummary {
   paymentCount: number;
 }
 
+interface SupplierLedgerRow {
+  kind: 'purchase' | 'payment';
+  eventAt: string;
+  purchaseId: number;
+  paymentId?: number;
+  supplierId: number;
+  supplierName: string;
+  debit: number;
+  credit: number;
+  balanceBefore?: number;
+  balanceAfter: number;
+  grandTotal?: number;
+  paymentAmount?: number;
+  remainingBalance?: number;
+  /** Unpaid on this PO right after the event (replay order). */
+  poRemainingAfter?: number;
+  paymentMethod?: string;
+  reference?: string;
+  notes?: string;
+}
+
 interface SupplierAccount {
   supplierId: number;
   supplierName: string;
@@ -92,6 +113,15 @@ interface SupplierAccount {
   purchaseCount: number;
   lastPaymentDate?: string;
   lastPaymentAmount?: number;
+}
+
+/** One row in Add Payment: total open balance per supplier (FIFO applied on save). */
+interface SupplierPayTarget {
+  supplierId: number;
+  supplierName: string;
+  totalDue: number;
+  openPoCount: number;
+  latestPurchaseId: number;
 }
 
 
@@ -134,6 +164,18 @@ const toLocalIsoDate = (d: Date) => {
   return `${year}-${month}-${day}`;
 };
 
+/** Column template for supplier ledger — grid lines align with Selling / Purchasing panels */
+const supplierLedgerGridStyle: React.CSSProperties = {
+  gridTemplateColumns:
+    'minmax(142px, 1.2fr) 78px minmax(120px, 1.25fr) minmax(90px, 0.82fr) minmax(90px, 0.82fr) minmax(118px, 1.05fr) minmax(150px, 1.25fr) 90px',
+};
+
+const ledgerGridHeaderClass =
+  'grid w-full gap-0 items-center border-b-2 border-gray-300 dark:border-gray-500 bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 text-[10px] font-extrabold text-gray-700 dark:text-gray-300 uppercase tracking-wider [&>div]:flex [&>div]:items-center [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:sm:px-3 [&>div]:py-2.5';
+
+const ledgerGridRowClass =
+  'grid w-full gap-0 items-center border-b border-gray-200 dark:border-gray-600 last:border-b-0 text-xs transition-colors hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:sm:px-3 [&>div]:py-2 [&>div]:min-h-[2.75rem] [&>div]:flex [&>div]:items-center';
+
 const Payments: React.FC = () => {
   const { setHeader } = useDashboardHeader();
 
@@ -144,6 +186,7 @@ const Payments: React.FC = () => {
   const [paymentRecords, setPaymentRecords] = useState<PaymentRecord[]>([]);
   const [supplierAccounts, setSupplierAccounts] = useState<SupplierAccount[]>([]);
   const [paymentSummary, setPaymentSummary] = useState<PaymentSummary | null>(null);
+  const [supplierLedger, setSupplierLedger] = useState<SupplierLedgerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [purchasePage, setPurchasePage] = useState(1);
   const [totalPurchases, setTotalPurchases] = useState(0);
@@ -163,8 +206,8 @@ const Payments: React.FC = () => {
   const [purchaseFilter, setPurchaseFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
 
-  // Modal state
-  const [selectedPurchase, setSelectedPurchase] = useState<Purchase | null>(null);
+  // Modal state (supplier-level total; payment is allocated oldest PO first on the server)
+  const [paymentModalSupplier, setPaymentModalSupplier] = useState<SupplierPayTarget | null>(null);
   const [paymentAmount, setPaymentAmount] = useState<string>('');
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [referenceNumber, setReferenceNumber] = useState('');
@@ -184,11 +227,11 @@ const Payments: React.FC = () => {
   const [processing, setProcessing] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
+  /** Ledger payment row opened via eye icon (full method / ref / notes). */
+  const [viewLedgerPayment, setViewLedgerPayment] = useState<SupplierLedgerRow | null>(null);
+  const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
   const [purchasePayments, setPurchasePayments] = useState<PaymentRecord[]>([]);
   const [loadingPurchasePayments, setLoadingPurchasePayments] = useState(false);
-  const [expandedPurchaseId, setExpandedPurchaseId] = useState<number | null>(null);
-  const [expandedPayments, setExpandedPayments] = useState<Map<number, PaymentRecord[]>>(new Map());
-  const [loadingExpandedId, setLoadingExpandedId] = useState<number | null>(null);
   const [expandedAccount, setExpandedAccount] = useState<number | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportSupplierId, setExportSupplierId] = useState<number | null>(null);
@@ -204,6 +247,8 @@ const Payments: React.FC = () => {
   const [recordsPerPage, setRecordsPerPage] = useState(30);
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const LEDGER_ROWS_PER_PAGE = 20;
   
   // View mode state
   const [recordsViewMode, setRecordsViewMode] = useState<'table' | 'timeline'>('table');
@@ -224,6 +269,17 @@ const Payments: React.FC = () => {
       day: '2-digit',
       month: 'short',
       year: 'numeric'
+    });
+  }, []);
+
+  const formatDateTime = useCallback((value?: string) => {
+    if (!value) return '—';
+    return new Date(value).toLocaleString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     });
   }, []);
 
@@ -438,6 +494,35 @@ const Payments: React.FC = () => {
     });
   }, [selectedSupplierId, periodType, customFromDate, customToDate]);
 
+  const loadSupplierLedger = useCallback(async () => {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        const filters: Record<string, unknown> = {};
+        if (selectedSupplierId) filters.supplierId = selectedSupplierId;
+        if (periodType !== 'all') {
+          filters.periodType = periodType;
+          if (periodType === 'custom' && customFromDate && customToDate) {
+            filters.fromDate = customFromDate;
+            filters.toDate = customToDate;
+          }
+        }
+
+        window.electron.ipcRenderer.once('payment-get-supplier-ledger-reply' as any, (response: any) => {
+          if (response.success) {
+            setSupplierLedger(response.data || []);
+            resolve();
+          } else {
+            reject(response.error);
+          }
+        });
+        window.electron.ipcRenderer.sendMessage('payment-get-supplier-ledger' as any, [filters]);
+      } catch (err) {
+        console.error('Error loading supplier ledger:', err);
+        reject(err);
+      }
+    });
+  }, [selectedSupplierId, periodType, customFromDate, customToDate]);
+
   const loadSupplierAccounts = useCallback(async () => {
     return new Promise<void>((resolve, reject) => {
       try {
@@ -479,31 +564,6 @@ const Payments: React.FC = () => {
     });
   }, []);
 
-  const toggleExpandPurchase = useCallback(async (purchaseId: number) => {
-    if (expandedPurchaseId === purchaseId) {
-      setExpandedPurchaseId(null);
-      return;
-    }
-    setExpandedPurchaseId(purchaseId);
-    if (expandedPayments.has(purchaseId)) return; // already loaded
-    setLoadingExpandedId(purchaseId);
-    try {
-      await new Promise<void>((resolve, reject) => {
-        window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (response: any) => {
-          if (response.success) {
-            setExpandedPayments(prev => new Map(prev).set(purchaseId, response.data || []));
-            resolve();
-          } else reject(response.error);
-        });
-        window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [purchaseId]);
-      });
-    } catch (err) {
-      console.error('Error loading payments for PO:', err);
-    } finally {
-      setLoadingExpandedId(null);
-    }
-  }, [expandedPurchaseId, expandedPayments]);
-
   const loadAllData = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -513,6 +573,7 @@ const Payments: React.FC = () => {
         loadSuppliers(),
         loadPaymentRecords(),
         loadPaymentSummary(),
+        loadSupplierLedger(),
         loadSupplierAccounts(),
       ]);
     } catch (err) {
@@ -520,7 +581,7 @@ const Payments: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [loadPurchases, loadSuppliers, loadPaymentRecords, loadPaymentSummary, loadSupplierAccounts]);
+  }, [loadPurchases, loadSuppliers, loadPaymentRecords, loadPaymentSummary, loadSupplierLedger, loadSupplierAccounts]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
@@ -532,7 +593,8 @@ const Payments: React.FC = () => {
     loadPurchases();
     loadPaymentRecords();
     loadPaymentSummary();
-  }, [loadPurchases, loadPaymentRecords, loadPaymentSummary]);
+    loadSupplierLedger();
+  }, [loadPurchases, loadPaymentRecords, loadPaymentSummary, loadSupplierLedger]);
 
   // Header effect
   useEffect(() => {
@@ -571,33 +633,78 @@ const Payments: React.FC = () => {
     loadAllData();
   }, [loadAllData]);
 
-  // Filtered data
-  const filteredPurchases = useMemo(() => {
-    let filtered = purchases;
-    
-    if (selectedSupplierId !== null) {
-      filtered = filtered.filter(p => p.supplierId === selectedSupplierId);
-    }
-    
+  const ledgerPurchaseStats = useMemo(() => {
+    const purchaseRows = supplierLedger.filter(r => r.kind === 'purchase');
+    return {
+      all: purchaseRows.length,
+      pending: purchaseRows.filter(r => (r.remainingBalance ?? 0) > 0).length,
+      paid: purchaseRows.filter(r => (r.remainingBalance ?? 0) <= 0).length,
+    };
+  }, [supplierLedger]);
+
+  const filteredLedger = useMemo(() => {
+    let rows = supplierLedger;
     if (purchaseFilter === 'pending') {
-      filtered = filtered.filter(p => p.remainingBalance > 0);
+      const remainingByPurchase = new Map<number, number>();
+      supplierLedger.forEach(r => {
+        if (r.kind === 'purchase') remainingByPurchase.set(r.purchaseId, r.remainingBalance ?? 0);
+      });
+      const hasOutstanding = (purchaseId: number) => (remainingByPurchase.get(purchaseId) ?? 0) > 0;
+      rows = rows.filter(r =>
+        r.kind === 'purchase' ? (r.remainingBalance ?? 0) > 0 : hasOutstanding(r.purchaseId)
+      );
     } else if (purchaseFilter === 'paid') {
-      filtered = filtered.filter(p => p.remainingBalance <= 0);
+      const remainingByPurchase = new Map<number, number>();
+      supplierLedger.forEach(r => {
+        if (r.kind === 'purchase') remainingByPurchase.set(r.purchaseId, r.remainingBalance ?? 0);
+      });
+      rows = rows.filter(r =>
+        r.kind === 'purchase'
+          ? (r.remainingBalance ?? 0) <= 0
+          : (remainingByPurchase.get(r.purchaseId) ?? 0) <= 0
+      );
     }
-    
+
     if (searchTerm) {
       const term = searchTerm.trim().toLowerCase();
       const searchWords = term.split(/\s+/).filter(word => word.length > 0);
-      filtered = filtered.filter(p => 
-        searchWords.every(word =>
-          p.supplierName.toLowerCase().includes(word) ||
-          String(p.id).includes(word)
-        )
+      rows = rows.filter(r =>
+        searchWords.every(word => {
+          const poLabel = `po-${r.purchaseId}`;
+          return (
+            r.supplierName.toLowerCase().includes(word) ||
+            String(r.purchaseId).includes(word) ||
+            poLabel.includes(word) ||
+            (r.reference && r.reference.toLowerCase().includes(word)) ||
+            (r.notes && r.notes.toLowerCase().includes(word)) ||
+            (r.paymentMethod && r.paymentMethod.toLowerCase().includes(word))
+          );
+        })
       );
     }
-    
-    return filtered;
-  }, [purchases, purchaseFilter, selectedSupplierId, searchTerm]);
+
+    return rows;
+  }, [supplierLedger, purchaseFilter, searchTerm]);
+
+  const ledgerTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredLedger.length / LEDGER_ROWS_PER_PAGE)),
+    [filteredLedger.length],
+  );
+
+  const pagedLedgerRows = useMemo(() => {
+    const start = (ledgerPage - 1) * LEDGER_ROWS_PER_PAGE;
+    return filteredLedger.slice(start, start + LEDGER_ROWS_PER_PAGE);
+  }, [filteredLedger, ledgerPage]);
+
+  useEffect(() => {
+    setLedgerPage(1);
+  }, [selectedSupplierId, periodType, customFromDate, customToDate, purchaseFilter, searchTerm]);
+
+  useEffect(() => {
+    if (ledgerPage > ledgerTotalPages) {
+      setLedgerPage(ledgerTotalPages);
+    }
+  }, [ledgerPage, ledgerTotalPages]);
 
   const filteredPaymentRecords = useMemo(() => {
     if (!searchTerm) return paymentRecords;
@@ -651,40 +758,60 @@ const Payments: React.FC = () => {
     );
   }, [supplierAccounts, searchTerm]);
 
-  const totalStats = useMemo(() => {
-    const totalPurchases = purchases.reduce((sum, p) => sum + p.grandTotal, 0);
-    const totalPaid = purchases.reduce((sum, p) => sum + p.paymentAmount, 0);
-    const totalRemaining = purchases.reduce((sum, p) => sum + p.remainingBalance, 0);
-    const pendingCount = purchases.filter(p => p.remainingBalance > 0).length;
-    const paidCount = purchases.filter(p => p.remainingBalance <= 0).length;
-    return { totalPurchases, totalPaid, totalRemaining, pendingCount, paidCount };
+  /** One option per supplier: sum of remaining on all open POs (dropdown shows total due). */
+  const payableSuppliersForModal = useMemo(() => {
+    type Acc = SupplierPayTarget & { latestTs: number };
+    const map = new Map<number, Acc>();
+    for (const p of purchases) {
+      if (!p.id || p.remainingBalance <= 0) continue;
+      const ts = new Date(p.createdAt || 0).getTime();
+      const cur = map.get(p.supplierId);
+      if (!cur) {
+        map.set(p.supplierId, {
+          supplierId: p.supplierId,
+          supplierName: p.supplierName,
+          totalDue: p.remainingBalance,
+          openPoCount: 1,
+          latestPurchaseId: p.id,
+          latestTs: ts,
+        });
+      } else {
+        cur.totalDue += p.remainingBalance;
+        cur.openPoCount += 1;
+        if (ts >= cur.latestTs) {
+          cur.latestTs = ts;
+          cur.latestPurchaseId = p.id;
+        }
+      }
+    }
+    return [...map.values()]
+      .sort((a, b) => b.latestTs - a.latestTs)
+      .map(({ latestTs: _t, ...row }) => row);
   }, [purchases]);
 
-  // Handlers
-  const handleMakePayment = (purchase: Purchase) => {
-    setSelectedPurchase(purchase);
-    setPaymentAmount('');
-    setPaymentMethod('cash');
-    setReferenceNumber('');
-    setCheckNumber('');
-    setBankName('');
-    setAccountNumber('');
-    setSenderNumber('');
-    setPaymentNotes('');
-    setPaymentDate(toLocalIsoDate(new Date()));
-    // Auto-expand the row so user can see payments as they're added
-    if (expandedPurchaseId !== purchase.id) {
-      toggleExpandPurchase(purchase.id);
-    }
-  };
+  const purchaseFromLedgerRow = useCallback((row: SupplierLedgerRow): Purchase => ({
+    id: row.purchaseId,
+    supplierId: row.supplierId,
+    supplierName: row.supplierName,
+    grandTotal: row.grandTotal ?? 0,
+    paymentAmount: row.paymentAmount ?? 0,
+    remainingBalance: row.remainingBalance ?? 0,
+    createdAt: row.eventAt,
+  }), []);
 
+  // Handlers
   const handleViewPaymentHistory = (purchase: Purchase) => {
     setViewPaymentHistory(purchase);
     loadPurchasePayments(purchase.id);
   };
 
+  const handleViewLedgerPaymentDetail = (row: SupplierLedgerRow) => {
+    if (row.kind !== 'payment' || row.paymentId == null) return;
+    setViewLedgerPayment(row);
+  };
+
   const resetPaymentForm = () => {
-    setSelectedPurchase(null);
+    setPaymentModalSupplier(null);
     setPaymentAmount('');
     setPaymentMethod('cash');
     setReferenceNumber('');
@@ -697,26 +824,25 @@ const Payments: React.FC = () => {
   };
 
   const handleSubmitPayment = async () => {
-    if (!selectedPurchase) return;
+    if (!paymentModalSupplier) return;
     const amount = parseFloat(paymentAmount);
     if (isNaN(amount) || amount <= 0) {
       alert('Please enter a valid payment amount');
       return;
     }
-    if (amount > selectedPurchase.remainingBalance) {
-      alert(`Payment amount cannot exceed remaining balance of ${formatCurrency(selectedPurchase.remainingBalance)}`);
+    if (amount > paymentModalSupplier.totalDue + 0.0001) {
+      alert(`Payment amount cannot exceed total open balance of ${formatCurrency(paymentModalSupplier.totalDue)}`);
       return;
     }
 
     setProcessing(true);
     try {
-      // Get supplier info
-      const supplier = suppliers.find(s => s.id === selectedPurchase.supplierId);
-      
+      const supplier = suppliers.find(s => s.id === paymentModalSupplier.supplierId);
+
       const paymentData = {
-        purchaseId: selectedPurchase.id,
-        supplierId: selectedPurchase.supplierId,
-        supplierName: selectedPurchase.supplierName,
+        allocateAcrossOpenPos: true,
+        supplierId: paymentModalSupplier.supplierId,
+        supplierName: paymentModalSupplier.supplierName,
         companyName: supplier?.companyName || '',
         amount,
         paymentMethod,
@@ -728,22 +854,12 @@ const Payments: React.FC = () => {
         paymentDate,
       };
 
-      const poId = selectedPurchase.id;
       window.electron.ipcRenderer.once('payment-create-reply' as any, async (response: any) => {
         setProcessing(false);
         if (response.success) {
           resetPaymentForm();
-          // Reload all data first so purchase totals update
+          setShowAddPaymentModal(false);
           await loadAllData();
-          // Clear cached payments for this PO and reload them fresh, then auto-expand
-          setExpandedPayments(prev => { const m = new Map(prev); m.delete(poId); return m; });
-          setExpandedPurchaseId(poId);
-          setLoadingExpandedId(poId);
-          window.electron.ipcRenderer.once('payment-get-by-purchase-reply' as any, (r: any) => {
-            if (r.success) setExpandedPayments(prev => new Map(prev).set(poId, r.data || []));
-            setLoadingExpandedId(null);
-          });
-          window.electron.ipcRenderer.sendMessage('payment-get-by-purchase' as any, [poId]);
         } else {
           alert('Error recording payment: ' + (response.error || 'Unknown error'));
         }
@@ -1161,388 +1277,602 @@ const Payments: React.FC = () => {
       {activeTab === 'payments' && (
         <div className="overflow-y-auto space-y-3">
 
-          {/* ── Add Payment Panel ── */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-            {/* Panel header */}
-            <div className="flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-emerald-50 to-teal-50/40 dark:from-emerald-950/30 dark:to-teal-950/10 border-b border-emerald-100 dark:border-emerald-900/40">
-              <div className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center shrink-0">
-                <FiPlus className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-gray-800 dark:text-gray-100">Add Payment</h3>
-                <p className="text-[10px] text-gray-500 dark:text-gray-400">Select a purchase order and enter payment details</p>
-              </div>
+          {/* Ledger toolbar: filters + Add Payment */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="inline-flex rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/90 dark:bg-gray-800/80 p-1 shadow-sm">
+              <button
+                type="button"
+                onClick={() => setPurchaseFilter('all')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  purchaseFilter === 'all'
+                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm ring-1 ring-gray-200/80 dark:ring-gray-600'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                All <span className="tabular-nums opacity-80">{ledgerPurchaseStats.all}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPurchaseFilter('pending')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  purchaseFilter === 'pending'
+                    ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-100 shadow-sm ring-1 ring-amber-200/80 dark:ring-amber-800/60'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-amber-800 dark:hover:text-amber-200'
+                }`}
+              >
+                Pending <span className="tabular-nums opacity-80">{ledgerPurchaseStats.pending}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPurchaseFilter('paid')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  purchaseFilter === 'paid'
+                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100 shadow-sm ring-1 ring-emerald-200/80 dark:ring-emerald-800/50'
+                    : 'text-gray-600 dark:text-gray-400 hover:text-emerald-800 dark:hover:text-emerald-200'
+                }`}
+              >
+                Paid <span className="tabular-nums opacity-80">{ledgerPurchaseStats.paid}</span>
+              </button>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                resetPaymentForm();
+                setShowAddPaymentModal(true);
+              }}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+            >
+              <FiPlus className="h-4 w-4" />
+              Add Payment
+            </button>
+          </div>
 
-            <div className="p-5 space-y-4">
-              {/* Row 1: PO selector + Date */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Supplier / Purchase Order</label>
-                  <select
-                    value={selectedPurchase?.id ?? ''}
-                    onChange={(e) => {
-                      const po = purchases.find(p => p.id === Number(e.target.value)) || null;
-                      if (po) handleMakePayment(po); else setSelectedPurchase(null);
-                    }}
-                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none"
-                  >
-                    <option value="">— Select a purchase order —</option>
-                    {purchases.filter(p => p.remainingBalance > 0).map(p => (
-                      <option key={p.id} value={p.id}>
-                        PO-{p.id} · {p.supplierName} · Remaining: {formatCurrency(p.remainingBalance)}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Payment Date</label>
-                  <input type="date" value={paymentDate} max={today} onChange={(e) => setPaymentDate(e.target.value)}
-                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none" />
+          <div className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/60 dark:bg-gray-800/40 px-3 py-2 text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
+            <span className="font-semibold text-gray-700 dark:text-gray-300">Newest first.</span>{' '}
+            Balance = running payable after the row (see “Was” line for balance before the row). Debit / credit = this row only.
+          </div>
+
+          {/* Supplier ledger — grid lines (Selling / Purchasing style) */}
+          <div className="rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+            {loading ? (
+              <div className="flex items-center justify-center py-14">
+                <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
+                  <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm font-medium">Loading ledger...</span>
                 </div>
               </div>
-
-              {/* PO balance summary */}
-              {selectedPurchase && (
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { label: 'Grand Total', value: selectedPurchase.grandTotal, color: 'text-gray-800 dark:text-white', bg: 'bg-gray-50 dark:bg-gray-700/50' },
-                    { label: 'Already Paid', value: selectedPurchase.paymentAmount, color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50/60 dark:bg-emerald-950/20' },
-                    { label: 'Remaining', value: selectedPurchase.remainingBalance, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50/60 dark:bg-orange-950/20' },
-                  ].map(s => (
-                    <div key={s.label} className={`rounded-lg px-4 py-3 border ${s.bg} ${s.label === 'Remaining' ? 'border-orange-200 dark:border-orange-800' : s.label === 'Already Paid' ? 'border-emerald-200 dark:border-emerald-800' : 'border-gray-200 dark:border-gray-600'}`}>
-                      <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1">{s.label}</p>
-                      <p className={`text-base font-extrabold tabular-nums ${s.color}`}>{formatCurrency(s.value)}</p>
-                    </div>
-                  ))}
+            ) : filteredLedger.length === 0 ? (
+              <div className="p-12 text-center">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-800 mb-4">
+                  <FiCreditCard className="w-8 h-8 text-gray-400 dark:text-gray-500" />
                 </div>
-              )}
+                <p className="text-base font-semibold text-gray-700 dark:text-gray-300">No ledger rows match</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 max-w-md mx-auto">
+                  {purchaseFilter === 'pending' ? 'No outstanding purchases in this view.' : purchaseFilter === 'paid' ? 'No fully settled activity in this view.' : 'Try another date range or supplier.'}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-hidden">
+                <div className="w-full">
+                  <div className={ledgerGridHeaderClass} style={supplierLedgerGridStyle}>
+                    <div>{'Date & time'}</div>
+                    <div className="justify-center text-center">Type</div>
+                    <div className="min-w-0 justify-center text-center">Supplier</div>
+                    <div className="justify-end text-right">Debit</div>
+                    <div className="justify-end text-right">Credit</div>
+                    <div className="justify-center text-center">Balance</div>
+                    <div className="min-w-0 justify-center text-center">Notes</div>
+                    <div className="justify-center">Act.</div>
+                  </div>
+                  <div className="max-h-[58vh] overflow-y-auto">
+                  {pagedLedgerRows.map((row) => {
+                    const key = row.kind === 'payment' && row.paymentId != null
+                      ? `pay-${row.paymentId}`
+                      : `pur-${row.purchaseId}-${row.eventAt}`;
+                    const isPurchase = row.kind === 'purchase';
+                    const purchase = isPurchase ? purchaseFromLedgerRow(row) : null;
+                    const mc = row.paymentMethod ? getPaymentMethodColor(row.paymentMethod) : null;
 
-              {/* Row 2: Amount + Method */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Amount</label>
-                  <input type="number" min="0" max={selectedPurchase?.remainingBalance} step="0.01"
-                    value={paymentAmount}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (selectedPurchase && parseFloat(val) > selectedPurchase.remainingBalance) {
-                        setPaymentAmount(selectedPurchase.remainingBalance.toString());
-                      } else {
-                        setPaymentAmount(val);
-                      }
-                    }}
-                    placeholder="0.00" disabled={!selectedPurchase}
-                    className={`w-full px-3 py-2.5 border rounded-lg text-sm font-semibold bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 outline-none disabled:opacity-40 ${
-                      selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance
-                        ? 'border-red-400 focus:ring-red-400'
-                        : 'border-gray-300 dark:border-gray-600 focus:ring-emerald-500'
-                    }`} />
-                  {selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance && (
-                    <p className="text-[10px] text-red-500 mt-1 font-medium">
-                      Amount cannot exceed remaining balance of {formatCurrency(selectedPurchase.remainingBalance)}
-                    </p>
-                  )}
-                  {selectedPurchase && !(parseFloat(paymentAmount) > selectedPurchase.remainingBalance) && (
-                    <button type="button" onClick={() => setPaymentAmount(selectedPurchase.remainingBalance.toString())}
-                      className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline mt-1 font-medium">
-                      Pay full balance — {formatCurrency(selectedPurchase.remainingBalance)}
-                    </button>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Payment Method</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(['cash', 'bank_transfer', 'check', 'online'] as PaymentMethod[]).map((m) => {
-                      const c = getPaymentMethodColor(m);
-                      const active = paymentMethod === m;
-                      return (
-                        <button key={m} onClick={() => setPaymentMethod(m)}
-                          className={`px-3 py-2 rounded-lg border text-xs font-semibold transition-all ${active ? `${c.bg} ${c.text} ${c.border} shadow-sm` : 'border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-500 bg-gray-50 dark:bg-gray-700/40'}`}>
-                          {getPaymentMethodLabel(m)}
+                    return (
+                      <div key={key} className={ledgerGridRowClass} style={supplierLedgerGridStyle}>
+                        <div className="min-w-0 text-[11px] text-gray-600 dark:text-gray-400 font-medium tabular-nums whitespace-nowrap">
+                          {formatDateTime(row.eventAt)}
+                        </div>
+                        <div className="min-w-0 flex justify-center">
+                          {isPurchase ? (
+                            <span
+                              className="inline-flex items-center rounded-md border-2 border-red-200 bg-gradient-to-br from-red-50 to-orange-50/80 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-red-700 shadow-sm ring-1 ring-red-100 dark:border-red-800/70 dark:from-red-950/40 dark:to-red-950/20 dark:text-red-300 dark:ring-red-900/40"
+                              title="Purchase (adds to supplier balance)"
+                            >
+                              Purchase
+                            </span>
+                          ) : (
+                            <span
+                              className="inline-flex items-center rounded-md border-2 border-green-300 bg-gradient-to-br from-green-50 to-emerald-50/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-green-700 shadow-sm ring-1 ring-green-100 dark:border-green-700 dark:from-green-950/45 dark:to-emerald-950/30 dark:text-green-300 dark:ring-green-900/35"
+                              title="Payment (reduces supplier balance)"
+                            >
+                              Payment
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 justify-center text-center font-medium text-gray-900 dark:text-gray-100 truncate text-[11px]" title={row.supplierName}>
+                          {row.supplierName}
+                        </div>
+                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
+                          {row.debit > 0 ? (
+                            <span className="text-red-600 dark:text-red-400">{formatCurrency(row.debit)}</span>
+                          ) : (
+                            <span className="text-gray-400 dark:text-gray-500">—</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
+                          {row.credit > 0 ? (
+                            <span className="text-green-600 dark:text-green-400">{formatCurrency(row.credit)}</span>
+                          ) : (
+                            <span className="text-gray-400 dark:text-gray-500">—</span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex flex-col items-end justify-center gap-0 leading-tight">
+                          <span className={`font-semibold tabular-nums text-[11px] ${row.balanceAfter <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+                            {formatCurrency(row.balanceAfter)}
+                          </span>
+                          {typeof row.balanceBefore === 'number' && (
+                            <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
+                              Was {formatCurrency(row.balanceBefore)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="min-w-0 flex flex-col items-start justify-center gap-0.5 py-0.5">
+                          {isPurchase ? (
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">PO-{row.purchaseId}</span>
+                          ) : (
+                            <>
+                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">PO-{row.purchaseId}</span>
+                              {mc ? (
+                                <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
+                                  {getPaymentMethodLabel(row.paymentMethod || '')}
+                                </span>
+                              ) : null}
+                              {row.reference ? (
+                                <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-full" title={row.reference}>
+                                  {row.reference}
+                                </span>
+                              ) : null}
+                            </>
+                          )}
+                          {(row.notes || '').trim() ? (
+                            <span className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-2 leading-snug" title={row.notes}>
+                              {row.notes}
+                            </span>
+                          ) : null}
+                        </div>
+                        <div className="justify-center gap-0.5">
+                          <div className="flex items-center justify-center gap-0.5 flex-wrap">
+                            {isPurchase && purchase && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewPaymentHistory(purchase)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                                  title="History"
+                                >
+                                  <FiEye className="w-3.5 h-3.5" />
+                                </button>
+                                {isToday(row.eventAt) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteConfirm(row.purchaseId)}
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                    title="Delete PO (today)"
+                                  >
+                                    <FiTrash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {!isPurchase && row.paymentId != null && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleViewLedgerPaymentDetail(row)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                                  title="View payment details"
+                                >
+                                  <FiEye className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePaymentRecord(row.paymentId!)}
+                                  disabled={processing}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-red-400 hover:border-red-200 hover:bg-red-50/80 dark:hover:bg-red-950/25 disabled:opacity-40"
+                                  title="Delete payment"
+                                >
+                                  <FiTrash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
+                  {filteredLedger.length > 0 && (
+                    <div className="border-t border-gray-200 dark:border-gray-600 px-3 py-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                      <span>
+                        Showing {((ledgerPage - 1) * LEDGER_ROWS_PER_PAGE) + 1} to{' '}
+                        {Math.min(ledgerPage * LEDGER_ROWS_PER_PAGE, filteredLedger.length)} of {filteredLedger.length}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setLedgerPage(1)}
+                          disabled={ledgerPage <= 1}
+                          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40"
+                        >
+                          {'<<'}
                         </button>
-                      );
-                    })}
-                  </div>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerPage(p => Math.max(1, p - 1))}
+                          disabled={ledgerPage <= 1}
+                          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40"
+                        >
+                          {'<'}
+                        </button>
+                        <span className="px-2 font-semibold">
+                          {ledgerPage} / {ledgerTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerPage(p => Math.min(ledgerTotalPages, p + 1))}
+                          disabled={ledgerPage >= ledgerTotalPages}
+                          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40"
+                        >
+                          {'>'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setLedgerPage(ledgerTotalPages)}
+                          disabled={ledgerPage >= ledgerTotalPages}
+                          className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 disabled:opacity-40"
+                        >
+                          {'>>'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
+            )}
+          </div>
 
-              {/* Row 3: Bank/Online extra fields (conditional) */}
-              {(paymentMethod === 'bank_transfer' || paymentMethod === 'online') && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 rounded-lg bg-blue-50/60 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/40">
-                  <div>
-                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
-                      {paymentMethod === 'online' ? 'Account / Wallet Name' : 'Bank Account Name'}
-                    </label>
-                    <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)}
-                      placeholder={paymentMethod === 'online' ? 'e.g. JazzCash / Easypaisa name' : 'e.g. HBL Current Account'}
-                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+          {showAddPaymentModal && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+              role="presentation"
+              onClick={() => {
+                resetPaymentForm();
+                setShowAddPaymentModal(false);
+              }}
+            >
+              <div
+                className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl dark:bg-gray-800"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="add-payment-modal-title"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+                  <div className="min-w-0">
+                    <h3 id="add-payment-modal-title" className="text-lg font-bold text-gray-900 dark:text-white">
+                      Add Payment
+                    </h3>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Pick a supplier (total open balance). Amount applies to oldest unpaid POs first. The ledger refreshes after you save.
+                    </p>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
-                      {paymentMethod === 'online' ? 'Account / Wallet Number' : 'Account Number / IBAN'}
-                    </label>
-                    <input type="text" value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)}
-                      placeholder={paymentMethod === 'online' ? 'e.g. 03001234567' : 'e.g. PK36HABB0000...'}
-                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetPaymentForm();
+                      setShowAddPaymentModal(false);
+                    }}
+                    className="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    aria-label="Close"
+                  >
+                    <FiX className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="space-y-4 p-5">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        Supplier (total due)
+                      </label>
+                      <select
+                        value={paymentModalSupplier?.supplierId ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (!v) {
+                            setPaymentModalSupplier(null);
+                            setPaymentAmount('');
+                            return;
+                          }
+                          const id = Number(v);
+                          const opt = payableSuppliersForModal.find(s => s.supplierId === id);
+                          if (opt) {
+                            setPaymentModalSupplier(opt);
+                            setPaymentAmount('');
+                          }
+                        }}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      >
+                        <option value="">— Select supplier —</option>
+                        {payableSuppliersForModal.map(s => (
+                          <option key={s.supplierId} value={s.supplierId}>
+                            {s.supplierName} · Total due {formatCurrency(s.totalDue)}
+                            {s.openPoCount > 1 ? ` · ${s.openPoCount} open POs` : ''}
+                            {` · Latest PO-${s.latestPurchaseId}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        Payment date
+                      </label>
+                      <input
+                        type="date"
+                        value={paymentDate}
+                        max={today}
+                        onChange={(e) => setPaymentDate(e.target.value)}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      />
+                    </div>
                   </div>
+
+                  {paymentModalSupplier && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {
+                          label: 'Total due',
+                          value: paymentModalSupplier.totalDue,
+                          color: 'text-orange-600 dark:text-orange-400',
+                          bg: 'bg-orange-50/60 dark:bg-orange-950/20',
+                          border: 'border-orange-200 dark:border-orange-800',
+                        },
+                        {
+                          label: 'Open POs',
+                          value: paymentModalSupplier.openPoCount,
+                          color: 'text-gray-800 dark:text-white',
+                          bg: 'bg-gray-50 dark:bg-gray-700/50',
+                          border: 'border-gray-200 dark:border-gray-600',
+                          format: 'int' as const,
+                        },
+                        {
+                          label: 'Latest PO',
+                          value: paymentModalSupplier.latestPurchaseId,
+                          color: 'text-gray-800 dark:text-white',
+                          bg: 'bg-gray-50 dark:bg-gray-700/50',
+                          border: 'border-gray-200 dark:border-gray-600',
+                          format: 'po' as const,
+                        },
+                      ].map(s => (
+                        <div
+                          key={s.label}
+                          className={`rounded-lg border px-3 py-2 ${s.bg} ${s.border}`}
+                        >
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{s.label}</p>
+                          <p className={`text-sm font-extrabold tabular-nums ${s.color}`}>
+                            {s.format === 'int'
+                              ? String(s.value)
+                              : s.format === 'po'
+                                ? `PO-${s.value}`
+                                : formatCurrency(s.value as number)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        Amount
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        max={paymentModalSupplier?.totalDue}
+                        step="0.01"
+                        value={paymentAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (paymentModalSupplier && parseFloat(val) > paymentModalSupplier.totalDue + 0.0001) {
+                            setPaymentAmount(paymentModalSupplier.totalDue.toString());
+                          } else {
+                            setPaymentAmount(val);
+                          }
+                        }}
+                        placeholder="0.00"
+                        disabled={!paymentModalSupplier}
+                        className={`w-full rounded-lg border bg-white px-3 py-2.5 text-sm font-semibold text-gray-800 focus:outline-none focus:ring-2 disabled:opacity-40 dark:bg-gray-700 dark:text-gray-100 ${
+                          paymentModalSupplier && parseFloat(paymentAmount) > paymentModalSupplier.totalDue + 0.0001
+                            ? 'border-red-400 focus:ring-red-400'
+                            : 'border-gray-300 focus:ring-emerald-500 dark:border-gray-600'
+                        }`}
+                      />
+                      {paymentModalSupplier && parseFloat(paymentAmount) > paymentModalSupplier.totalDue + 0.0001 && (
+                        <p className="mt-1 text-[10px] font-medium text-red-500">
+                          Cannot exceed {formatCurrency(paymentModalSupplier.totalDue)}
+                        </p>
+                      )}
+                      {paymentModalSupplier &&
+                        !(parseFloat(paymentAmount) > paymentModalSupplier.totalDue + 0.0001) && (
+                        <button
+                          type="button"
+                          onClick={() => setPaymentAmount(paymentModalSupplier.totalDue.toString())}
+                          className="mt-1 text-[10px] font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+                        >
+                          Pay full open balance — {formatCurrency(paymentModalSupplier.totalDue)}
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        Payment method
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(['cash', 'bank_transfer', 'check', 'online'] as PaymentMethod[]).map(m => {
+                          const c = getPaymentMethodColor(m);
+                          const active = paymentMethod === m;
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => setPaymentMethod(m)}
+                              className={`rounded-lg border px-2 py-2 text-xs font-semibold transition-all ${active ? `${c.bg} ${c.text} ${c.border} shadow-sm` : 'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300 dark:border-gray-600 dark:bg-gray-700/40 dark:text-gray-400 dark:hover:border-gray-500'}`}
+                            >
+                              {getPaymentMethodLabel(m)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {(paymentMethod === 'bank_transfer' || paymentMethod === 'online') && (
+                    <div className="grid grid-cols-1 gap-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20 md:grid-cols-3">
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
+                          {paymentMethod === 'online' ? 'Account / wallet name' : 'Bank account name'}
+                        </label>
+                        <input
+                          type="text"
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          placeholder={paymentMethod === 'online' ? 'e.g. JazzCash' : 'e.g. HBL Current'}
+                          className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-800 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
+                          {paymentMethod === 'online' ? 'Account / wallet number' : 'Account / IBAN'}
+                        </label>
+                        <input
+                          type="text"
+                          value={accountNumber}
+                          onChange={(e) => setAccountNumber(e.target.value)}
+                          placeholder={paymentMethod === 'online' ? 'e.g. 03001234567' : 'e.g. PK36...'}
+                          className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-800 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
+                          {paymentMethod === 'online' ? 'Sender / TxID' : 'Transaction ref'}
+                        </label>
+                        <input
+                          type="text"
+                          value={senderNumber}
+                          onChange={(e) => setSenderNumber(e.target.value)}
+                          placeholder="e.g. TXN-..."
+                          className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-800 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {paymentMethod === 'check' && (
+                    <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/20 md:grid-cols-2">
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">Cheque number</label>
+                        <input
+                          type="text"
+                          value={checkNumber}
+                          onChange={(e) => setCheckNumber(e.target.value)}
+                          placeholder="e.g. 001234"
+                          className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-800 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">Bank name</label>
+                        <input
+                          type="text"
+                          value={bankName}
+                          onChange={(e) => setBankName(e.target.value)}
+                          placeholder="e.g. MCB, HBL"
+                          className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-800 dark:bg-gray-700 dark:text-gray-100"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div>
-                    <label className="block text-[11px] font-bold text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1.5">
-                      {paymentMethod === 'online' ? 'Sender Number / TxID' : 'Transaction Reference'}
+                    <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                      Notes (optional)
                     </label>
-                    <input type="text" value={senderNumber} onChange={(e) => setSenderNumber(e.target.value)}
-                      placeholder={paymentMethod === 'online' ? 'e.g. 03009876543' : 'e.g. TXN-20260418'}
-                      className="w-full px-3 py-2 border border-blue-200 dark:border-blue-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 outline-none" />
+                    <input
+                      type="text"
+                      value={paymentNotes}
+                      onChange={(e) => setPaymentNotes(e.target.value)}
+                      placeholder="Any additional notes..."
+                      disabled={!paymentModalSupplier}
+                      className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-40 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                    />
                   </div>
                 </div>
-              )}
 
-              {/* Cheque extra fields */}
-              {paymentMethod === 'check' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-lg bg-amber-50/60 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40">
-                  <div>
-                    <label className="block text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1.5">Cheque Number</label>
-                    <input type="text" value={checkNumber} onChange={(e) => setCheckNumber(e.target.value)}
-                      placeholder="e.g. 001234"
-                      className="w-full px-3 py-2 border border-amber-200 dark:border-amber-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1.5">Bank Name</label>
-                    <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)}
-                      placeholder="e.g. MCB, HBL..."
-                      className="w-full px-3 py-2 border border-amber-200 dark:border-amber-800 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-amber-500 outline-none" />
-                  </div>
-                </div>
-              )}
-
-              {/* Notes + Actions */}
-              <div className="flex items-end gap-3">
-                <div className="flex-1">
-                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest mb-1.5">Notes (Optional)</label>
-                  <input type="text" value={paymentNotes} onChange={(e) => setPaymentNotes(e.target.value)}
-                    placeholder="Any additional notes..."
-                    disabled={!selectedPurchase}
-                    className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-emerald-500 outline-none disabled:opacity-40" />
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  {selectedPurchase && (
-                    <button onClick={resetPaymentForm}
-                      className="px-4 py-2.5 text-sm border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium">
-                      Clear
+                <div className="flex flex-wrap items-center justify-end gap-2 border-t border-gray-200 px-5 py-4 dark:border-gray-700">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      resetPaymentForm();
+                      setShowAddPaymentModal(false);
+                    }}
+                    className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                  >
+                    Cancel
+                  </button>
+                  {paymentModalSupplier && (
+                    <button
+                      type="button"
+                      onClick={() => resetPaymentForm()}
+                      className="rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      Clear form
                     </button>
                   )}
-                  <button onClick={handleSubmitPayment}
-                    disabled={processing || !selectedPurchase || !paymentAmount || parseFloat(paymentAmount) <= 0 || (!!selectedPurchase && parseFloat(paymentAmount) > selectedPurchase.remainingBalance)}
-                    className="px-6 py-2.5 bg-emerald-600 text-white text-sm font-bold rounded-lg hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 shadow-sm">
-                    {processing
-                      ? <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Processing...</>
-                      : <><FiCheck className="w-4 h-4" /> Record Payment</>}
+                  <button
+                    type="button"
+                    onClick={handleSubmitPayment}
+                    disabled={
+                      processing ||
+                      !paymentModalSupplier ||
+                      !paymentAmount ||
+                      parseFloat(paymentAmount) <= 0 ||
+                      (!!paymentModalSupplier &&
+                        parseFloat(paymentAmount) > paymentModalSupplier.totalDue + 0.0001)
+                    }
+                    className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {processing ? (
+                      <>
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                        Processing...
+                      </>
+                    ) : (
+                      <>
+                        <FiCheck className="h-4 w-4" />
+                        Record payment
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
             </div>
-          </div>
-
-          {/* Status Filter Tabs */}
-          <div className="flex gap-2 m-2">
-            <button
-              onClick={() => setPurchaseFilter('all')}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                purchaseFilter === 'all'
-                  ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              All {purchases.length}
-            </button>
-            <button
-              onClick={() => setPurchaseFilter('pending')}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                purchaseFilter === 'pending'
-                  ? 'bg-orange-600 text-white'
-                  : 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 hover:bg-orange-200 dark:hover:bg-orange-900/50'
-              }`}
-            >
-              Pending {totalStats.pendingCount}
-            </button>
-            <button
-              onClick={() => setPurchaseFilter('paid')}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                purchaseFilter === 'paid'
-                  ? 'bg-green-600 text-white'
-                  : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-900/50'
-              }`}
-            >
-              Fully Paid {totalStats.paidCount}
-            </button>
-          </div>
-
-          {/* Purchases Table */}
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
-                  <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                  <span className="text-sm font-medium">Loading purchases...</span>
-                </div>
-              </div>
-            ) : filteredPurchases.length === 0 ? (
-              <div className="p-12 text-center">
-                <FiCreditCard className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-                <p className="text-gray-500 dark:text-gray-400 font-medium">No purchases found</p>
-                <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                  {purchaseFilter === 'pending' ? 'All purchases are fully paid' : purchaseFilter === 'paid' ? 'No fully paid purchases yet' : 'No purchases recorded yet'}
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                    <tr>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">PO #</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Supplier</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Grand Total</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Paid</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Remaining</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Status</th>
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Date</th>
-                      <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                    {filteredPurchases.map((p) => {
-                      const isExpanded = expandedPurchaseId === p.id;
-                      const payments = expandedPayments.get(p.id) || [];
-                      const isLoadingThis = loadingExpandedId === p.id;
-                      // Compute running balance oldest-first, display newest-first
-                      const paymentsAsc = [...payments].reverse();
-                      let rb = p.grandTotal;
-                      const balanceAfterMap = new Map<number, number>();
-                      paymentsAsc.forEach((pay) => {
-                        rb -= pay.amount;
-                        balanceAfterMap.set(pay.id, rb);
-                      });
-                      const paymentsDesc = [...paymentsAsc].reverse();
-
-                      return (
-                        <React.Fragment key={p.id}>
-                          {/* Purchase row */}
-                          <tr
-                            className={`transition-colors cursor-pointer select-none ${isExpanded ? 'bg-blue-50/60 dark:bg-blue-900/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'}`}
-                            onClick={() => toggleExpandPurchase(p.id)}
-                          >
-                            <td className="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-white">
-                              <span className="flex items-center gap-1.5">
-                                {isExpanded ? <FiChevronUp className="w-3.5 h-3.5 text-blue-500" /> : <FiChevronDown className="w-3.5 h-3.5 text-gray-400" />}
-                                PO-{p.id}
-                              </span>
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{p.supplierName}</td>
-                            <td className="px-4 py-3 text-sm text-right font-medium text-gray-900 dark:text-white">{formatCurrency(p.grandTotal)}</td>
-                            <td className="px-4 py-3 text-sm text-right font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(p.paymentAmount)}</td>
-                            <td className="px-4 py-3 text-sm text-right font-medium text-orange-600 dark:text-orange-400">{formatCurrency(p.remainingBalance)}</td>
-                            <td className="px-4 py-3 text-center">
-                              {p.remainingBalance <= 0 ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-                                  <FiCheck className="w-3 h-3" /> Paid
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300">
-                                  <FiAlertCircle className="w-3 h-3" /> Pending
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{formatDate(p.createdAt)}</td>
-                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={() => handleViewPaymentHistory(p)}
-                                  className="inline-flex items-center justify-center w-8 h-8 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
-                                  title="View Payment History"
-                                >
-                                  <FiEye className="w-4 h-4" />
-                                </button>
-                                {isToday(p.createdAt) && (
-                                  <button
-                                    onClick={() => setDeleteConfirm(p.id)}
-                                    className="inline-flex items-center justify-center w-8 h-8 text-white bg-red-600 dark:bg-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600"
-                                    title="Delete Purchase (Today Only)"
-                                  >
-                                    <FiTrash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-
-                          {/* Expanded payment sub-rows */}
-                          {isExpanded && (
-                            <tr>
-                              <td colSpan={8} className="p-0 bg-blue-50/40 dark:bg-blue-900/10 border-b border-blue-200/50 dark:border-blue-800/30">
-                                {isLoadingThis ? (
-                                  <div className="flex items-center gap-2 px-8 py-3 text-xs text-gray-500 dark:text-gray-400">
-                                    <FiRefreshCw className="w-3.5 h-3.5 animate-spin" /> Loading payments...
-                                  </div>
-                                ) : paymentsAsc.length === 0 ? (
-                                  <div className="px-8 py-3 text-xs text-gray-400 dark:text-gray-500 italic">No payments recorded yet for this purchase.</div>
-                                ) : (
-                                  <table className="w-full">
-                                    <thead>
-                                      <tr className="border-b border-blue-200/60 dark:border-blue-800/40">
-                                        <th className="pl-12 pr-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">#</th>
-                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Date</th>
-                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Method</th>
-                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Reference</th>
-                                        <th className="px-4 py-2 text-right text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Amount Paid</th>
-                                        <th className="px-4 py-2 text-right text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Balance After</th>
-                                        <th className="px-4 py-2 text-left text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400">Notes</th>
-                                      </tr>
-                                    </thead>
-                                    <tbody>
-                                      {paymentsDesc.map((pay, idx) => {
-                                        const balAfter = balanceAfterMap.get(pay.id) ?? 0;
-                                        const mc = getPaymentMethodColor(pay.paymentMethod);
-                                        return (
-                                          <tr key={pay.id} className="border-b border-blue-100/50 dark:border-blue-900/30 last:border-0 hover:bg-blue-100/30 dark:hover:bg-blue-900/20 transition-colors">
-                                            <td className="pl-12 pr-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400">{paymentsDesc.length - idx}</td>
-                                            <td className="px-4 py-2 text-xs text-gray-700 dark:text-gray-300 whitespace-nowrap">{formatDate(pay.paymentDate)}</td>
-                                            <td className="px-4 py-2">
-                                              <span className={`inline-flex px-2 py-0.5 rounded text-[10px] font-bold border ${mc.bg} ${mc.text} ${mc.border}`}>
-                                                {getPaymentMethodLabel(pay.paymentMethod)}
-                                              </span>
-                                            </td>
-                                            <td className="px-4 py-2 text-xs text-gray-500 dark:text-gray-400">{pay.referenceNumber || pay.checkNumber || '—'}</td>
-                                            <td className="px-4 py-2 text-xs font-bold text-right text-emerald-600 dark:text-emerald-400">{formatCurrency(pay.amount)}</td>
-                                            <td className={`px-4 py-2 text-xs font-bold text-right ${balAfter <= 0 ? 'text-green-600 dark:text-green-400' : 'text-orange-600 dark:text-orange-400'}`}>
-                                              {formatCurrency(Math.max(0, balAfter))}
-                                            </td>
-                                            <td className="px-4 py-2 text-xs text-gray-400 dark:text-gray-500 max-w-[160px] truncate">{pay.notes || '—'}</td>
-                                          </tr>
-                                        );
-                                      })}
-                                    </tbody>
-                                  </table>
-                                )}
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                <div ref={loadMoreRef} className="h-1" />
-                {loading && filteredPurchases.length > 0 && (
-                  <div className="p-4 border-t border-gray-200 dark:border-gray-700 text-center">
-                    <div className="flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400 text-sm">
-                      <FiRefreshCw className="w-4 h-4 animate-spin" />
-                      Loading more purchases...
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
@@ -1974,203 +2304,91 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      {/* Payment Modal */}
-          {false && selectedPurchase && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Record Payment</h3>
-                <button
-                  onClick={resetPaymentForm}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <FiX className="w-5 h-5 text-gray-500" />
-                </button>
+
+      {/* Ledger payment detail (bank / EasyPaisa / ref / notes) */}
+      {viewLedgerPayment && viewLedgerPayment.kind === 'payment' && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="presentation"
+          onClick={() => setViewLedgerPayment(null)}
+        >
+          <div
+            className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-800"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="ledger-payment-detail-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+              <div className="min-w-0">
+                <h3 id="ledger-payment-detail-title" className="text-lg font-bold text-gray-900 dark:text-white">
+                  Payment details
+                </h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {formatDateTime(viewLedgerPayment.eventAt)} · {viewLedgerPayment.supplierName}
+                </p>
               </div>
-              <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-                PO-{selectedPurchase.id} • {selectedPurchase.supplierName}
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              {/* Purchase Summary */}
-              <div className="grid grid-cols-3 gap-3 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-                  <div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">Grand Total</div>
-                  <div className="font-semibold text-gray-900 dark:text-white">{formatCurrency(selectedPurchase.grandTotal)}</div>
-                  </div>
-                    <div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">Already Paid</div>
-                  <div className="font-semibold text-emerald-600 dark:text-emerald-400">{formatCurrency(selectedPurchase.paymentAmount)}</div>
-                    </div>
-                    <div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">Remaining</div>
-                  <div className="font-bold text-orange-600 dark:text-orange-400">{formatCurrency(selectedPurchase.remainingBalance)}</div>
-                    </div>
-                    </div>
-
-              {/* Payment Date */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Payment Date</label>
-                <input
-                  type="date"
-                  value={paymentDate}
-                  max={today}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                />
-                  </div>
-
-              {/* Payment Amount */}
-                  <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Payment Amount</label>
-                    <input
-                      type="number"
-                      min="0"
-                      max={selectedPurchase.remainingBalance}
-                      step="0.01"
-                      value={paymentAmount}
-                  onChange={(e) => setPaymentAmount(e.target.value)}
-                      placeholder="0.00"
-                  className="w-full px-4 py-2.5 text-lg font-semibold border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setPaymentAmount(selectedPurchase.remainingBalance.toString())}
-                      className="mt-2 text-xs text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 font-medium"
-                    >
-                  Pay Full Amount ({formatCurrency(selectedPurchase.remainingBalance)})
-                    </button>
-                  </div>
-
-              {/* Payment Method */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Payment Method</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {(['cash', 'bank_transfer', 'check', 'online'] as PaymentMethod[]).map((method) => {
-                    const colors = getPaymentMethodColor(method);
-                    return (
-                    <button
-                        key={method}
-                        onClick={() => setPaymentMethod(method)}
-                        className={`px-4 py-3 rounded-lg border-2 text-sm font-medium transition-all ${
-                          paymentMethod === method
-                            ? `${colors.bg} ${colors.text} ${colors.border} ring-2 ring-offset-2 ring-emerald-500`
-                            : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
-                        }`}
-                      >
-                        {getPaymentMethodLabel(method)}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* Conditional Fields based on Payment Method */}
-              {paymentMethod === 'check' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Check Number</label>
-                    <input
-                      type="text"
-                      value={checkNumber}
-                      onChange={(e) => setCheckNumber(e.target.value)}
-                      placeholder="Enter check number"
-                      className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bank Name</label>
-                    <input
-                      type="text"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      placeholder="Enter bank name"
-                      className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {paymentMethod === 'bank_transfer' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Reference Number</label>
-                    <input
-                      type="text"
-                      value={referenceNumber}
-                      onChange={(e) => setReferenceNumber(e.target.value)}
-                      placeholder="Transaction reference"
-                      className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Bank / Account</label>
-                    <input
-                      type="text"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      placeholder="Bank name or account"
-                      className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {paymentMethod === 'online' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Transaction Reference</label>
-                  <input
-                    type="text"
-                    value={referenceNumber}
-                    onChange={(e) => setReferenceNumber(e.target.value)}
-                    placeholder="Online transaction ID"
-                    className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                  />
-                </div>
-              )}
-
-              {/* Notes */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Notes (Optional)</label>
-                <textarea
-                  value={paymentNotes}
-                  onChange={(e) => setPaymentNotes(e.target.value)}
-                  placeholder="Add any additional notes..."
-                  rows={2}
-                  className="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 resize-none"
-                />
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex gap-3">
               <button
-                onClick={resetPaymentForm}
-                className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleSubmitPayment}
-                      disabled={processing || !paymentAmount || parseFloat(paymentAmount) <= 0}
-                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 dark:disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2"
-                    >
-                      {processing ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                          Processing...
-                        </>
-                      ) : (
-                  <>
-                    <FiCheck className="w-4 h-4" />
-                    Record Payment
-                  </>
-                      )}
-                    </button>
-                  </div>
+                type="button"
+                onClick={() => setViewLedgerPayment(null)}
+                className="shrink-0 rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+                aria-label="Close"
+              >
+                <FiX className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-3 px-5 py-4 text-sm">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">PO</p>
+                  <p className="font-semibold text-gray-900 dark:text-white tabular-nums">PO-{viewLedgerPayment.purchaseId}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Amount</p>
+                  <p className="font-bold text-green-600 dark:text-green-400 tabular-nums">{formatCurrency(viewLedgerPayment.credit)}</p>
                 </div>
               </div>
+              {viewLedgerPayment.paymentMethod ? (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">Method</p>
+                  <span
+                    className={`mt-1 inline-flex rounded border px-2 py-1 text-xs font-bold ${getPaymentMethodColor(viewLedgerPayment.paymentMethod).bg} ${getPaymentMethodColor(viewLedgerPayment.paymentMethod).text} ${getPaymentMethodColor(viewLedgerPayment.paymentMethod).border}`}
+                  >
+                    {getPaymentMethodLabel(viewLedgerPayment.paymentMethod)}
+                  </span>
+                </div>
+              ) : null}
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Reference / transaction ID
+                </p>
+                <p className="mt-0.5 break-words text-gray-900 dark:text-gray-100">
+                  {(viewLedgerPayment.reference || '').trim() || '—'}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  Notes and account details
+                </p>
+                <p className="mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-800 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-200">
+                  {(viewLedgerPayment.notes || '').trim() || '—'}
+                </p>
+              </div>
+              {viewLedgerPayment.paymentId != null && (
+                <p className="text-[10px] text-gray-400 dark:text-gray-500">Payment record #{viewLedgerPayment.paymentId}</p>
+              )}
+            </div>
+            <div className="border-t border-gray-200 px-5 py-3 dark:border-gray-700">
+              <button
+                type="button"
+                onClick={() => setViewLedgerPayment(null)}
+                className="w-full rounded-lg bg-emerald-600 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Payment History Modal */}
@@ -2274,7 +2492,7 @@ const Payments: React.FC = () => {
               )}
             </div>
 
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-between">
+            <div className="p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
               <button
                 onClick={() => {
                   setViewPaymentHistory(null);
@@ -2284,19 +2502,6 @@ const Payments: React.FC = () => {
               >
                 Close
               </button>
-              {viewPaymentHistory.remainingBalance > 0 && (
-                <button
-                  onClick={() => {
-                    handleMakePayment(viewPaymentHistory);
-                    setViewPaymentHistory(null);
-                    setPurchasePayments([]);
-                  }}
-                  className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium flex items-center gap-2"
-                >
-                  <FiPlus className="w-4 h-4" />
-                  Add Payment
-                </button>
-              )}
             </div>
           </div>
         </div>

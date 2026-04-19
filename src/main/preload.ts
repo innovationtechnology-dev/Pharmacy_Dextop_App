@@ -32,6 +32,7 @@ export type Channels =
   | 'purchase-update-payment' | 'purchase-update-payment-reply'
   | 'purchase-record-supplier-refund' | 'purchase-record-supplier-refund-reply'
   | 'payment-get-all' | 'payment-get-all-reply'
+  | 'payment-get-supplier-ledger' | 'payment-get-supplier-ledger-reply'
   | 'payment-get-summary' | 'payment-get-summary-reply'
   | 'payment-get-supplier-accounts' | 'payment-get-supplier-accounts-reply'
   | 'payment-get-by-purchase' | 'payment-get-by-purchase-reply'

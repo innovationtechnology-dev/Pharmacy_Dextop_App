@@ -12,6 +12,7 @@ export class PaymentController {
 
     public async initializeTables(): Promise<void> {
         await this.paymentService.initializeTable();
+        await this.paymentService.repersistSupplierRunningBalances();
     }
 
     private registerHandlers(): void {
@@ -31,17 +32,43 @@ export class PaymentController {
         ipcMain.on('payment-create', async (event: IpcMainEvent, args: any[]) => {
             try {
                 const paymentData = args[0] as any;
-                // Transform the frontend data to match Payment interface
+                const mapMethod = (m: string) =>
+                    m === 'bank_transfer'
+                        ? 'bank_deposit'
+                        : m === 'check'
+                          ? 'cheque'
+                          : m === 'online'
+                            ? 'card'
+                            : m;
+
+                const paymentReference =
+                    paymentData.referenceNumber ||
+                    paymentData.checkNumber ||
+                    paymentData.senderNumber ||
+                    undefined;
+
+                if (paymentData.allocateAcrossOpenPos && paymentData.supplierId != null) {
+                    await this.paymentService.addPaymentAllocatedBySupplier(
+                        Number(paymentData.supplierId),
+                        Number(paymentData.amount),
+                        {
+                            paymentMethod: mapMethod(paymentData.paymentMethod) as Payment['paymentMethod'],
+                            reference: paymentReference,
+                            notes: paymentData.notes,
+                            paymentDate: paymentData.paymentDate,
+                        },
+                    );
+                    event.reply('payment-create-reply', { success: true, data: { id: null } });
+                    return;
+                }
+
                 const payment: Payment = {
                     purchaseId: paymentData.purchaseId,
                     amount: paymentData.amount,
-                    paymentMethod: paymentData.paymentMethod === 'bank_transfer' ? 'bank_deposit' : 
-                                   paymentData.paymentMethod === 'check' ? 'cheque' : 
-                                   paymentData.paymentMethod === 'online' ? 'card' : 
-                                   paymentData.paymentMethod,
-                    reference: paymentData.referenceNumber || paymentData.checkNumber,
+                    paymentMethod: mapMethod(paymentData.paymentMethod) as Payment['paymentMethod'],
+                    reference: paymentReference,
                     notes: paymentData.notes,
-                    paymentDate: paymentData.paymentDate
+                    paymentDate: paymentData.paymentDate,
                 };
                 const paymentId = await this.paymentService.addPayment(payment);
                 event.reply('payment-create-reply', { success: true, data: { id: paymentId } });
@@ -98,6 +125,17 @@ export class PaymentController {
             } catch (error) {
                 console.error('Get all payments error:', error);
                 event.reply('payment-get-all-reply', { success: false, error: String(error) });
+            }
+        });
+
+        ipcMain.on('payment-get-supplier-ledger', async (event: IpcMainEvent, args: any[]) => {
+            try {
+                const filters = args[0] || {};
+                const data = await this.paymentService.getSupplierLedger(filters);
+                event.reply('payment-get-supplier-ledger-reply', { success: true, data });
+            } catch (error) {
+                console.error('Get supplier ledger error:', error);
+                event.reply('payment-get-supplier-ledger-reply', { success: false, error: String(error) });
             }
         });
 

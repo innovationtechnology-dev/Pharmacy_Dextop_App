@@ -8,6 +8,7 @@ import {
   PurchaseService,
   PurchaseItemInput,
 } from '../services/purchase.service';
+import { PaymentService } from '../services/payment.service';
 
 export class MedicineController {
   private medicineService: MedicineService;
@@ -18,11 +19,14 @@ export class MedicineController {
 
   private purchaseService: PurchaseService;
 
+  private paymentService: PaymentService;
+
   constructor() {
     this.medicineService = new MedicineService();
     this.salesService = new SalesService();
     this.supplierService = new SupplierService();
     this.purchaseService = new PurchaseService();
+    this.paymentService = new PaymentService();
     this.registerHandlers();
   }
 
@@ -765,6 +769,7 @@ export class MedicineController {
               paymentAmount: 0, // Full payment
               notes: 'Sample data - Initial stock',
             });
+            await this.paymentService.repersistSupplierRunningBalances();
           } catch (error: any) {
             console.error('Error creating purchase:', error);
             // Continue even if purchase creation fails
