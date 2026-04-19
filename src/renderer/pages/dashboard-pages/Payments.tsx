@@ -839,6 +839,19 @@ const Payments: React.FC = () => {
     try {
       const supplier = suppliers.find(s => s.id === paymentModalSupplier.supplierId);
 
+      const t = (s: string) => s.trim();
+      const detailLines: string[] = [];
+      if (t(bankName)) detailLines.push(`Bank / wallet name: ${t(bankName)}`);
+      if (t(accountNumber)) detailLines.push(`Account / IBAN / number: ${t(accountNumber)}`);
+      if (t(referenceNumber)) detailLines.push(`Transaction ref: ${t(referenceNumber)}`);
+      if (t(checkNumber)) detailLines.push(`Cheque number: ${t(checkNumber)}`);
+      if (t(senderNumber)) detailLines.push(`Sender / TXID: ${t(senderNumber)}`);
+      if (t(paymentNotes)) detailLines.push(t(paymentNotes));
+      const fullNotes = detailLines.length > 0 ? detailLines.join('\n') : undefined;
+
+      const primaryReference =
+        t(referenceNumber) || t(checkNumber) || t(senderNumber) || undefined;
+
       const paymentData = {
         allocateAcrossOpenPos: true,
         supplierId: paymentModalSupplier.supplierId,
@@ -846,11 +859,11 @@ const Payments: React.FC = () => {
         companyName: supplier?.companyName || '',
         amount,
         paymentMethod,
-        referenceNumber: referenceNumber || undefined,
+        referenceNumber: primaryReference,
         checkNumber: checkNumber || undefined,
         bankName: bankName || undefined,
         accountNumber: accountNumber || undefined,
-        notes: [senderNumber ? `Sender: ${senderNumber}` : '', paymentNotes].filter(Boolean).join(' | ') || undefined,
+        notes: fullNotes,
         paymentDate,
       };
 
@@ -1440,7 +1453,7 @@ const Payments: React.FC = () => {
                               ) : null}
                             </>
                           )}
-                          {(row.notes || '').trim() ? (
+                          {isPurchase && (row.notes || '').trim() ? (
                             <span className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-2 leading-snug" title={row.notes}>
                               {row.notes}
                             </span>
