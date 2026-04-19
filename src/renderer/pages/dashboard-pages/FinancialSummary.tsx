@@ -10,6 +10,7 @@ import {
   FiPackage,
   FiRefreshCw,
   FiUsers,
+  FiShoppingBag,
 } from 'react-icons/fi';
 import {
   XAxis,
@@ -38,8 +39,12 @@ type FinancialData = {
   saleReturnsTotal: number;
   purchaseDiscountTotal: number;
   saleDiscountTotal: number;
+  /** Discount portion refunded with returned items */
+  saleReturnDiscountTotal?: number;
   purchaseTaxTotal: number;
   saleTaxTotal: number;
+  /** Tax portion refunded with returned items */
+  saleReturnTaxTotal?: number;
   familyTotal: number;
   charityTotal: number;
   employeeTotal: number;
@@ -77,8 +82,10 @@ const FinancialSummary = () => {
     saleReturnsTotal: 0,
     purchaseDiscountTotal: 0,
     saleDiscountTotal: 0,
+    saleReturnDiscountTotal: 0,
     purchaseTaxTotal: 0,
     saleTaxTotal: 0,
+    saleReturnTaxTotal: 0,
     familyTotal: 0,
     charityTotal: 0,
     employeeTotal: 0,
@@ -92,10 +99,10 @@ const FinancialSummary = () => {
     return (financialData.familyTotal || 0) + (financialData.charityTotal || 0) + (financialData.employeeTotal || 0);
   }, [financialData.familyTotal, financialData.charityTotal, financialData.employeeTotal]);
 
-  /** List-price merchandise kept after returns (invoice list subtotal − returns). Avoids treating returned goods as sold twice. */
-  const grossSalesNetOfReturns = useMemo(
-    () => Math.max(0, (financialData.grossSubtotal ?? 0) - (financialData.saleReturnsTotal ?? 0)),
-    [financialData.grossSubtotal, financialData.saleReturnsTotal]
+  /** Total at checkout list prices — before discounts, returns and any deductions. */
+  const grossSalesDisplay = useMemo(
+    () => Math.max(0, financialData.grossSubtotal ?? 0),
+    [financialData.grossSubtotal]
   );
 
   /** Invoiced net (after line discounts) — matches backend profit; charity/relative/employee are invoice totals */
@@ -112,8 +119,8 @@ const FinancialSummary = () => {
     if (typeof fromApi === 'number' && !Number.isNaN(fromApi)) {
       return Math.max(0, fromApi);
     }
-    return Math.max(0, grossSalesNetOfReturns - companyExpenses);
-  }, [financialData.netSalesGrossBasis, grossSalesNetOfReturns, companyExpenses]);
+    return Math.max(0, grossSalesDisplay - (financialData.saleDiscountTotal ?? 0) - companyExpenses - (financialData.saleReturnsTotal ?? 0));
+  }, [financialData.netSalesGrossBasis, grossSalesDisplay, financialData.saleDiscountTotal, financialData.saleReturnsTotal, companyExpenses]);
 
   /** Key totals for donut — matches detailed breakdown emphasis */
   const pieBreakdown = useMemo(() => {
@@ -280,24 +287,37 @@ const FinancialSummary = () => {
 
         {/* Stats Bar */}
         <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-            <FiPackage className="w-3.5 h-3.5 text-blue-500" />
+          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
+            <FiPackage className="w-3.5 h-3.5 text-orange-500" />
             <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
               {formatCurrency(financialData.purchasingTotal)}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
-            <FiDollarSign className="w-3.5 h-3.5 text-emerald-500" />
+          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
+            <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
             <span
               className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide"
-              title="Invoice list subtotal at checkout, minus customer returns (goods came back to stock; not counted as sold twice)."
+              title="Total at checkout list prices, before discounts, returns and deductions."
             >
               Gross sales
             </span>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
+              {formatCurrency(grossSalesDisplay)}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
+            <FiShoppingBag className="w-3.5 h-3.5 text-emerald-500" />
+            <span
+              className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide"
+              title="Gross sales minus discounts, returns and deductions."
+            >
+              Net sales
+            </span>
             <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {formatCurrency(grossSalesNetOfReturns)}
+              {formatCurrency(netSales)}
             </span>
           </div>
 
@@ -432,8 +452,8 @@ const FinancialSummary = () => {
                       { label: 'Purchasing total', value: financialData.purchasingTotal, accent: 'border-l-blue-500', val: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50/60 dark:bg-blue-950/30', icon: <FiPackage className="w-4 h-4 text-blue-500 shrink-0" /> },
                       {
                         label: 'Gross sales',
-                        sub: 'List value after returns (checkout list subtotal − returns; before charity / relative / employee)',
-                        value: grossSalesNetOfReturns,
+                        sub: 'Total at checkout list prices (before discounts, returns and deductions)',
+                        value: grossSalesDisplay,
                         accent: 'border-l-amber-500',
                         val: 'text-amber-700 dark:text-amber-300',
                         bg: 'bg-amber-50/60 dark:bg-amber-950/30',
@@ -442,7 +462,7 @@ const FinancialSummary = () => {
                       { label: 'Return amount', value: financialData.saleReturnsTotal, accent: 'border-l-red-500', val: 'text-red-700 dark:text-red-300', bg: 'bg-red-50/60 dark:bg-red-950/30', icon: <FiTrendingDown className="w-4 h-4 text-red-500 shrink-0" /> },
                       {
                         label: 'Net sales',
-                        sub: 'Same basis as Gross sales card, minus charity / relative / employee invoices',
+                        sub: 'Gross sales minus discounts, returns and charity/relative/employee deductions',
                         value: netSales,
                         accent: 'border-l-teal-500',
                         val: 'text-teal-700 dark:text-teal-300',
@@ -472,9 +492,9 @@ const FinancialSummary = () => {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       {[
                         { label: 'Purchase discounts', value: financialData.purchaseDiscountTotal, color: 'text-emerald-700 dark:text-emerald-300' },
-                        { label: 'Sale discounts', value: financialData.saleDiscountTotal, color: 'text-amber-700 dark:text-amber-300' },
+                        { label: 'Sale discounts', value: Math.max(0, (financialData.saleDiscountTotal ?? 0) - (financialData.saleReturnDiscountTotal ?? 0)), color: 'text-amber-700 dark:text-amber-300' },
                         { label: 'Purchase taxes', value: financialData.purchaseTaxTotal, color: 'text-red-700 dark:text-red-300' },
-                        { label: 'Sale taxes', value: financialData.saleTaxTotal, color: 'text-blue-700 dark:text-blue-300' },
+                        { label: 'Sale taxes', value: Math.max(0, (financialData.saleTaxTotal ?? 0) - (financialData.saleReturnTaxTotal ?? 0)), color: 'text-blue-700 dark:text-blue-300' },
                       ].map((d) => (
                         <div key={d.label} className="min-w-0 rounded-lg bg-white dark:bg-gray-900/50 px-3 py-2.5 border border-gray-200 dark:border-gray-600">
                           <p className="text-xs font-medium text-gray-800 dark:text-gray-100 leading-snug">{d.label}</p>
@@ -517,7 +537,7 @@ const FinancialSummary = () => {
                       <p className={`text-3xl font-bold tabular-nums leading-tight mt-1 ${financialData.profit >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-700'}`}>
                         {(financialData.netRevenue ?? invoicedNetSales) > 0
                           ? Math.round((financialData.profit / (financialData.netRevenue ?? invoicedNetSales)) * 100)
-                          : 0}
+                          : 0 }%
                       </p>
                     </div>
                   </div>

@@ -179,11 +179,11 @@ export class SaleReturnService {
         `SELECT sib.id AS sale_item_batch_id,
                 sib.stock_batch_id,
                 sib.qty_deducted,
-                (sib.qty_deducted - COALESCE((
+                CAST(sib.qty_deducted - COALESCE((
                   SELECT SUM(r2.qty_restored)
                   FROM return_item_batches r2
                   WHERE r2.sale_item_batch_id = sib.id
-                ), 0)) AS qty_reversible
+                ), 0) AS INTEGER) AS qty_reversible
          FROM sale_item_batches sib
          INNER JOIN stock_batches sb ON sb.id = sib.stock_batch_id AND sb.medicine_id = ?
          WHERE sib.sale_item_id = ?
@@ -193,7 +193,7 @@ export class SaleReturnService {
 
       for (const row of batchRows) {
         if (restored >= pillsToRestore) break;
-        const reversible = Math.max(0, Math.floor(Number(row.qty_reversible) || 0));
+        const reversible = Math.max(0, parseInt(row.qty_reversible) || 0);
         if (reversible <= 0) continue;
         const restoreQty = Math.min(reversible, pillsToRestore - restored);
         await this.dbService.execute(
@@ -209,42 +209,68 @@ export class SaleReturnService {
       }
     }
 
-    if (restored >= pillsToRestore) return;
-
-    // Fallback: pre-migration data — prefer unexpired batches so returned pills are sellable
-    console.warn(`[sale-return restoreInventory] No sale_item_batches found for sale ${saleId} medicine ${medicineId}. Using FEFO fallback.`);
-    const remaining = pillsToRestore - restored;
-
-    // Try unexpired batches first; fall back to all batches if none found
-    let batches = await this.dbService.query(
-      `SELECT id, qty_received, qty_remaining FROM stock_batches
-       WHERE medicine_id = ? AND date(expiry_date) >= date('now')
-       ORDER BY date(expiry_date) ASC, id ASC`,
-      [medicineId]
+    // Check if we have any sale_item_batches records for this sale/medicine combination
+    const hasAuditTrail = await this.dbService.queryOne(
+      `SELECT COUNT(*) as count
+       FROM sale_item_batches sib
+       INNER JOIN sale_items si ON si.id = sib.sale_item_id
+       WHERE si.sale_id = ? AND si.medicine_id = ?`,
+      [saleId, medicineId]
     );
-    if (batches.length === 0) {
-      batches = await this.dbService.query(
-        `SELECT id, qty_received, qty_remaining FROM stock_batches
-         WHERE medicine_id = ? ORDER BY date(expiry_date) DESC, id ASC`,
-        [medicineId]
-      );
-    }
 
-    if (batches.length === 0) {
-      console.warn(`[sale-return restoreInventory] No stock_batches found for medicine ${medicineId}. Return accepted but inventory not restored.`);
+    const auditTrailExists = (hasAuditTrail?.count || 0) > 0;
+
+    if (restored >= pillsToRestore) {
+      // Successfully restored all pills using audit trail
       return;
     }
 
-    const firstBatch = batches[0];
-    await this.dbService.execute(
-      'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ? AND medicine_id = ?',
-      [remaining, firstBatch.id, medicineId]
-    );
-    await this.dbService.execute(
-      `INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored, sale_item_batch_id)
-       VALUES (?, ?, ?, NULL)`,
-      [saleReturnItemId, firstBatch.id, remaining]
-    );
+    if (!auditTrailExists) {
+      // Fallback: pre-migration data — prefer unexpired batches so returned pills are sellable
+      console.warn(`[sale-return restoreInventory] No sale_item_batches found for sale ${saleId} medicine ${medicineId}. Using FEFO fallback.`);
+      const remaining = pillsToRestore - restored;
+
+      // Try unexpired batches first; fall back to all batches if none found
+      let batches = await this.dbService.query(
+        `SELECT id, qty_received, qty_remaining FROM stock_batches
+         WHERE medicine_id = ? AND date(expiry_date) >= date('now')
+         ORDER BY date(expiry_date) ASC, id ASC`,
+        [medicineId]
+      );
+      if (batches.length === 0) {
+        batches = await this.dbService.query(
+          `SELECT id, qty_received, qty_remaining FROM stock_batches
+           WHERE medicine_id = ? ORDER BY date(expiry_date) DESC, id ASC`,
+          [medicineId]
+        );
+      }
+
+      if (batches.length === 0) {
+        console.warn(`[sale-return restoreInventory] No stock_batches found for medicine ${medicineId}. Return accepted but inventory not restored.`);
+        return;
+      }
+
+      const firstBatch = batches[0];
+      await this.dbService.execute(
+        'UPDATE stock_batches SET qty_remaining = qty_remaining + ? WHERE id = ? AND medicine_id = ?',
+        [remaining, firstBatch.id, medicineId]
+      );
+      await this.dbService.execute(
+        `INSERT INTO return_item_batches (sale_return_item_id, stock_batch_id, qty_restored, sale_item_batch_id)
+         VALUES (?, ?, ?, NULL)`,
+        [saleReturnItemId, firstBatch.id, remaining]
+      );
+    } else {
+      // Audit trail exists but couldn't restore all pills - this indicates a data consistency issue
+      const remaining = pillsToRestore - restored;
+      console.error(`[sale-return restoreInventory] Audit trail exists but could only restore ${restored}/${pillsToRestore} pills for sale ${saleId} medicine ${medicineId}. Missing ${remaining} pills. This indicates a data consistency issue.`);
+      
+      // Don't use fallback when audit trail exists to prevent double restoration
+      // The return will be accepted but the remaining pills won't be restored to prevent inventory corruption
+      if (remaining > 0) {
+        throw new Error(`Cannot restore ${remaining} pills for medicine ${medicineId}. Data consistency issue detected. Please check sale_item_batches records.`);
+      }
+    }
   }
 
   /**
@@ -440,6 +466,11 @@ export class SaleReturnService {
         );
       }
 
+      // NOTE: Original sale header is intentionally NOT modified.
+      // Returns are tracked separately in sale_returns; the financial summary
+      // deducts saleReturnsTotal independently.  Modifying the sale header
+      // would corrupt historical discount / total data.
+
       await this.dbService.execute('COMMIT');
       return saleReturnId;
     } catch (error) {
@@ -598,8 +629,8 @@ export class SaleReturnService {
     const toDateOnly = toDate;
     const sql = `
       SELECT * FROM sale_returns
-      WHERE date(created_at, 'localtime') >= date(?)
-        AND date(created_at, 'localtime') <= date(?)
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
       ORDER BY created_at DESC
     `;
     const saleReturns = await this.dbService.query(sql, [fromDateOnly, toDateOnly]);
@@ -685,6 +716,8 @@ export class SaleReturnService {
       // sale_return_items DELETE cascades return_item_batches via FK ON DELETE CASCADE
       await this.dbService.execute('DELETE FROM sale_return_items WHERE sale_return_id = ?', [saleReturnId]);
       await this.dbService.execute('DELETE FROM sale_returns WHERE id = ?', [saleReturnId]);
+
+      // NOTE: Original sale header is NOT modified (returns are tracked separately).
 
       await this.dbService.execute('COMMIT');
     } catch (error) {
@@ -812,12 +845,13 @@ export class SaleReturnService {
    * Get sale returns total by date range
    */
   public async getSaleReturnsTotalByDateRange(fromDate: string, toDate: string): Promise<number> {
-    // Use local-date boundaries to avoid datetime parsing/timezone edge-cases.
+    // created_at is already stored in local time (datetime('now','localtime')),
+    // so do NOT apply 'localtime' modifier again — that would double-convert.
     const sql = `
       SELECT COALESCE(SUM(total), 0) as total_returns
       FROM sale_returns 
-      WHERE date(created_at, 'localtime') >= date(?)
-        AND date(created_at, 'localtime') <= date(?)
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
     `;
     const result = await this.dbService.queryOne(sql, [fromDate, toDate]);
     return result?.total_returns || 0;
@@ -827,13 +861,13 @@ export class SaleReturnService {
    * Get total cost of returned items by date range
    */
   public async getSaleReturnsCostByDateRange(fromDate: string, toDate: string): Promise<number> {
-    // Keep cost filtering consistent with return totals and local reporting date.
+    // created_at is already in local time — no 'localtime' modifier needed.
     const sql = `
       SELECT COALESCE(SUM(sri.cost_subtotal), 0) as total_return_cost
       FROM sale_return_items sri
       JOIN sale_returns sr ON sri.sale_return_id = sr.id
-      WHERE date(sr.created_at, 'localtime') >= date(?)
-        AND date(sr.created_at, 'localtime') <= date(?)
+      WHERE date(sr.created_at) >= date(?)
+        AND date(sr.created_at) <= date(?)
     `;
     const result = await this.dbService.queryOne(sql, [fromDate, toDate]);
     return result?.total_return_cost || 0;

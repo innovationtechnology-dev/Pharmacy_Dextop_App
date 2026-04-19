@@ -1079,6 +1079,8 @@ export class SalesService {
     sellingTotal: number;
     saleDiscountTotal: number;
     saleTaxTotal: number;
+    saleReturnDiscountTotal?: number;
+    saleReturnTaxTotal?: number;
     saleReturnsTotal: number;
     familyTotal: number;
     charityTotal: number;
@@ -1091,22 +1093,23 @@ export class SalesService {
     profit: number;
     trend: Array<{ date: string; sales: number; purchases: number; profit: number }>;
   }> {
-    // gross_subtotal = merchandise value before discounts.
-    // selling_total    = SUM(invoice total) after line discounts & tax (still includes charity etc.).
-    // Company expenses (charity/employee/relative) are tracked separately and
-    // deducted when computing Net Sales and Profit.
+    // Use sale_items for accurate totals — sale headers' discount_total / tax_total / total
+    // may have been modified by legacy return adjustments; sale_items are never modified.
+    // gross_subtotal = merchandise value before discounts (SUM of line subtotals).
+    // selling_total  = SUM of line totals after discounts & tax (includes charity etc.).
     const salesSql = `
       SELECT
-        COALESCE(SUM(subtotal), 0)       as gross_subtotal,
-        COALESCE(SUM(total), 0)          as selling_total,
-        COALESCE(SUM(discount_total), 0) as sale_discount_total,
-        COALESCE(SUM(tax_total), 0)      as sale_tax_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Family/Relatives' THEN total ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Charity'           THEN total ELSE 0 END), 0) as charity_total,
-        COALESCE(SUM(CASE WHEN sale_type = 'Employee'          THEN total ELSE 0 END), 0) as employee_total
-      FROM sales
-      WHERE date(created_at) >= date(?)
-        AND date(created_at) <= date(?)
+        COALESCE(SUM(si.subtotal), 0)         as gross_subtotal,
+        COALESCE(SUM(si.total), 0)            as selling_total,
+        COALESCE(SUM(si.discount_amount), 0)  as sale_discount_total,
+        COALESCE(SUM(si.tax_amount), 0)       as sale_tax_total,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Family/Relatives' THEN si.total ELSE 0 END), 0) as family_total,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Charity'           THEN si.total ELSE 0 END), 0) as charity_total,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Employee'          THEN si.total ELSE 0 END), 0) as employee_total
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      WHERE date(s.created_at) >= date(?)
+        AND date(s.created_at) <= date(?)
     `;
     const salesResult = await this.dbService.queryOne(salesSql, [fromDate, toDate]);
     const grossSubtotal = salesResult?.gross_subtotal || 0;
@@ -1122,6 +1125,21 @@ export class SalesService {
     // Get sale returns total and their cost for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
     const saleReturnsCost = await (this.saleReturnService as any).getSaleReturnsCostByDateRange(fromDate, toDate);
+
+    // Get return discount & tax totals so we can show NET sale discounts/taxes
+    // (original discount minus the portion refunded with returned items)
+    const returnDiscountTaxSql = `
+      SELECT
+        COALESCE(SUM(sri.discount_amount), 0) as return_discount_total,
+        COALESCE(SUM(sri.tax_amount), 0)      as return_tax_total
+      FROM sale_return_items sri
+      JOIN sale_returns sr ON sri.sale_return_id = sr.id
+      WHERE date(sr.created_at) >= date(?)
+        AND date(sr.created_at) <= date(?)
+    `;
+    const returnDiscountTaxResult = await this.dbService.queryOne(returnDiscountTaxSql, [fromDate, toDate]);
+    const saleReturnDiscountTotal = returnDiscountTaxResult?.return_discount_total || 0;
+    const saleReturnTaxTotal = returnDiscountTaxResult?.return_tax_total || 0;
 
     // COGS for revenue-generating sales only (exclude charity/employee/relative)
     // These are company expenses, not sales, so their cost should not be in COGS
@@ -1151,8 +1169,8 @@ export class SalesService {
 
     // Net Revenue = invoiced total − company expenses − returns (basis for profit / “invoiced net”).
     const netRevenue = sellingTotal - companyExpenses - saleReturnsTotal;
-    // Net sales (merchandise KPI) = list subtotal − same expense buckets − returns (Financial Summary card).
-    const netSalesGrossBasis = Math.max(0, grossSubtotal - companyExpenses - saleReturnsTotal);
+    // Net sales (merchandise KPI) = list subtotal − discounts − company expenses − returns.
+    const netSalesGrossBasis = Math.max(0, grossSubtotal - saleDiscountTotal - companyExpenses - saleReturnsTotal);
     // Net COGS = total COGS − cost of returned items
     const netCogs = grossCogs - saleReturnsCost;
 
@@ -1257,6 +1275,8 @@ export class SalesService {
       sellingTotal,
       saleDiscountTotal,
       saleTaxTotal,
+      saleReturnDiscountTotal,
+      saleReturnTaxTotal,
       saleReturnsTotal,
       familyTotal,
       charityTotal,

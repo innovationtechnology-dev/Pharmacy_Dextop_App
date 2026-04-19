@@ -23,6 +23,7 @@ import {
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
+import { getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { useTheme } from '../../contexts/ThemeContext';
 import { colorThemes, ColorTheme } from '../../themes/colorThemes';
 
@@ -1510,7 +1511,7 @@ const Settings: React.FC = () => {
                                                                 </div>
                                                             </div>
                                                             <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                                                ${Number(sale.total).toFixed(2)}
+                                                                {getSymbol(pharmacySettings.currency)} {Number(sale.total).toFixed(2)}
                                                             </div>
                                                         </div>
                                                     </label>
@@ -1587,7 +1588,7 @@ const Settings: React.FC = () => {
                                                                 </div>
                                                             </div>
                                                             <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                                                ${Number(purchase.grandTotal).toFixed(2)} | {purchase.supplierName || 'N/A'}
+                                                                {getSymbol(pharmacySettings.currency)} {Number(purchase.grandTotal).toFixed(2)} | {purchase.supplierName || 'N/A'}
                                                             </div>
                                                         </div>
                                                     </label>

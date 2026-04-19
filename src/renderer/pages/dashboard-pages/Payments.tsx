@@ -1599,8 +1599,8 @@ const Payments: React.FC = () => {
                 </div>
 
                 <div className="space-y-4 p-5">
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <div className="sm:col-span-2">
+                  <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2">
+                    <div>
                       <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">
                         Supplier (total due)
                       </label>
@@ -1758,7 +1758,7 @@ const Payments: React.FC = () => {
 
                   {(paymentMethod === 'bank_transfer' || paymentMethod === 'online') && (
                     <div className="grid grid-cols-1 gap-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3 dark:border-blue-900/40 dark:bg-blue-950/20 md:grid-cols-3">
-                      <div>
+                      <div className="flex flex-col justify-end">
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
                           {paymentMethod === 'online' ? 'Account / wallet name' : 'Bank account name'}
                         </label>
@@ -1770,7 +1770,7 @@ const Payments: React.FC = () => {
                           className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-800 dark:bg-gray-700 dark:text-gray-100"
                         />
                       </div>
-                      <div>
+                      <div className="flex flex-col justify-end">
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
                           {paymentMethod === 'online' ? 'Account / wallet number' : 'Account / IBAN'}
                         </label>
@@ -1782,7 +1782,7 @@ const Payments: React.FC = () => {
                           className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm dark:border-blue-800 dark:bg-gray-700 dark:text-gray-100"
                         />
                       </div>
-                      <div>
+                      <div className="flex flex-col justify-end">
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400">
                           {paymentMethod === 'online' ? 'Sender / TxID' : 'Transaction ref'}
                         </label>
@@ -1799,7 +1799,7 @@ const Payments: React.FC = () => {
 
                   {paymentMethod === 'check' && (
                     <div className="grid grid-cols-1 gap-3 rounded-lg border border-amber-100 bg-amber-50/60 p-3 dark:border-amber-900/40 dark:bg-amber-950/20 md:grid-cols-2">
-                      <div>
+                      <div className="flex flex-col justify-end">
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">Cheque number</label>
                         <input
                           type="text"
@@ -1809,7 +1809,7 @@ const Payments: React.FC = () => {
                           className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm dark:border-amber-800 dark:bg-gray-700 dark:text-gray-100"
                         />
                       </div>
-                      <div>
+                      <div className="flex flex-col justify-end">
                         <label className="mb-1.5 block text-[11px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-400">Bank name</label>
                         <input
                           type="text"

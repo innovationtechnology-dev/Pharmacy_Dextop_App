@@ -165,8 +165,9 @@ const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines
 
 const buildSalesSeries = (
   sales: SaleRecord[],
+  returns: any[],
   range: 'this_month' | 'last_month' | 'this_year'
-): { day: string; value: number }[] => {
+): { day: string; value: number; net: number }[] => {
   const now = new Date();
   let start: Date;
   let end: Date;
@@ -191,52 +192,83 @@ const buildSalesSeries = (
   }
 
   if (mode === 'month') {
-    const map = new Map<string, number>();
+    const grossMap = new Map<string, number>();
+    const netMap = new Map<string, number>();
     sales.forEach((sale) => {
       if (!sale.createdAt) return;
       const date = new Date(sale.createdAt);
       const key = `${date.getFullYear()}-${date.getMonth()}`;
-      map.set(key, (map.get(key) || 0) + (sale.total || 0));
+      grossMap.set(key, (grossMap.get(key) || 0) + (sale.subtotal || sale.total || 0));
+      const invoiced = sale.total || 0;
+      const deductions = ['Family/Relatives', 'Charity', 'Employee'].includes(sale.saleType || '') ? invoiced : 0;
+      netMap.set(key, (netMap.get(key) || 0) + (invoiced - deductions));
     });
-    const result: { day: string; value: number }[] = [];
+    returns.forEach((ret) => {
+      if (!ret.createdAt) return;
+      const date = new Date(ret.createdAt);
+      const key = `${date.getFullYear()}-${date.getMonth()}`;
+      netMap.set(key, (netMap.get(key) || 0) - (ret.total || 0));
+    });
+    const result: { day: string; value: number; net: number }[] = [];
     for (let month = 0; month < 12; month++) {
       const date = new Date(start.getFullYear(), month, 1);
       if (date < start || date > end) continue;
       const key = `${date.getFullYear()}-${month}`;
       result.push({
         day: date.toLocaleString('default', { month: 'short' }),
-        value: map.get(key) || 0,
+        value: grossMap.get(key) || 0,
+        net: Math.max(0, netMap.get(key) || 0),
       });
     }
     return result;
   }
 
-  const map = new Map<string, number>();
+  const grossMap = new Map<string, number>();
+  const netMap = new Map<string, number>();
   sales.forEach((sale) => {
     if (!sale.createdAt) return;
     const date = new Date(sale.createdAt);
     const key = getDateKey(date);
-    map.set(key, (map.get(key) || 0) + (sale.total || 0));
+    grossMap.set(key, (grossMap.get(key) || 0) + (sale.subtotal || sale.total || 0));
+    const invoiced = sale.total || 0;
+    const deductions = ['Family/Relatives', 'Charity', 'Employee'].includes(sale.saleType || '') ? invoiced : 0;
+    netMap.set(key, (netMap.get(key) || 0) + (invoiced - deductions));
+  });
+  returns.forEach((ret) => {
+    if (!ret.createdAt) return;
+    const date = new Date(ret.createdAt);
+    const key = getDateKey(date);
+    netMap.set(key, (netMap.get(key) || 0) - (ret.total || 0));
   });
 
-  const data: { day: string; value: number }[] = [];
+  const data: { day: string; value: number; net: number }[] = [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const key = getDateKey(d);
     const label = d.toLocaleString('default', { month: 'short', day: 'numeric' });
-    data.push({ day: label, value: map.get(key) || 0 });
+    data.push({ 
+      day: label, 
+      value: grossMap.get(key) || 0,
+      net: Math.max(0, netMap.get(key) || 0)
+    });
   }
   return data;
 };
 
-const buildRevenueSpark = (sales: SaleRecord[]) => {
+const buildRevenueSpark = (sales: SaleRecord[], returns: any[]) => {
   const now = new Date();
-  const months: { x: string; y: number }[] = [];
+  const months: { x: string; gross: number; net: number }[] = [];
   for (let i = 11; i >= 0; i--) {
     const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const total = sales
-      .filter((sale) => sale.createdAt && new Date(sale.createdAt).getFullYear() === date.getFullYear() && new Date(sale.createdAt).getMonth() === date.getMonth())
-      .reduce((sum, sale) => sum + (sale.total || 0), 0);
-    months.push({ x: date.toLocaleString('default', { month: 'short' }), y: total });
+    const monthSales = sales.filter((sale) => sale.createdAt && new Date(sale.createdAt).getFullYear() === date.getFullYear() && new Date(sale.createdAt).getMonth() === date.getMonth());
+    const monthReturns = returns.filter((ret) => ret.createdAt && new Date(ret.createdAt).getFullYear() === date.getFullYear() && new Date(ret.createdAt).getMonth() === date.getMonth());
+    
+    const gross = monthSales.reduce((sum, sale) => sum + (sale.subtotal || sale.total || 0), 0);
+    const invoiced = monthSales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const deductions = monthSales.filter(s => ['Family/Relatives', 'Charity', 'Employee'].includes(s.saleType || '')).reduce((sum, s) => sum + (s.total || 0), 0);
+    const refunded = monthReturns.reduce((sum, ret) => sum + (ret.total || 0), 0);
+    
+    const net = Math.max(0, invoiced - deductions - refunded);
+    months.push({ x: date.toLocaleString('default', { month: 'short' }), gross, net });
   }
   return months;
 };
@@ -259,6 +291,7 @@ const Dashboard = () => {
   const [sales, setSales] = useState<SaleRecord[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRecord[]>([]);
   const [medicines, setMedicines] = useState<MedicineRecord[]>([]);
+  const [allSaleReturns, setAllSaleReturns] = useState<any[]>([]);
   const [saleReturnsTotal, setSaleReturnsTotal] = useState<number>(0);
   const [range, setRange] = useState<'this_month' | 'last_month' | 'this_year'>('this_month');
   const [loading, setLoading] = useState(true);
@@ -293,13 +326,20 @@ const Dashboard = () => {
           </div>
           
           <div className="space-y-0">
-            <p className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Sales</p>
+            <p className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Gross Sales</p>
             <p className="text-base font-bold text-gray-900 dark:text-white leading-none">
               {formatCurrency(value)}
             </p>
           </div>
 
-          <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-wider ${
+          <div className="space-y-0 pt-2 border-t border-gray-100 dark:border-gray-700/50 mt-2">
+            <p className="text-[9px] font-medium text-teal-600/70 dark:text-teal-400/70 uppercase tracking-wide">Net Sales (Est.)</p>
+            <p className="text-sm font-bold text-teal-700 dark:text-teal-400 leading-none">
+              {formatCurrency(payload[0].payload.net || 0)}
+            </p>
+          </div>
+
+          <div className={`mt-2 flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[8px] font-bold uppercase tracking-wider ${
             isAboveAvg ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' : 'bg-amber-50 dark:bg-amber-900/20 text-amber-600'
           }`}>
             {isAboveAvg ? (
@@ -318,14 +358,16 @@ const Dashboard = () => {
     setLoading(true);
     setError(null);
     try {
-      const [salesData, purchaseData, medicineData] = await Promise.all([
+      const [salesData, purchaseData, medicineData, allReturnsData] = await Promise.all([
         invokeIpc<SaleRecord[]>('sale-get-all', 'sale-get-all-reply'),
         invokeIpc<PurchaseRecord[]>('purchase-get-all', 'purchase-get-all-reply'),
         invokeIpc<MedicineRecord[]>('medicine-get-all', 'medicine-get-all-reply'),
+        invokeIpc<any[]>('sale-return-get-by-date-range', 'sale-return-get-by-date-range-reply', ['2000-01-01', '2100-01-01'])
       ]);
       setSales(salesData || []);
       setPurchases(purchaseData || []);
       setMedicines(medicineData || []);
+      setAllSaleReturns(allReturnsData || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data.');
     } finally {
@@ -522,8 +564,8 @@ const Dashboard = () => {
     [displayTotals]
   );
 
-  const chartData = useMemo(() => buildSalesSeries(sales, range), [sales, range]);
-  const sparkData = useMemo(() => buildRevenueSpark(sales), [sales]);
+  const chartData = useMemo(() => buildSalesSeries(sales, allSaleReturns, range), [sales, allSaleReturns, range]);
+  const sparkData = useMemo(() => buildRevenueSpark(sales, allSaleReturns), [sales, allSaleReturns]);
   const totalRecentPages = useMemo(() => Math.max(1, Math.ceil(sales.length / RECENT_ORDERS_PER_PAGE)), [sales]);
   const recentOrders = useMemo(() => {
     const start = (recentOrdersPage - 1) * RECENT_ORDERS_PER_PAGE;
@@ -552,10 +594,10 @@ const Dashboard = () => {
               <div key={metric.id} className="flex items-center gap-2">
                 <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border shadow-sm ${
                   metric.id === 'revenue' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-600/50' :
-                  metric.id === 'netRevenue' ? 'bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-600/50' :
-                  metric.id === 'profit' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-600/50' :
+                  metric.id === 'netRevenue' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-600/50' :
+                  metric.id === 'profit' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
                   metric.id === 'purchases' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-600/50' :
-                  metric.id === 'customers' ? 'bg-teal-50 dark:bg-teal-900/20 border-teal-200 dark:border-teal-600/50' :
+                  metric.id === 'customers' ? 'bg-sky-50 dark:bg-sky-900/20 border-sky-200 dark:border-sky-600/50' :
                   metric.id === 'family' ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-600/50' :
                   metric.id === 'charity' ? 'bg-pink-50 dark:bg-pink-900/20 border-pink-200 dark:border-pink-600/50' :
                   metric.id === 'employee' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-600/50' :
@@ -564,10 +606,10 @@ const Dashboard = () => {
                 }`}>
                   <div className={
                     metric.id === 'revenue' ? 'text-blue-500' :
-                    metric.id === 'netRevenue' ? 'text-indigo-500' :
-                    metric.id === 'profit' ? 'text-emerald-500' :
+                    metric.id === 'netRevenue' ? 'text-emerald-500' :
+                    metric.id === 'profit' ? 'text-teal-500' :
                     metric.id === 'purchases' ? 'text-orange-500' :
-                    metric.id === 'customers' ? 'text-teal-500' :
+                    metric.id === 'customers' ? 'text-sky-500' :
                     metric.id === 'family' ? 'text-purple-500' :
                     metric.id === 'charity' ? 'text-pink-500' :
                     metric.id === 'employee' ? 'text-orange-500' :
@@ -581,10 +623,10 @@ const Dashboard = () => {
                   </span>
                   <span className={`text-xs font-bold ml-1 ${
                     metric.id === 'revenue' ? 'text-blue-600 dark:text-blue-400' :
-                    metric.id === 'netRevenue' ? 'text-indigo-600 dark:text-indigo-400' :
-                    metric.id === 'profit' ? 'text-emerald-600 dark:text-emerald-400' :
+                    metric.id === 'netRevenue' ? 'text-emerald-600 dark:text-emerald-400' :
+                    metric.id === 'profit' ? 'text-teal-600 dark:text-teal-400' :
                     metric.id === 'purchases' ? 'text-orange-600 dark:text-orange-400' :
-                    metric.id === 'customers' ? 'text-teal-600 dark:text-teal-400' :
+                    metric.id === 'customers' ? 'text-sky-600 dark:text-sky-400' :
                     metric.id === 'family' ? 'text-purple-600 dark:text-purple-400' :
                     metric.id === 'charity' ? 'text-pink-600 dark:text-pink-400' :
                     metric.id === 'employee' ? 'text-orange-600 dark:text-orange-400' :
@@ -662,6 +704,10 @@ const Dashboard = () => {
                         <stop offset="0%" stopColor="#10B981" stopOpacity={1} />
                         <stop offset="100%" stopColor="#059669" stopOpacity={0.9} />
                       </linearGradient>
+                      <linearGradient id="netGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#077531ff" stopOpacity={1} />
+                        <stop offset="100%" stopColor="#0284c7" stopOpacity={0.9} />
+                      </linearGradient>
                       <filter id="barShadow" x="-20%" y="-20%" width="140%" height="140%">
                         <feDropShadow dx="0" dy="2" stdDeviation="3" floodOpacity="0.2" />
                       </filter>
@@ -709,21 +755,11 @@ const Dashboard = () => {
                       />
                     </ReferenceLine>
                     
-                    {/* Shadow / Background Bar for Depth */}
+                    {/* Main Interactive Bar - Gross */}
                     <Bar 
                       dataKey="value" 
-                      fill="rgba(0,0,0,0.02)" 
-                      radius={[6, 6, 0, 0]} 
-                      barSize={range === 'this_year' ? 32 : 12}
-                      xAxisId={0}
-                      isAnimationActive={false}
-                    />
-
-                    {/* Main Interactive Bar */}
-                    <Bar 
-                      dataKey="value" 
-                      radius={[6, 6, 0, 0]} 
-                      barSize={range === 'this_year' ? 32 : 12}
+                      radius={[4, 4, 0, 0]} 
+                      barSize={range === 'this_year' ? 12 : 6}
                       animationDuration={1500}
                       animationEasing="ease-out"
                     >
@@ -731,6 +767,23 @@ const Dashboard = () => {
                         <Cell 
                           key={`cell-${index}`} 
                           fill={index === chartData.length - 1 ? 'url(#activeBarGradient)' : 'url(#barGradient)'}
+                          filter="url(#barShadow)"
+                        />
+                      ))}
+                    </Bar>
+
+                    {/* Main Interactive Bar - Net */}
+                    <Bar 
+                      dataKey="net" 
+                      radius={[4, 4, 0, 0]} 
+                      barSize={range === 'this_year' ? 12 : 6}
+                      animationDuration={1500}
+                      animationEasing="ease-out"
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell 
+                          key={`cell-net-${index}`} 
+                          fill="url(#netGradient)"
                           filter="url(#barShadow)"
                         />
                       ))}
@@ -749,12 +802,22 @@ const Dashboard = () => {
               </div>
 
               <div className="flex-1 flex flex-col min-h-0 p-4 overflow-y-auto">
-                <div className="mb-4">
-                  <div className="text-2xl font-black text-gray-900 dark:text-white tracking-tight">
-                    {formatCurrency(displayTotals.grossSubtotal ?? displayTotals.revenue)}
+                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <div className="text-2xl font-black text-blue-600 dark:text-blue-400 tracking-tight">
+                      {formatCurrency(displayTotals.grossSubtotal ?? displayTotals.revenue)}
+                    </div>
+                    <div className="text-xs text-blue-600/70 dark:text-blue-400/80 font-bold uppercase tracking-wide">
+                      Gross Sales <span className="text-[10px] text-gray-500 normal-case">(before discounts & returns)</span>
+                    </div>
                   </div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                    Gross sales (before line discounts) for the KPI date range
+                  <div className="sm:text-right">
+                    <div className="text-xl font-bold text-[#077531] dark:text-[#10B981] tracking-tight">
+                      {formatCurrency(displayTotals.netRevenue)}
+                    </div>
+                    <div className="text-[11px] text-[#077531]/80 dark:text-[#10B981]/80 font-bold uppercase tracking-widest">
+                      Net Sales <span className="text-[9px] text-gray-500 uppercase tracking-wider">(After returns)</span>
+                    </div>
                   </div>
                 </div>
 
@@ -762,17 +825,22 @@ const Dashboard = () => {
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={sparkData}>
                       <defs>
-                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                        <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                        </linearGradient>
+                        <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
                           <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <Tooltip 
                         contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '10px' }}
-                        formatter={(value: any) => [formatCurrency(Number(value) || 0), 'Sales']}
+                        formatter={(value: any, name: any) => [formatCurrency(Number(value) || 0), name === 'gross' ? 'Gross Sales' : 'Net Sales (Est.)']}
                         labelStyle={{ display: 'none' }} // Hide x-axis index/date to keep it clean
                       />
-                      <Area type="monotone" dataKey="y" stroke="#10B981" fill="url(#colorRevenue)" strokeWidth={2} dot={{ r: 2, fill: '#10B981' }} activeDot={{ r: 4 }} />
+                      <Area type="monotone" dataKey="gross" stroke="#3B82F6" fill="url(#colorGross)" strokeWidth={2} dot={{ r: 2, fill: '#3B82F6' }} activeDot={{ r: 4 }} />
+                      <Area type="monotone" dataKey="net" stroke="#10B981" fill="url(#colorNet)" strokeWidth={2} dot={{ r: 2, fill: '#10B981' }} activeDot={{ r: 4 }} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
