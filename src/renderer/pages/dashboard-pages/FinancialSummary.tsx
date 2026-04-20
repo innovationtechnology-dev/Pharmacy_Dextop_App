@@ -45,15 +45,24 @@ type FinancialData = {
   saleTaxTotal: number;
   /** Tax portion refunded with returned items */
   saleReturnTaxTotal?: number;
-  familyTotal: number;
+  familyTotal: number; // Used for UI display (discount portion)
   charityTotal: number;
   employeeTotal: number;
+  familyPaid?: number; // Used for internal math (what was actually paid)
+  charityPaid?: number;
+  employeePaid?: number;
   /** Gross list − charity / relative / employee − returns (same formula as Net sales card) */
   netSalesGrossBasis?: number;
   /** Invoiced counter revenue: selling total − charity/relative/employee − returns (basis for profit) */
   netRevenue?: number;
   profit: number;
-  trend: { date: string; sales: number; profit: number }[];
+  trend: { 
+    date: string; 
+    grossSales: number; 
+    netSales: number; 
+    sales: number; // for backward compat
+    profit: number 
+  }[];
 };
 
 const FinancialSummary = () => {
@@ -96,8 +105,16 @@ const FinancialSummary = () => {
   });
 
   const companyExpenses = useMemo(() => {
-    return (financialData.familyTotal || 0) + (financialData.charityTotal || 0) + (financialData.employeeTotal || 0);
-  }, [financialData.familyTotal, financialData.charityTotal, financialData.employeeTotal]);
+    // If the backend sends 'paid' amounts separately, use them. 
+    // Otherwise fallback to whatever is in the Total fields (which we might have repurposed).
+    const f = financialData.familyPaid ?? 0;
+    const c = financialData.charityPaid ?? 0;
+    const e = financialData.employeePaid ?? 0;
+    
+    // If familyPaid is not sent (older backend), we have a dilemma because familyTotal
+    // was repurposed to be the discount. But in current sequence, we updated backend first.
+    return f + c + e;
+  }, [financialData.familyPaid, financialData.charityPaid, financialData.employeePaid]);
 
   /** Total at checkout list prices — before discounts, returns and any deductions. */
   const grossSalesDisplay = useMemo(
@@ -137,6 +154,9 @@ const FinancialSummary = () => {
   const chartPalette = useMemo(
     () => ({
       profitLine: '#0d9488',
+      profitBar: '#2dd4bf', // Teal/Cyan for Profit Bar
+      grossBar: '#f59e0b', // Amber for Gross
+      netBar: '#10b981',   // Emerald for Net
       volUp: '#16a34a',
       volDown: '#dc2626',
     }),
@@ -148,14 +168,11 @@ const FinancialSummary = () => {
     const { volUp, volDown } = chartPalette;
     const t = financialData.trend || [];
     return t.map((row, i) => {
-      if (i === 0) {
-        return { ...row, barFill: volUp };
-      }
-      const prevSales = t[i - 1].sales;
-      const salesUp = row.sales >= prevSales;
+      const prev = t[i - 1]?.netSales || 0;
+      const isUp = row.netSales >= prev;
       return {
         ...row,
-        barFill: salesUp ? volUp : volDown,
+        barFill: isUp ? volUp : volDown,
       };
     });
   }, [financialData.trend, chartPalette]);
@@ -556,30 +573,30 @@ const FinancialSummary = () => {
                       Sales &amp; profit
                     </h3>
                     <p className="mt-1 max-w-md text-xs text-gray-600 dark:text-gray-300 leading-relaxed">
-                      Bars show each day&apos;s sales (green if higher than the day before, red if lower). The teal line is net profit.
+                      Bars show daily Gross Sales, Net Sales and Net Profit.
                     </p>
                   </div>
-                  <div className="flex flex-wrap justify-end gap-3 text-xs font-medium text-gray-700 dark:text-gray-300">
+                  <div className="flex flex-wrap justify-end gap-3 text-xs font-medium text-gray-700 dark:text-gray-300 uppercase">
                     <span className="flex items-center gap-1.5">
                       <span
                         className="h-2 w-2 rounded-sm"
-                        style={{ backgroundColor: chartPalette.profitLine }}
+                        style={{ backgroundColor: chartPalette.grossBar }}
+                      />
+                      Gross Sales (Excluding Returns)
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: chartPalette.netBar }}
+                      />
+                      Net sales
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className="h-2 w-2 rounded-sm"
+                        style={{ backgroundColor: chartPalette.profitBar }}
                       />
                       Net profit
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className="h-2 w-2 rounded-sm"
-                        style={{ backgroundColor: chartPalette.volUp }}
-                      />
-                      Sales up
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <span
-                        className="h-2 w-2 rounded-sm"
-                        style={{ backgroundColor: chartPalette.volDown }}
-                      />
-                      Sales down
                     </span>
                   </div>
                 </div>
@@ -589,6 +606,8 @@ const FinancialSummary = () => {
                       <ComposedChart
                         data={trendChartData}
                         margin={{ top: 8, right: 4, left: 0, bottom: 0 }}
+                        barGap={0}
+                        barCategoryGap="15%"
                       >
                         <CartesianGrid stroke="#cbd5e1" strokeDasharray="3 3" vertical={false} />
                         <XAxis
@@ -628,34 +647,30 @@ const FinancialSummary = () => {
                         />
                         <Bar
                           yAxisId="vol"
-                          dataKey="sales"
-                          name="Daily sales"
+                          dataKey="grossSales"
+                          name="Gross sales (Exc. Returns)"
+                          fill={chartPalette.grossBar}
+                          fillOpacity={0.6}
                           radius={[2, 2, 0, 0]}
-                          maxBarSize={32}
-                        >
-                          {trendChartData.map((entry, index) => (
-                            <Cell
-                              key={`${entry.date}-${index}`}
-                              fill={entry.barFill}
-                              fillOpacity={0.72}
-                            />
-                          ))}
-                        </Bar>
-                        <Line
-                          yAxisId="profit"
-                          type="monotone"
+                          maxBarSize={20}
+                        />
+                        <Bar
+                          yAxisId="vol"
+                          dataKey="netSales"
+                          name="Net sales"
+                          fill={chartPalette.netBar}
+                          fillOpacity={0.9}
+                          radius={[2, 2, 0, 0]}
+                          maxBarSize={20}
+                        />
+                        <Bar
+                          yAxisId="vol"
                           dataKey="profit"
                           name="Net profit"
-                          stroke={chartPalette.profitLine}
-                          strokeWidth={2.5}
-                          dot={false}
-                          isAnimationActive={false}
-                          activeDot={{
-                            r: 5,
-                            strokeWidth: 2,
-                            stroke: '#fff',
-                            fill: chartPalette.profitLine,
-                          }}
+                          fill={chartPalette.profitBar}
+                          fillOpacity={0.8}
+                          radius={[2, 2, 0, 0]}
+                          maxBarSize={20}
                         />
                       </ComposedChart>
                     </ResponsiveContainer>

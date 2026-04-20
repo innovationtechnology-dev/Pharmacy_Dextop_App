@@ -14,6 +14,7 @@ export type Channels =
   | 'sale-create-reply' | 'sale-get-all-reply' | 'sale-update-reply'
   | 'financial-get-monthly' | 'financial-get-monthly-reply'
   | 'financial-get-date-range' | 'financial-get-date-range-reply'
+  | 'financial-get-spark-range' | 'financial-get-spark-range-reply'
   | 'sales-get-summary-range' | 'sales-get-summary-range-reply'
   | 'sales-export-csv' | 'sales-export-csv-reply'
   | 'sales-get-flat-rows' | 'sales-get-flat-rows-reply'

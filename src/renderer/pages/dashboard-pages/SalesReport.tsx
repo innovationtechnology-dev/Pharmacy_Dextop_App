@@ -583,11 +583,6 @@ export default function SalesReport() {
                       <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={`${row.customerName || 'Walk-in'} - ${row.saleType || 'Regular'}`}>
                         <div className="flex items-center gap-2">
                           <span>{row.customerName || 'Walk-in Customer'}</span>
-                          {(row.additionalDiscount ?? 0) > 0 && (
-                            <span className="inline-flex items-center px-1.5 py-0.5 bg-amber-100 dark:bg-amber-900/30 border border-amber-300 dark:border-amber-700 rounded text-[8px] font-bold text-amber-700 dark:text-amber-400 whitespace-nowrap">
-                              Special Disc. -{row.additionalDiscount}%
-                            </span>
-                          )}
                         </div>
                       </div>
                       <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
@@ -739,9 +734,6 @@ export default function SalesReport() {
                                   -{getCurrencySymbol()}
                                   {(row.children || []).reduce((s, it) => s + (it.returnedTotal || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
-                              )}
-                              {(row.additionalDiscountAmount ?? 0) > 0 && (
-                                <div><span className="font-bold opacity-70 uppercase mr-1">Extra Disc:</span> -{getCurrencySymbol()}{row.additionalDiscountAmount?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                               )}
                             </div>
                             <div className="flex items-center gap-4 ml-auto">

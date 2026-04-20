@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   XAxis,
   YAxis,
@@ -92,7 +92,11 @@ type FinancialRangeKpis = {
   employeeTotal: number;
   saleReturnsTotal: number;
   profit: number;
+  trend?: any[];
 };
+
+/** Matches main process getFinancialSparkForDateRange (same basis as financial-get-date-range). */
+type SalesOverviewSparkMonth = { x: string; gross: number; net: number; profit: number };
 
 const buildTotals = (sales: SaleRecord[], purchases: PurchaseRecord[], medicines: MedicineRecord[], saleReturnsTotal: number) => {
   const revenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
@@ -254,25 +258,6 @@ const buildSalesSeries = (
   return data;
 };
 
-const buildRevenueSpark = (sales: SaleRecord[], returns: any[]) => {
-  const now = new Date();
-  const months: { x: string; gross: number; net: number }[] = [];
-  for (let i = 11; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const monthSales = sales.filter((sale) => sale.createdAt && new Date(sale.createdAt).getFullYear() === date.getFullYear() && new Date(sale.createdAt).getMonth() === date.getMonth());
-    const monthReturns = returns.filter((ret) => ret.createdAt && new Date(ret.createdAt).getFullYear() === date.getFullYear() && new Date(ret.createdAt).getMonth() === date.getMonth());
-    
-    const gross = monthSales.reduce((sum, sale) => sum + (sale.subtotal || sale.total || 0), 0);
-    const invoiced = monthSales.reduce((sum, sale) => sum + (sale.total || 0), 0);
-    const deductions = monthSales.filter(s => ['Family/Relatives', 'Charity', 'Employee'].includes(s.saleType || '')).reduce((sum, s) => sum + (s.total || 0), 0);
-    const refunded = monthReturns.reduce((sum, ret) => sum + (ret.total || 0), 0);
-    
-    const net = Math.max(0, invoiced - deductions - refunded);
-    months.push({ x: date.toLocaleString('default', { month: 'short' }), gross, net });
-  }
-  return months;
-};
-
 const getDefaultKpiDates = () => {
   const now = new Date();
   const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -300,6 +285,7 @@ const Dashboard = () => {
   const [kpiFromDate, setKpiFromDate] = useState<string>(defaultDates.from);
   const [kpiToDate, setKpiToDate] = useState<string>(defaultDates.to);
   const [recentOrdersPage, setRecentOrdersPage] = useState(1);
+  const [spark12m, setSpark12m] = useState<SalesOverviewSparkMonth[] | null>(null);
   const RECENT_ORDERS_PER_PAGE = 20;
   const formatCurrency = (value: number) => {
     const currency = pharmacySettings.currency || 'USD';
@@ -319,23 +305,30 @@ const Dashboard = () => {
       const isAboveAvg = value >= avg;
 
       return (
-        <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-white/20 dark:border-gray-700/50 p-3 rounded-xl shadow-2xl space-y-2 min-w-[140px] z-[1000] ring-1 ring-black/5">
+        <div className="bg-white/95 dark:bg-gray-800/95 backdrop-blur-xl border border-white/20 dark:border-gray-700/50 p-3 rounded-xl shadow-2xl space-y-0 min-w-[140px] z-[1000] ring-1 ring-black/5 dark:ring-white/30">
           <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700/50 pb-1.5 mb-1">
             <p className="text-[9px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-widest">{label}</p>
             <div className={`w-1.5 h-1.5 rounded-full ${isAboveAvg ? 'bg-emerald-500' : 'bg-amber-500'}`} />
           </div>
           
           <div className="space-y-0">
-            <p className="text-[9px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Gross Sales</p>
+            <p className="text-[9px] font-medium text-gray-900 dark:text-gray-200 uppercase tracking-wide">Gross Sales (Exc. Returns)</p>
             <p className="text-base font-bold text-gray-900 dark:text-white leading-none">
               {formatCurrency(value)}
             </p>
           </div>
 
-          <div className="space-y-0 pt-2 border-t border-gray-100 dark:border-gray-700/50 mt-2">
-            <p className="text-[9px] font-medium text-teal-600/70 dark:text-teal-400/70 uppercase tracking-wide">Net Sales (Est.)</p>
-            <p className="text-sm font-bold text-teal-700 dark:text-teal-400 leading-none">
+          <div className="space-y-0 pt-2 border-t border-gray-100 dark:border-gray-700/50">
+            <p className="text-[9px] font-medium text-[#077531]/80 dark:text-[#10B981] uppercase tracking-wide">Net Sales</p>
+            <p className="text-sm font-bold text-[#077531]/80 dark:text-[#10B981]/80 leading-none">
               {formatCurrency(payload[0].payload.net || 0)}
+            </p>
+          </div>
+
+          <div className="space-y-0 pt-2 border-t border-gray-100 dark:border-gray-700/50 mt-2">
+            <p className="text-[9px] font-medium text-purple-600/70 dark:text-purple-400/70 uppercase tracking-wide">Net Profit</p>
+            <p className="text-sm font-bold text-purple-700 dark:text-purple-400 leading-none">
+              {formatCurrency(payload[0].payload.profit || 0)}
             </p>
           </div>
 
@@ -353,6 +346,40 @@ const Dashboard = () => {
     }
     return null;
   };
+
+  // Load sale returns filtered by date range
+  const loadSaleReturns = useCallback(async () => {
+    try {
+      const returns = await invokeIpc<any[]>(
+        'sale-return-get-by-date-range',
+        'sale-return-get-by-date-range-reply',
+        [kpiFromDate, kpiToDate]
+      );
+      const total = (returns || []).reduce((sum: number, ret: any) => sum + (ret.total || 0), 0);
+      setSaleReturnsTotal(total);
+    } catch (err) {
+      console.error('Failed to load sale returns:', err);
+      setSaleReturnsTotal(0);
+    }
+  }, [kpiFromDate, kpiToDate]);
+
+  const loadSparkSeries = useCallback(async () => {
+    if (!kpiFromDate || !kpiToDate) return;
+    try {
+      const sparkSeries = await invokeIpc<SalesOverviewSparkMonth[]>(
+        'financial-get-spark-range',
+        'financial-get-spark-range-reply',
+        [kpiFromDate, kpiToDate]
+      );
+      setSpark12m(Array.isArray(sparkSeries) && sparkSeries.length ? sparkSeries : null);
+    } catch (sparkErr) {
+      console.error('Failed to load sales overview spark:', sparkErr);
+      setSpark12m(null);
+    }
+  }, [kpiFromDate, kpiToDate]);
+
+  const loadSparkSeriesRef = useRef(loadSparkSeries);
+  loadSparkSeriesRef.current = loadSparkSeries;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -373,23 +400,12 @@ const Dashboard = () => {
     } finally {
       setLoading(false);
     }
+    // After the dashboard is allowed to render, load spark in a separate tick so a slow / stuck
+    // financial spark IPC never blocks setLoading(false) (avoids endless “Loading live metrics…”).
+    queueMicrotask(() => {
+      void loadSparkSeriesRef.current();
+    });
   }, []);
-
-  // Load sale returns filtered by date range
-  const loadSaleReturns = useCallback(async () => {
-    try {
-      const returns = await invokeIpc<any[]>(
-        'sale-return-get-by-date-range',
-        'sale-return-get-by-date-range-reply',
-        [kpiFromDate, kpiToDate]
-      );
-      const total = (returns || []).reduce((sum: number, ret: any) => sum + (ret.total || 0), 0);
-      setSaleReturnsTotal(total);
-    } catch (err) {
-      console.error('Failed to load sale returns:', err);
-      setSaleReturnsTotal(0);
-    }
-  }, [kpiFromDate, kpiToDate]);
 
   useEffect(() => {
     loadSaleReturns();
@@ -398,6 +414,11 @@ const Dashboard = () => {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    if (!kpiFromDate || !kpiToDate) return;
+    void loadSparkSeriesRef.current();
+  }, [kpiFromDate, kpiToDate]);
 
   useEffect(() => {
     setHeader({
@@ -475,6 +496,7 @@ const Dashboard = () => {
           employeeTotal: employee,
           saleReturnsTotal: returns,
           profit: response.profit,
+          trend: response.trend,
         });
       } catch (err) {
         console.error('Failed to fetch financial summary for KPI range:', err);
@@ -564,8 +586,24 @@ const Dashboard = () => {
     [displayTotals]
   );
 
-  const chartData = useMemo(() => buildSalesSeries(sales, allSaleReturns, range), [sales, allSaleReturns, range]);
-  const sparkData = useMemo(() => buildRevenueSpark(sales, allSaleReturns), [sales, allSaleReturns]);
+  const chartData = useMemo(() => {
+    // If we have accurate trend data from the backend KPI fetch, use it!
+    if (financialRange?.trend && financialRange.trend.length > 0) {
+      return financialRange.trend.map(t => ({
+        day: t.date.split('-').length > 2 ? t.date.slice(5) : t.date, // Format date for label
+        gross: t.grossSales,
+        net: t.netSales,
+        profit: t.profit,
+        value: t.grossSales // Keep 'value' for backward compatibility if needed
+      }));
+    }
+    // Fallback to local calculation
+    return buildSalesSeries(sales, allSaleReturns, range).map(d => ({ ...d, gross: d.value, profit: 0 }));
+  }, [financialRange, sales, allSaleReturns, range]);
+  const sparkData = useMemo(
+    () => (spark12m && spark12m.length > 0 ? spark12m : []),
+    [spark12m]
+  );
   const totalRecentPages = useMemo(() => Math.max(1, Math.ceil(sales.length / RECENT_ORDERS_PER_PAGE)), [sales]);
   const recentOrders = useMemo(() => {
     const start = (recentOrdersPage - 1) * RECENT_ORDERS_PER_PAGE;
@@ -734,6 +772,7 @@ const Dashboard = () => {
                     <Tooltip 
                       cursor={{ fill: 'rgba(59, 130, 246, 0.03)', radius: 8 }}
                       content={<CustomTooltip />}
+                      offset={30}
                     />
 
                     {/* Average Reference Line */}
@@ -757,9 +796,9 @@ const Dashboard = () => {
                     
                     {/* Main Interactive Bar - Gross */}
                     <Bar 
-                      dataKey="value" 
+                      dataKey="gross" 
                       radius={[4, 4, 0, 0]} 
-                      barSize={range === 'this_year' ? 12 : 6}
+                      barSize={range === 'this_year' ? 20 : 10}
                       animationDuration={1500}
                       animationEasing="ease-out"
                     >
@@ -776,7 +815,7 @@ const Dashboard = () => {
                     <Bar 
                       dataKey="net" 
                       radius={[4, 4, 0, 0]} 
-                      barSize={range === 'this_year' ? 12 : 6}
+                      barSize={range === 'this_year' ? 18 : 8}
                       animationDuration={1500}
                       animationEasing="ease-out"
                     >
@@ -788,6 +827,17 @@ const Dashboard = () => {
                         />
                       ))}
                     </Bar>
+
+                    {/* Main Interactive Bar - Profit */}
+                    <Bar 
+                      dataKey="profit" 
+                      radius={[4, 4, 0, 0]} 
+                      barSize={range === 'this_year' ? 12 : 6}
+                      fill="#8b5cf6"
+                      fillOpacity={0.8}
+                      animationDuration={1500}
+                      animationEasing="ease-out"
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -802,47 +852,107 @@ const Dashboard = () => {
               </div>
 
               <div className="flex-1 flex flex-col min-h-0 p-4 overflow-y-auto">
-                <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <div className="text-2xl font-black text-blue-600 dark:text-blue-400 tracking-tight">
+                <div className="mb-4 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex-1">
+                    <div className="text-xl font-black text-blue-600 dark:text-blue-400 tracking-tight">
                       {formatCurrency(displayTotals.grossSubtotal ?? displayTotals.revenue)}
                     </div>
-                    <div className="text-xs text-blue-600/70 dark:text-blue-400/80 font-bold uppercase tracking-wide">
-                      Gross Sales <span className="text-[10px] text-gray-500 normal-case">(before discounts & returns)</span>
+                    <div className="text-[10px] text-blue-600/70 dark:text-blue-400/80 font-bold uppercase tracking-widest leading-tight">
+                      Gross Sales <span className="text-[8px] text-gray-500 normal-case font-medium block opacity-60">(Before disc. & returns)</span>
                     </div>
                   </div>
-                  <div className="sm:text-right">
-                    <div className="text-xl font-bold text-[#077531] dark:text-[#10B981] tracking-tight">
+                  <div className="flex-1 sm:text-center">
+                    <div className="text-xl font-black text-[#077531] dark:text-[#10B981] tracking-tight">
                       {formatCurrency(displayTotals.netRevenue)}
                     </div>
-                    <div className="text-[11px] text-[#077531]/80 dark:text-[#10B981]/80 font-bold uppercase tracking-widest">
-                      Net Sales <span className="text-[9px] text-gray-500 uppercase tracking-wider">(After returns)</span>
+                    <div className="text-[10px] text-[#077531]/80 dark:text-[#10B981]/80 font-bold uppercase tracking-widest leading-tight">
+                      Net Sales <span className="text-[8px] text-gray-500 normal-case font-medium block opacity-60">(After disc. & returns)</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 sm:text-right">
+                    <div className="text-xl font-black text-purple-600 dark:text-purple-400 tracking-tight">
+                      {formatCurrency(displayTotals.profit)}
+                    </div>
+                    <div className="text-[10px] text-purple-600/80 dark:text-purple-400/80 font-bold uppercase tracking-widest leading-tight">
+                      Net Profit <span className="text-[8px] text-gray-500 normal-case font-medium block opacity-60">(Actual gain)</span>
                     </div>
                   </div>
                 </div>
 
                 <div className="h-[120px] w-full flex-shrink-0 mb-4">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={sparkData}>
-                      <defs>
-                        <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                        </linearGradient>
-                        <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
-                          <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <Tooltip 
-                        contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', fontSize: '10px' }}
-                        formatter={(value: any, name: any) => [formatCurrency(Number(value) || 0), name === 'gross' ? 'Gross Sales' : 'Net Sales (Est.)']}
-                        labelStyle={{ display: 'none' }} // Hide x-axis index/date to keep it clean
-                      />
-                      <Area type="monotone" dataKey="gross" stroke="#3B82F6" fill="url(#colorGross)" strokeWidth={2} dot={{ r: 2, fill: '#3B82F6' }} activeDot={{ r: 4 }} />
-                      <Area type="monotone" dataKey="net" stroke="#10B981" fill="url(#colorNet)" strokeWidth={2} dot={{ r: 2, fill: '#10B981' }} activeDot={{ r: 4 }} />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {sparkData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={sparkData}>
+                        <defs>
+                          <linearGradient id="colorGross" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="colorNet" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#10B981" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#10B981" stopOpacity={0} />
+                          </linearGradient>
+                          <linearGradient id="colorProfit" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.3} />
+                            <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <Tooltip
+                          offset={30}
+                          contentStyle={{
+                            borderRadius: '8px',
+                            border: 'none',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                            fontSize: '10px',
+                          }}
+                          formatter={(value: any, name: any) => {
+                            const n = Number(value) || 0;
+                            const label =
+                              name === 'gross'
+                                ? 'Gross Sales'
+                                : name === 'net'
+                                  ? 'Net Sales'
+                                  : n < 0
+                                    ? 'Net Loss'
+                                    : 'Net Profit';
+                            return [formatCurrency(n), label];
+                          }}
+                          labelStyle={{ display: 'none' }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="gross"
+                          stroke="#3B82F6"
+                          fill="url(#colorGross)"
+                          strokeWidth={2}
+                          dot={{ r: 2, fill: '#3B82F6' }}
+                          activeDot={{ r: 4 }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="net"
+                          stroke="#10B981"
+                          fill="url(#colorNet)"
+                          strokeWidth={1.5}
+                          dot={{ r: 1, fill: '#10B981' }}
+                          activeDot={{ r: 3 }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="profit"
+                          stroke="#8B5CF6"
+                          fill="url(#colorProfit)"
+                          strokeWidth={1}
+                          dot={{ r: 1, fill: '#8B5CF6' }}
+                          activeDot={{ r: 3 }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex h-full min-h-[120px] items-center justify-center text-xs italic text-gray-400 dark:text-gray-500">
+                      Sales trend chart unavailable
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2 mt-auto">

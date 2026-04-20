@@ -174,7 +174,7 @@ export class MedicineController {
         ].map(row => row.map(esc).join(',')).join('\n');
 
         // Column headers
-        const columnHeaders = ['Item', 'Date', 'Sale ID', 'Customer', 'Phone', 'Medicine', 'Qty', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Extra Disc', 'Total'].map(esc).join(',');
+        const columnHeaders = ['Item', 'Date', 'Sale ID', 'Customer', 'Phone', 'Medicine', 'Qty', 'Unit Price', 'Subtotal', 'Discount', 'Tax', 'Total'].map(esc).join(',');
 
         // Data rows
         const dataRows = rows.map((r: any, index: number) => {
@@ -192,7 +192,6 @@ export class MedicineController {
             `${currencySymbol}${r.subtotal.toFixed(2)}`,
             `${currencySymbol}${r.discountAmount.toFixed(2)}`,
             `${currencySymbol}${r.taxAmount.toFixed(2)}`,
-            extraDiscText,
             `${currencySymbol}${r.total.toFixed(2)}`
           ].map(esc).join(',');
         }).join('\n');
@@ -205,7 +204,6 @@ export class MedicineController {
           ['Subtotal', `${currencySymbol}${subtotal.toFixed(2)}`],
           ['Total Discount', `${currencySymbol}${totalDiscount.toFixed(2)}`],
           ['Total Tax', `${currencySymbol}${totalTax.toFixed(2)}`],
-          ['Total Extra Discount', `${currencySymbol}${totalAdditionalDiscount.toFixed(2)}`],
           ['Grand Total', `${currencySymbol}${grandTotal.toFixed(2)}`],
           [''],
           ['Remark: Computer Generated Report'],
@@ -307,7 +305,6 @@ export class MedicineController {
                 <th class="text-right" style="width: 90px;">Subtotal</th>
                 <th class="text-right" style="width: 80px;">Disc.</th>
                 <th class="text-right" style="width: 70px;">Tax</th>
-                <th class="text-right" style="width: 70px;">Extra Disc</th>
                 <th class="text-right" style="width: 100px;">Total</th>
               </tr>
             </thead>
@@ -328,7 +325,6 @@ export class MedicineController {
                   <td class="text-right">${currencySymbol}${r.subtotal.toFixed(2)}</td>
                   <td class="text-right">${currencySymbol}${r.discountAmount.toFixed(2)}</td>
                   <td class="text-right">${currencySymbol}${r.taxAmount.toFixed(2)}</td>
-                  <td class="text-right">${extraDiscText}</td>
                   <td class="text-right" style="font-weight: bold;">${currencySymbol}${r.total.toFixed(2)}</td>
                 </tr>
               `;}).join('')}
@@ -347,8 +343,7 @@ export class MedicineController {
                   <strong>Sales Breakdown:</strong><br/>
                   Subtotal: ${currencySymbol}${subtotal.toFixed(2)}<br/>
                   Total Discount: ${currencySymbol}${totalDiscount.toFixed(2)}<br/>
-                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}<br/>
-                  Total Extra Discount: ${currencySymbol}${totalAdditionalDiscount.toFixed(2)}
+                  Total Tax: ${currencySymbol}${totalTax.toFixed(2)}
                 </div>
                 <div class="remark">
                   <strong>Remark:</strong> Computer Generated Report
@@ -382,10 +377,6 @@ export class MedicineController {
                   <div class="totals-row">
                     <span class="totals-label">Tax:</span>
                     <span class="totals-value">${currencySymbol}${totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
-                  <div class="totals-row">
-                    <span class="totals-label">Extra Discount:</span>
-                    <span class="totals-value">-${currencySymbol}${totalAdditionalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
                   <div class="totals-row grand">
                     <span class="totals-label">Grand Total:</span>
@@ -674,6 +665,18 @@ export class MedicineController {
       } catch (error) {
         console.error('Get financial summary by date range error:', error);
         event.reply('financial-get-date-range-reply', { success: false, error: String(error) });
+      }
+    });
+
+    ipcMain.on('financial-get-spark-range', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const fromDate = (args[0] as string) || '';
+        const toDate = (args[1] as string) || '';
+        const series = await this.salesService.getFinancialSparkForDateRange(fromDate, toDate);
+        event.reply('financial-get-spark-range-reply', { success: true, data: series });
+      } catch (error) {
+        console.error('Get financial spark range error:', error);
+        event.reply('financial-get-spark-range-reply', { success: false, error: String(error) });
       }
     });
 

@@ -1085,13 +1085,16 @@ export class SalesService {
     familyTotal: number;
     charityTotal: number;
     employeeTotal: number;
+    familyPaid: number;
+    charityPaid: number;
+    employeePaid: number;
     /** Gross list (pre–line discount) − charity / relative / employee − returns; same basis as Financial Summary “Net sales” */
     netSalesGrossBasis: number;
     netRevenue: number;
     paymentTotal: number;
     remainingPayment: number;
     profit: number;
-    trend: Array<{ date: string; sales: number; purchases: number; profit: number }>;
+    trend: Array<{ date: string; grossSales: number; netSales: number; sales: number; purchases: number; profit: number }>;
   }> {
     // Use sale_items for accurate totals — sale headers' discount_total / tax_total / total
     // may have been modified by legacy return adjustments; sale_items are never modified.
@@ -1103,9 +1106,12 @@ export class SalesService {
         COALESCE(SUM(si.total), 0)            as selling_total,
         COALESCE(SUM(si.discount_amount), 0)  as sale_discount_total,
         COALESCE(SUM(si.tax_amount), 0)       as sale_tax_total,
-        COALESCE(SUM(CASE WHEN s.sale_type = 'Family/Relatives' THEN si.total ELSE 0 END), 0) as family_total,
-        COALESCE(SUM(CASE WHEN s.sale_type = 'Charity'           THEN si.total ELSE 0 END), 0) as charity_total,
-        COALESCE(SUM(CASE WHEN s.sale_type = 'Employee'          THEN si.total ELSE 0 END), 0) as employee_total
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Family/Relatives' THEN si.total ELSE 0 END), 0) as family_paid,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Charity'           THEN si.total ELSE 0 END), 0) as charity_paid,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Employee'          THEN si.total ELSE 0 END), 0) as employee_paid,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Family/Relatives' THEN si.discount_amount ELSE 0 END), 0) as family_discount,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Charity'           THEN si.discount_amount ELSE 0 END), 0) as charity_discount,
+        COALESCE(SUM(CASE WHEN s.sale_type = 'Employee'          THEN si.discount_amount ELSE 0 END), 0) as employee_discount
       FROM sale_items si
       JOIN sales s ON si.sale_id = s.id
       WHERE date(s.created_at) >= date(?)
@@ -1116,11 +1122,17 @@ export class SalesService {
     const sellingTotal    = salesResult?.selling_total     || 0;
     const saleDiscountTotal = salesResult?.sale_discount_total || 0;
     const saleTaxTotal    = salesResult?.sale_tax_total    || 0;
-    const familyTotal     = salesResult?.family_total      || 0;
-    const charityTotal    = salesResult?.charity_total     || 0;
-    const employeeTotal   = salesResult?.employee_total    || 0;
-    // Company expenses = medicines given to relatives / charity / employees
-    const companyExpenses = familyTotal + charityTotal + employeeTotal;
+
+    // Use PAID totals for internal math (to remove them from Net Revenue)
+    const familyPaid      = salesResult?.family_paid      || 0;
+    const charityPaid     = salesResult?.charity_paid     || 0;
+    const employeePaid    = salesResult?.employee_paid    || 0;
+    const companyExpenses = familyPaid + charityPaid + employeePaid;
+
+    // Use DISCOUNT totals for UI display as requested by user
+    const familyTotal     = salesResult?.family_discount   || 0;
+    const charityTotal    = salesResult?.charity_discount  || 0;
+    const employeeTotal   = salesResult?.employee_discount || 0;
 
     // Get sale returns total and their cost for this date range
     const saleReturnsTotal = await this.saleReturnService.getSaleReturnsTotalByDateRange(fromDate, toDate);
@@ -1162,15 +1174,15 @@ export class SalesService {
       JOIN sales s ON si.sale_id = s.id
       WHERE date(s.created_at) >= date(?) 
         AND date(s.created_at) <= date(?)
-        AND (s.sale_type IS NULL OR s.sale_type NOT IN ('Family/Relatives', 'Charity', 'Employee'))
     `;
     const cogsResult = await this.dbService.queryOne(cogsSql, [fromDate, toDate]);
     const grossCogs = cogsResult?.total_cogs || 0;
 
-    // Net Revenue = invoiced total − company expenses − returns (basis for profit / “invoiced net”).
-    const netRevenue = sellingTotal - companyExpenses - saleReturnsTotal;
-    // Net sales (merchandise KPI) = list subtotal − discounts − company expenses − returns.
-    const netSalesGrossBasis = Math.max(0, grossSubtotal - saleDiscountTotal - companyExpenses - saleReturnsTotal);
+    // Net Revenue = invoiced total − returns (basis for profit / “invoiced net”).
+    // (Note: Relative/Charity/Employee paid amounts are now kept in sellingTotal)
+    const netRevenue = sellingTotal - saleReturnsTotal;
+    // Net sales (merchandise KPI) = list subtotal − discounts − returns.
+    const netSalesGrossBasis = Math.max(0, grossSubtotal - saleDiscountTotal - saleReturnsTotal);
     // Net COGS = total COGS − cost of returned items
     const netCogs = grossCogs - saleReturnsCost;
 
@@ -1203,17 +1215,16 @@ export class SalesService {
     // Profit = Net Revenue (gross − company expenses − returns) − Net COGS
     const profit = netRevenue - netCogs;
 
-    // Trend calculation - exclude charity/employee/relative from both sales and costs
     const salesTrendSql = `
       SELECT
         date(s.created_at) as date,
-        SUM(si.total) as amount,
+        SUM(si.subtotal) as gross_amount,
+        SUM(si.total) as net_amount,
         SUM(CASE WHEN si.cost_subtotal > 0 THEN si.cost_subtotal ELSE si.pills * COALESCE((SELECT sb.cost_price_per_pill FROM stock_batches sb WHERE sb.medicine_id = si.medicine_id AND sb.qty_remaining > 0 ORDER BY date(sb.expiry_date) ASC, sb.id ASC LIMIT 1), 0) END) as cost
       FROM sales s
       JOIN sale_items si ON s.id = si.sale_id
       WHERE date(s.created_at) >= date(?) 
         AND date(s.created_at) <= date(?)
-        AND (s.sale_type IS NULL OR s.sale_type NOT IN ('Family/Relatives', 'Charity', 'Employee'))
       GROUP BY date(s.created_at)
     `;
     const purchasesTrendSql = `
@@ -1237,33 +1248,38 @@ export class SalesService {
     const purchasesTrend = await this.dbService.query(purchasesTrendSql, [fromDate, toDate]);
     const returnsTrend = await this.dbService.query(returnsTrendSql, [fromDate, toDate]);
 
-    const trendMap = new Map<string, { sales: number; purchases: number; cost: number }>();
+    const trendMap = new Map<string, { grossSales: number; netSales: number; purchases: number; cost: number }>();
 
     salesTrend.forEach((r: any) => {
-      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { grossSales: 0, netSales: 0, purchases: 0, cost: 0 });
       const current = trendMap.get(r.date)!;
-      current.sales = r.amount;
+      current.grossSales = r.gross_amount;
+      current.netSales = r.net_amount;
       current.cost = r.cost;
     });
 
     returnsTrend.forEach((r: any) => {
-      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { grossSales: 0, netSales: 0, purchases: 0, cost: 0 });
       const current = trendMap.get(r.date)!;
-      current.sales -= r.return_amount; // Net sales for the day
-      current.cost -= r.return_cost;   // Net cost for the day
+      // For trend purposes, subtract returns from the daily sales to get a "net intake" view
+      current.grossSales -= r.return_amount; 
+      current.netSales -= r.return_amount;
+      current.cost -= r.return_cost;
     });
 
     purchasesTrend.forEach((r: any) => {
-      if (!trendMap.has(r.date)) trendMap.set(r.date, { sales: 0, purchases: 0, cost: 0 });
+      if (!trendMap.has(r.date)) trendMap.set(r.date, { grossSales: 0, netSales: 0, purchases: 0, cost: 0 });
       trendMap.get(r.date)!.purchases = r.amount;
     });
 
     const trend = Array.from(trendMap.entries())
       .map(([date, data]) => ({
         date,
-        sales: data.sales,
+        grossSales: data.grossSales,
+        netSales: data.netSales,
+        sales: data.netSales, // Keep 'sales' for backward compatibility in parts of UI that expect it
         purchases: data.purchases,
-        profit: data.sales - data.cost
+        profit: data.netSales - data.cost
       }))
       .sort((a, b) => a.date.localeCompare(b.date));
 
@@ -1281,6 +1297,9 @@ export class SalesService {
       familyTotal,
       charityTotal,
       employeeTotal,
+      familyPaid,
+      charityPaid,
+      employeePaid,
       netSalesGrossBasis,
       netRevenue,
       paymentTotal: sellingTotal, // Restore paymentTotal (assumed to be sellingTotal based on original SQL)
@@ -1288,6 +1307,167 @@ export class SalesService {
       profit,
       trend,
     };
+  }
+
+  /**
+   * Sales Overview spark / area chart for an arbitrary KPI date range.
+   * Same gross / net revenue / profit definitions as getFinancialSummaryByDateRange (line items,
+   * returns, FIFO-style COGS), grouped by day when the span is short, otherwise by calendar month.
+   */
+  public async getFinancialSparkForDateRange(
+    fromDate: string,
+    toDate: string
+  ): Promise<{ x: string; gross: number; net: number; profit: number }[]> {
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    let rangeFrom = (fromDate || '').slice(0, 10);
+    let rangeTo = (toDate || '').slice(0, 10);
+    if (!rangeFrom || !rangeTo) return [];
+    if (rangeFrom > rangeTo) {
+      const t = rangeFrom;
+      rangeFrom = rangeTo;
+      rangeTo = t;
+    }
+
+    const dFrom = new Date(`${rangeFrom}T12:00:00`);
+    const dTo = new Date(`${rangeTo}T12:00:00`);
+    if (Number.isNaN(dFrom.getTime()) || Number.isNaN(dTo.getTime())) return [];
+
+    const daysSpan = Math.floor((dTo.getTime() - dFrom.getTime()) / 86400000) + 1;
+    const useDaily = daysSpan <= 45;
+
+    const salesBucketExpr = useDaily ? `date(s.created_at)` : `strftime('%Y-%m', s.created_at)`;
+    const returnsBucketExpr = useDaily ? `date(created_at)` : `strftime('%Y-%m', created_at)`;
+    const returnsJoinBucketExpr = useDaily ? `date(sr.created_at)` : `strftime('%Y-%m', sr.created_at)`;
+    const cogsBucketExpr = useDaily ? `date(s.created_at)` : `strftime('%Y-%m', s.created_at)`;
+
+    const salesByBucketSql = `
+      SELECT
+        ${salesBucketExpr} AS bucket,
+        COALESCE(SUM(si.subtotal), 0) AS gross_subtotal,
+        COALESCE(SUM(si.total), 0) AS selling_total
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      WHERE date(s.created_at) >= date(?)
+        AND date(s.created_at) <= date(?)
+      GROUP BY ${salesBucketExpr}
+    `;
+
+    const returnsTotalByBucketSql = `
+      SELECT
+        ${returnsBucketExpr} AS bucket,
+        COALESCE(SUM(total), 0) AS return_total
+      FROM sale_returns
+      WHERE date(created_at) >= date(?)
+        AND date(created_at) <= date(?)
+      GROUP BY ${returnsBucketExpr}
+    `;
+
+    const returnsCostByBucketSql = `
+      SELECT
+        ${returnsJoinBucketExpr} AS bucket,
+        COALESCE(SUM(sri.cost_subtotal), 0) AS return_cost
+      FROM sale_return_items sri
+      JOIN sale_returns sr ON sri.sale_return_id = sr.id
+      WHERE date(sr.created_at) >= date(?)
+        AND date(sr.created_at) <= date(?)
+      GROUP BY ${returnsJoinBucketExpr}
+    `;
+
+    const cogsByBucketSql = `
+      SELECT
+        ${cogsBucketExpr} AS bucket,
+        COALESCE(SUM(
+          CASE
+            WHEN si.cost_subtotal > 0 THEN si.cost_subtotal
+            ELSE si.pills * COALESCE(
+              (SELECT sb.cost_price_per_pill
+               FROM stock_batches sb
+               WHERE sb.medicine_id = si.medicine_id
+                 AND sb.qty_remaining > 0
+               ORDER BY date(sb.expiry_date) ASC, sb.id ASC
+               LIMIT 1),
+              0
+            )
+          END
+        ), 0) AS total_cogs
+      FROM sale_items si
+      JOIN sales s ON si.sale_id = s.id
+      WHERE date(s.created_at) >= date(?)
+        AND date(s.created_at) <= date(?)
+      GROUP BY ${cogsBucketExpr}
+    `;
+
+    const [salesRows, retTotRows, retCostRows, cogsRows] = await Promise.all([
+      this.dbService.query(salesByBucketSql, [rangeFrom, rangeTo]),
+      this.dbService.query(returnsTotalByBucketSql, [rangeFrom, rangeTo]),
+      this.dbService.query(returnsCostByBucketSql, [rangeFrom, rangeTo]),
+      this.dbService.query(cogsByBucketSql, [rangeFrom, rangeTo]),
+    ]);
+
+    const salesMap = new Map<string, { gross: number; selling: number }>();
+    (salesRows as any[]).forEach((r) => {
+      const b = String(r.bucket);
+      salesMap.set(b, { gross: r.gross_subtotal || 0, selling: r.selling_total || 0 });
+    });
+    const retTotMap = new Map<string, number>();
+    (retTotRows as any[]).forEach((r) => retTotMap.set(String(r.bucket), r.return_total || 0));
+    const retCostMap = new Map<string, number>();
+    (retCostRows as any[]).forEach((r) => retCostMap.set(String(r.bucket), r.return_cost || 0));
+    const cogsMap = new Map<string, number>();
+    (cogsRows as any[]).forEach((r) => cogsMap.set(String(r.bucket), r.total_cogs || 0));
+
+    const orderedBuckets: string[] = [];
+    if (useDaily) {
+      let dayGuard = 0;
+      for (let d = new Date(dFrom); d <= dTo; d.setDate(d.getDate() + 1)) {
+        if (++dayGuard > 800) break;
+        orderedBuckets.push(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+      }
+    } else {
+      const fy = dFrom.getFullYear();
+      const fm = dFrom.getMonth() + 1;
+      const ty = dTo.getFullYear();
+      const tm = dTo.getMonth() + 1;
+      let y = fy;
+      let m = fm;
+      let monthGuard = 0;
+      while (y < ty || (y === ty && m <= tm)) {
+        if (++monthGuard > 600) break;
+        orderedBuckets.push(`${y}-${pad(m)}`);
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+      }
+    }
+
+    const labelForBucket = (bucket: string): string => {
+      if (useDaily) {
+        const [ys, ms, ds] = bucket.split('-').map((n) => parseInt(n, 10));
+        return new Date(ys, ms - 1, ds).toLocaleString('en-US', { month: 'short', day: 'numeric' });
+      }
+      const [ys, ms] = bucket.split('-').map((n) => parseInt(n, 10));
+      return new Date(ys, ms - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
+    };
+
+    return orderedBuckets.map((bucket) => {
+      const s = salesMap.get(bucket);
+      const gross = s?.gross ?? 0;
+      const selling = s?.selling ?? 0;
+      const saleReturnsTotal = retTotMap.get(bucket) ?? 0;
+      const saleReturnsCost = retCostMap.get(bucket) ?? 0;
+      const grossCogs = cogsMap.get(bucket) ?? 0;
+      const netRevenue = selling - saleReturnsTotal;
+      const netCogs = grossCogs - saleReturnsCost;
+      return {
+        x: labelForBucket(bucket),
+        gross,
+        net: netRevenue,
+        profit: netRevenue - netCogs,
+      };
+    });
   }
 }
 
