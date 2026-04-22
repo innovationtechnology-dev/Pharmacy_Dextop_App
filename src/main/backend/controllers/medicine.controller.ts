@@ -792,6 +792,103 @@ export class MedicineController {
         event.reply('medicine-seed-sample-reply', { success: false, error: String(error) });
       }
     });
+
+    // Get financial details for a specific medicine (analytics page)
+    ipcMain.on('medicine-get-financial-details', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const medicineId = args[0] as number;
+        const fromDate = (args[1] as string) || '';
+        const toDate = (args[2] as string) || '';
+
+        const db = this.medicineService['dbService'] as any;
+
+        // Build optional date predicates
+        const purchaseDateClause = fromDate && toDate
+          ? `AND datetime(p.created_at) >= datetime('${fromDate} 00:00:00') AND datetime(p.created_at) <= datetime('${toDate} 23:59:59')`
+          : '';
+        const saleDateClause = fromDate && toDate
+          ? `AND date(s.created_at) >= date('${fromDate}') AND date(s.created_at) <= date('${toDate}')`
+          : '';
+        const returnDateClause = fromDate && toDate
+          ? `AND date(sr.created_at) >= date('${fromDate}') AND date(sr.created_at) <= date('${toDate}')`
+          : '';
+
+        // Total purchased pills & cost
+        const purchaseRow = await db.queryOne(`
+          SELECT
+            COALESCE(SUM(pi.total_pills), 0) AS totalPurchasedQty,
+            COALESCE(SUM(pi.line_total), 0) AS totalPurchaseCost
+          FROM purchase_items pi
+          INNER JOIN purchases p ON p.id = pi.purchase_id
+          WHERE pi.medicine_id = ?
+          ${purchaseDateClause}
+        `, [medicineId]);
+
+        // Total sold pills & revenue (before returns)
+        const saleRow = await db.queryOne(`
+          SELECT
+            COALESCE(SUM(si.pills), 0) AS totalSoldQty,
+            COALESCE(SUM(si.total), 0) AS totalSaleRevenue,
+            COALESCE(SUM(si.cost_subtotal), 0) AS totalSaleCost
+          FROM sale_items si
+          INNER JOIN sales s ON s.id = si.sale_id
+          WHERE si.medicine_id = ?
+          ${saleDateClause}
+        `, [medicineId]);
+
+        // Total returned pills & refund amount
+        const returnRow = await db.queryOne(`
+          SELECT
+            COALESCE(SUM(sri.pills), 0) AS totalReturnedQty,
+            COALESCE(SUM(sri.total), 0) AS totalReturnAmount,
+            COALESCE(SUM(sri.cost_subtotal), 0) AS totalReturnCost
+          FROM sale_return_items sri
+          INNER JOIN sale_returns sr ON sr.id = sri.sale_return_id
+          WHERE sri.medicine_id = ?
+          ${returnDateClause}
+        `, [medicineId]);
+
+        // Remaining stock from stock_batches (live, not date-filtered)
+        const stockRow = await db.queryOne(`
+          SELECT COALESCE(SUM(qty_remaining), 0) AS remainingStock
+          FROM stock_batches
+          WHERE medicine_id = ?
+        `, [medicineId]);
+
+        const totalPurchasedQty = Number(purchaseRow?.totalPurchasedQty) || 0;
+        const totalPurchaseCost = Number(purchaseRow?.totalPurchaseCost) || 0;
+        const totalSoldQty = Number(saleRow?.totalSoldQty) || 0;
+        const totalSaleRevenue = Number(saleRow?.totalSaleRevenue) || 0;
+        const totalSaleCost = Number(saleRow?.totalSaleCost) || 0;
+        const totalReturnedQty = Number(returnRow?.totalReturnedQty) || 0;
+        const totalReturnAmount = Number(returnRow?.totalReturnAmount) || 0;
+        const totalReturnCost = Number(returnRow?.totalReturnCost) || 0;
+        const remainingStock = Number(stockRow?.remainingStock) || 0;
+
+        // Net revenue after returns; profit = net revenue - net cost
+        const netRevenue = totalSaleRevenue - totalReturnAmount;
+        const netCost = totalSaleCost - totalReturnCost;
+        const totalProfit = netRevenue - netCost;
+
+        event.reply('medicine-get-financial-details-reply', {
+          success: true,
+          data: {
+            totalPurchasedQty,
+            totalPurchaseCost,
+            totalSoldQty,
+            totalSaleRevenue,
+            totalReturnedQty,
+            totalReturnAmount,
+            remainingStock,
+            netRevenue,
+            totalProfit,
+          },
+        });
+      } catch (error) {
+        console.error('Get medicine financial details error:', error);
+        event.reply('medicine-get-financial-details-reply', { success: false, error: String(error) });
+      }
+    });
   }
 }
 

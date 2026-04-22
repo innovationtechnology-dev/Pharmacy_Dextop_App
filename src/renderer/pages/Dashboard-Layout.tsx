@@ -78,6 +78,7 @@ const Dashboard_Layout: React.FC = () => {
     '/alerts': 'Alerts Center',
     '/payments': 'Payments',
     '/financial-summary': 'Financial Summary',
+    '/medicine-analytics': 'Medicine Analytics',
     '/stocks': 'Inventory Stocks',
     '/license': 'License Management',
     '/settings': 'Settings',
@@ -301,6 +302,7 @@ const Dashboard_Layout: React.FC = () => {
             location.pathname.includes('/purchases') ||
             location.pathname.includes('/sale-return') ||
             location.pathname.includes('/financial-summary') ||
+            location.pathname.includes('/medicine-analytics') ||
             location.pathname.includes('/stocks') ||
             location.pathname.includes('/alerts') ||
             location.pathname.includes('/dashboard')
@@ -327,6 +329,7 @@ const Dashboard_Layout: React.FC = () => {
                 location.pathname.includes('/alerts') ||
                 location.pathname.includes('/sale-return') ||
                 location.pathname.includes('/financial-summary') ||
+                location.pathname.includes('/medicine-analytics') ||
                 location.pathname.includes('/stocks') ||
                 location.pathname.includes('/dashboard')
                 ? 'p-0 flex-1 flex flex-col min-h-0 overflow-hidden h-full'
@@ -352,6 +355,7 @@ const Dashboard_Layout: React.FC = () => {
                   location.pathname.includes('/alerts') ||
                   location.pathname.includes('/sale-return') ||
                   location.pathname.includes('/financial-summary') ||
+                  location.pathname.includes('/medicine-analytics') ||
                   location.pathname.includes('/stocks') ||
                   location.pathname.includes('/dashboard')
 
@@ -377,6 +381,7 @@ const Dashboard_Layout: React.FC = () => {
                     !location.pathname.includes('/payment') &&
                     !location.pathname.includes('/alerts') &&
                     !location.pathname.includes('/financial-summary') &&
+                    !location.pathname.includes('/medicine-analytics') &&
                     !location.pathname.includes('/sale-return') &&
                     !location.pathname.includes('/stocks') &&
                     !location.pathname.includes('/dashboard') &&
@@ -532,6 +537,19 @@ const Dashboard_Layout: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Compact header for medicine analytics */}
+                  {location.pathname.includes('/medicine-analytics') && (
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Medicine Analytics'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        backTo="/financial-summary"
+                        compact
+                      />
+                    </div>
+                  )}
+
                   {/* Compact header for alerts */}
                   {location.pathname.includes('/alerts') && (
                     <div className="ml-3 flex-1">
@@ -584,6 +602,7 @@ const Dashboard_Layout: React.FC = () => {
                       location.pathname.includes('/alerts') ||
                       location.pathname.includes('/sale-return') ||
                       location.pathname.includes('/financial-summary') ||
+                      location.pathname.includes('/medicine-analytics') ||
                       location.pathname.includes('/stocks') ||
                       location.pathname.includes('/dashboard')
                       ? 'gap-2'
@@ -621,6 +640,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/alerts') ||
                           location.pathname.includes('/sale-return') ||
                           location.pathname.includes('/financial-summary') ||
+                          location.pathname.includes('/medicine-analytics') ||
                           location.pathname.includes('/stocks') ||
                           location.pathname.includes('/dashboard')
                           ? 'p-2.5 rounded-lg'
@@ -778,6 +798,7 @@ const Dashboard_Layout: React.FC = () => {
                               location.pathname.includes('/alerts') ||
                               location.pathname.includes('/sale-return') ||
                               location.pathname.includes('/financial-summary') ||
+                              location.pathname.includes('/medicine-analytics') ||
                               location.pathname.includes('/purchases') ||
                               location.pathname.includes('/dashboard')
                               ? 'w-7 h-7 rounded-full'
@@ -797,6 +818,7 @@ const Dashboard_Layout: React.FC = () => {
                           !location.pathname.includes('/payment') &&
                           !location.pathname.includes('/alerts') &&
                           !location.pathname.includes('/financial-summary') &&
+                          !location.pathname.includes('/medicine-analytics') &&
                           !location.pathname.includes('/sale-return') &&
                           !location.pathname.includes('/purchases') &&
                           !location.pathname.includes('/dashboard') && (

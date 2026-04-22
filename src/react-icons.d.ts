@@ -74,6 +74,8 @@ declare module 'react-icons/fi' {
   export const FiXCircle: any;
   export const FiTruck: any;
   export const FiMessageCircle: any;
+  export const FiTag: any
+  export const FiActivity: any;
 }
 
 declare module 'react-icons/fa' {
