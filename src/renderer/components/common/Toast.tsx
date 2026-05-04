@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import { FiX, FiAlertCircle } from 'react-icons/fi';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warning';
@@ -15,14 +15,22 @@ interface ToastProps {
   onClose: (id: string) => void;
 }
 
-const ToastItem: React.FC<ToastProps> = ({ toast, onClose }) => {
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      onClose(toast.id);
-    }, toast.duration || 3000);
+const EXIT_DURATION_MS = 300;
 
+const ToastItem: React.FC<ToastProps> = ({ toast, onClose }) => {
+  const [dismissing, setDismissing] = useState(false);
+
+  const dismiss = useCallback(() => {
+    setDismissing(true);
+    setTimeout(() => onClose(toast.id), EXIT_DURATION_MS);
+  }, [toast.id, onClose]);
+
+  useEffect(() => {
+    const defaultDuration =
+      toast.type === 'error' || toast.type === 'warning' ? 5000 : 3000;
+    const timer = setTimeout(dismiss, toast.duration ?? defaultDuration);
     return () => clearTimeout(timer);
-  }, [toast.id, toast.duration, onClose]);
+  }, [toast.id, toast.duration, dismiss]);
 
   const getIcon = () => {
     switch (toast.type) {
@@ -56,12 +64,12 @@ const ToastItem: React.FC<ToastProps> = ({ toast, onClose }) => {
 
   return (
     <div
-      className={`${getStyles()} border-l-4 rounded-lg shadow-lg p-3 sm:p-4 mb-3 flex items-center gap-2 sm:gap-3 animate-slide-in-right w-[280px] sm:w-[320px] md:w-[360px] lg:w-[400px] xl:w-[440px] 2xl:w-[480px]`}
+      className={`${getStyles()} border-l-4 rounded-lg shadow-lg p-3 sm:p-4 mb-3 flex items-center gap-2 sm:gap-3 w-[280px] sm:w-[320px] md:w-[360px] lg:w-[400px] xl:w-[440px] 2xl:w-[480px] ${dismissing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}
     >
       <div className="flex-shrink-0">{getIcon()}</div>
       <div className="flex-1 text-xs sm:text-sm font-medium break-words">{toast.message}</div>
       <button
-        onClick={() => onClose(toast.id)}
+        onClick={dismiss}
         className="flex-shrink-0 text-gray-400 hover:text-gray-600 transition-colors"
       >
         <FiX className="w-4 h-4" />
@@ -91,21 +99,21 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts, onClose 
 export const useToast = () => {
   const [toasts, setToasts] = React.useState<Toast[]>([]);
 
-  const showToast = (message: string, type: ToastType = 'info', duration?: number) => {
+  const removeToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((toast) => toast.id !== id));
+  }, []);
+
+  const showToast = useCallback((message: string, type: ToastType = 'info', duration?: number) => {
     const id = Math.random().toString(36).substring(2, 9);
     const newToast: Toast = { id, message, type, duration };
     setToasts((prev) => [...prev, newToast]);
     return id;
-  };
+  }, []);
 
-  const removeToast = (id: string) => {
-    setToasts((prev) => prev.filter((toast) => toast.id !== id));
-  };
-
-  const success = (message: string, duration?: number) => showToast(message, 'success', duration);
-  const error = (message: string, duration?: number) => showToast(message, 'error', duration);
-  const warning = (message: string, duration?: number) => showToast(message, 'warning', duration);
-  const info = (message: string, duration?: number) => showToast(message, 'info', duration);
+  const success = useCallback((message: string, duration?: number) => showToast(message, 'success', duration), [showToast]);
+  const error = useCallback((message: string, duration?: number) => showToast(message, 'error', duration), [showToast]);
+  const warning = useCallback((message: string, duration?: number) => showToast(message, 'warning', duration), [showToast]);
+  const info = useCallback((message: string, duration?: number) => showToast(message, 'info', duration), [showToast]);
 
   return {
     toasts,

@@ -33,7 +33,7 @@ export interface ThermalReceiptOptions {
   customerName: string;
   customerPhone: string;
   currentBillIndex: number;
-  returnedQuantities: Map<number, number>;
+  returnedQuantities: Map<string, number>;
   saleType?: string;
   additionalDiscount?: number;
   /** Amount received from customer (cash tendered). If omitted, receipt shows total as received and change 0. */
@@ -72,20 +72,20 @@ export const buildThermalReceiptHtml = (
   const safeLogoUrl = hasLogo ? rawLogoUrl.replace(/"/g, '&quot;') : '';
 
   const subtotal = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     return sum + item.unitPrice * netPills;
   }, 0);
 
   const discountTotal = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
     return sum + (itemSubtotal * item.discount) / 100;
   }, 0);
 
   const taxTotal = cart.reduce((sum, item) => {
-    const returned = returnedQuantities.get(item.medicine.id) || 0;
+    const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
     const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
     const itemSubtotal = item.unitPrice * netPills;
     const itemDiscount = (itemSubtotal * item.discount) / 100;
@@ -110,7 +110,7 @@ export const buildThermalReceiptHtml = (
 
   const rows = cart
     .map((item, index) => {
-      const returned = returnedQuantities.get(item.medicine.id) || 0;
+      const returned = returnedQuantities.get(`${item.medicine.id}_${item.unitPrice}`) || 0;
       const netPills = item.pills - (currentBillIndex >= 0 ? returned : 0);
       const itemSubtotal = item.unitPrice * netPills;
       const itemDiscount = (itemSubtotal * item.discount) / 100;

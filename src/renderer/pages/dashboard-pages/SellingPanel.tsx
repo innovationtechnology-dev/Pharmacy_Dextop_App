@@ -410,20 +410,27 @@ const SellingPanel: React.FC = () => {
     }
 
     // Expiry policy warnings (non-blocking toast, once per medicine per session)
-    if ((medicine.criticalExpiryPills ?? 0) > 0) {
-      if (!expiryWarningShownRef.current.has(medicine.id)) {
-        expiryWarningShownRef.current.add(medicine.id);
-        warning(
-          `"${medicine.name}" has critical expiry stock (≤7 days). Sale allowed — use FEFO.`
-        );
+    const hasExpiryWarning =
+      (medicine.criticalExpiryPills ?? 0) > 0 || (medicine.nearExpiryPills ?? 0) > 0;
+
+    if (hasExpiryWarning && !expiryWarningShownRef.current.has(medicine.id)) {
+      expiryWarningShownRef.current.add(medicine.id);
+      const nextExpiry = medicine.nextExpiryDate;
+      const daysLeft = nextExpiry
+        ? Math.ceil((new Date(nextExpiry).getTime() - Date.now()) / 86400000)
+        : null;
+      const d = daysLeft !== null
+        ? (daysLeft <= 0 ? 'today' : `${daysLeft} day${daysLeft === 1 ? '' : 's'}`)
+        : 'soon';
+      let msg: string;
+      if (daysLeft !== null && daysLeft <= 5) {
+        msg = `Urgent: "${medicine.name}" expires in ${d}. Sell this stock immediately — oldest batch is being used first.`;
+      } else if (daysLeft !== null && daysLeft <= 15) {
+        msg = `"${medicine.name}" expires in ${d}. Please sell this stock soon — near-expiry batch is being prioritized.`;
+      } else {
+        msg = `"${medicine.name}" expires in ${d}. Near-expiry stock will be sold first automatically.`;
       }
-    } else if ((medicine.nearExpiryPills ?? 0) > 0) {
-      if (!expiryWarningShownRef.current.has(medicine.id)) {
-        expiryWarningShownRef.current.add(medicine.id);
-        warning(
-          `"${medicine.name}" has near-expiry stock (≤30 days). Sale allowed — use FEFO.`
-        );
-      }
+      warning(msg);
     }
 
     let quantity = quantityParam ?? defaultSaleQuantity(medicine);
@@ -571,8 +578,11 @@ const SellingPanel: React.FC = () => {
               searchInputRef.current?.focus();
             }, 1000);
           } else {
+            const hasExpiredStock = (medicine.totalAvailablePills ?? 0) > 0;
             warning(
-              `Medicine "${medicine.name}" is not eligible for sale (expired or insufficient stock).`
+              hasExpiredStock
+                ? `Medicine "${medicine.name}" cannot be sold — all available stock has expired.`
+                : `Medicine "${medicine.name}" is out of stock.`
             );
             setBarcodeInput('');
             setSearchTerm('');
@@ -2237,7 +2247,7 @@ const SellingPanel: React.FC = () => {
                           <h3 className="font-semibold text-gray-900 dark:text-white truncate">
                             {medicine.name}
                             {medicineCompanyLine(medicine) !== '—' && (
-                              <span className="font-normal text-gray-500 dark:text-gray-400 font-medium">
+                              <span className="text-gray-500 dark:text-gray-400 font-normal">
                                 {' '}
                                 — {medicineCompanyLine(medicine)}
                               </span>

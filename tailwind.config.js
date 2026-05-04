@@ -157,6 +157,7 @@ module.exports = {
         'title-reveal': 'titleReveal 1.2s ease 0.5s both',
         'slide-in-left': 'slideInLeft 0.8s ease both',
         'slide-in-right': 'slideInRight 0.8s ease both',
+        'slide-out-right': 'slideOutRight 0.3s ease-in forwards',
         'fade-in': 'fadeIn 1s ease both',
         shimmer: 'shimmer 3s ease-in-out infinite',
       },
