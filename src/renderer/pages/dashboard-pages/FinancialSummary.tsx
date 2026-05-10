@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FiCalendar,
   FiTrendingUp,
@@ -11,6 +12,7 @@ import {
   FiRefreshCw,
   FiUsers,
   FiShoppingBag,
+  FiBarChart2,
 } from 'react-icons/fi';
 import {
   XAxis,
@@ -67,6 +69,7 @@ type FinancialData = {
 
 const FinancialSummary = () => {
   const { setHeader } = useDashboardHeader();
+  const navigate = useNavigate();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const today = useMemo(() => {
     const d = new Date();
@@ -386,6 +389,13 @@ const FinancialSummary = () => {
           >
             <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
+          </button>
+          <button
+            onClick={() => navigate('/medicine-analytics')}
+            className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold rounded-md transition-all uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+          >
+            <FiBarChart2 className="w-3.5 h-3.5" />
+            Medicine Analytics
           </button>
         </div>
 
