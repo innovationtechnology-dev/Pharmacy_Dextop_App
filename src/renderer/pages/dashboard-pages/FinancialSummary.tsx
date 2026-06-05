@@ -390,13 +390,6 @@ const FinancialSummary = () => {
             <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          <button
-            onClick={() => navigate('/medicine-analytics')}
-            className="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-semibold rounded-md transition-all uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-          >
-            <FiBarChart2 className="w-3.5 h-3.5" />
-            Medicine Analytics
-          </button>
         </div>
 
         {/* Date Selection */}

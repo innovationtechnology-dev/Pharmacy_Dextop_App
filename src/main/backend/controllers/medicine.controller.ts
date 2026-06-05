@@ -1,6 +1,6 @@
 import { ipcMain, IpcMainEvent, IpcMainInvokeEvent, dialog } from 'electron';
 import { promises as fs } from 'fs';
-import { MedicineService, Medicine, LowStockAlert } from '../services/medicine.service';
+import { MedicineService, getMedicineService, Medicine, LowStockAlert } from '../services/medicine.service';
 import { SalesService, Sale } from '../services/sales.service';
 import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
 import { SupplierService } from '../services/supplier.service';
@@ -22,7 +22,7 @@ export class MedicineController {
   private paymentService: PaymentService;
 
   constructor() {
-    this.medicineService = new MedicineService();
+    this.medicineService = getMedicineService();
     this.salesService = new SalesService();
     this.supplierService = new SupplierService();
     this.purchaseService = new PurchaseService();
@@ -564,6 +564,7 @@ export class MedicineController {
         const id = args[0] as number;
         const medicine = args[1] as Partial<Medicine>;
         await this.medicineService.updateMedicine(id, medicine);
+        this.medicineService.invalidateBarcodeCache();
         event.reply('medicine-update-reply', { success: true });
       } catch (error) {
         console.error('Update medicine error:', error);
@@ -576,6 +577,7 @@ export class MedicineController {
       try {
         const id = args[0] as number;
         await this.medicineService.deleteMedicine(id);
+        this.medicineService.invalidateBarcodeCache();
         event.reply('medicine-delete-reply', { success: true });
       } catch (error) {
         console.error('Delete medicine error:', error);
@@ -600,6 +602,8 @@ export class MedicineController {
       try {
         const sale = args[0] as Sale;
         const saleId = await this.salesService.createSale(sale);
+        // Stock levels changed — next scan must re-read sellable quantities from DB.
+        this.medicineService.invalidateBarcodeCache();
         event.reply('sale-create-reply', { success: true, data: { id: saleId } });
       } catch (error) {
         console.error('Create sale error:', error);

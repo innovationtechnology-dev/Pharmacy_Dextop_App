@@ -66,6 +66,13 @@ const NEAR_THRESHOLD_EXPRESSION = `date('now', '+${NEAR_THRESHOLD_DAYS} days')`;
 export class MedicineService {
   private dbService = getDatabaseService();
 
+  // Short-lived cache so rapid repeat scans of the same barcode skip the DB entirely.
+  private readonly barcodeScanCache = new Map<
+    string,
+    { result: MedicineWithInventory | null; expiresAt: number }
+  >();
+  private readonly BARCODE_CACHE_TTL_MS = 30_000;
+
   /**
    * Initialize medicines table and enforce the required schema.
    */
@@ -197,6 +204,13 @@ export class MedicineService {
       CREATE INDEX IF NOT EXISTS idx_stock_batches_purchase_item_id ON stock_batches(purchase_item_id)
     `);
 
+    // Composite index: speeds up the GROUP BY aggregation in baseInventorySelect when
+    // filtering by a single medicine_id (covers the JOIN + expiry_date CASE WHEN columns).
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_stock_batches_medicine_expiry
+      ON stock_batches(medicine_id, expiry_date, qty_remaining)
+    `);
+
     // --- sale_item_batches: audit trail of which batch supplied each sale item ---
     await this.dbService.execute(`
       CREATE TABLE IF NOT EXISTS sale_item_batches (
@@ -289,12 +303,13 @@ export class MedicineService {
   }
 
   /**
-   * Base SELECT with aggregated inventory details.
+   * Base SELECT with aggregated inventory details — used for single-medicine lookups.
+   * Uses correlated subqueries which are O(log n) against indexed medicine_id for one row.
    * Stock data comes from stock_batches (qty_remaining), not purchase_items.available_pills.
    */
   private get baseInventorySelect(): string {
     return `
-      SELECT 
+      SELECT
         m.id,
         m.name,
         m.barcode,
@@ -310,35 +325,28 @@ export class MedicineService {
           THEN 1 ELSE 0
         END AS has_transaction_history,
         COALESCE(SUM(sb.qty_remaining), 0) AS total_available_pills,
-        -- Expired batches are NOT sellable, so "sellable_pills" means unexpired pills.
         COALESCE(
           SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS sellable_pills,
-        -- Normal (more than NEAR_THRESHOLD_DAYS)
         COALESCE(
           SUM(CASE WHEN date(sb.expiry_date) >= ${NEAR_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS normal_expiry_pills,
-        -- Near (>= critical threshold AND < near threshold)
         COALESCE(
           SUM(CASE WHEN date(sb.expiry_date) >= ${CRITICAL_THRESHOLD_EXPRESSION}
                    AND date(sb.expiry_date) < ${NEAR_THRESHOLD_EXPRESSION}
                    THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS near_expiry_pills,
-        -- Critical (>= today AND < critical threshold)
         COALESCE(
           SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
                    AND date(sb.expiry_date) < ${CRITICAL_THRESHOLD_EXPRESSION}
                    THEN sb.qty_remaining ELSE 0 END),
           0
         ) AS critical_expiry_pills,
-        -- Next expiry date among unexpired batches with remaining stock
         MIN(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} AND sb.qty_remaining > 0
                  THEN date(sb.expiry_date) ELSE NULL END) AS next_expiry_date,
-        -- Selling price: FEFO batch (oldest unexpired with qty_remaining > 0).
-        -- Falls back to price_per_packet/pills_per_packet from purchase_items, then cost_price_per_pill.
         (
           SELECT CASE
             WHEN sb2.selling_price_per_pill > 0 THEN sb2.selling_price_per_pill
@@ -355,6 +363,61 @@ export class MedicineService {
         ) AS avg_sellable_price_per_pill
       FROM medicines m
       LEFT JOIN stock_batches sb ON sb.medicine_id = m.id
+    `;
+  }
+
+  /**
+   * CTE-based bulk inventory SELECT — used for multi-row queries (getAllMedicines, searchMedicines).
+   * Replaces 4 correlated subqueries per row with two pre-computed CTEs joined once,
+   * dropping complexity from O(N×queries) to a single pass over the data.
+   */
+  private get cteInventorySelect(): string {
+    return `
+      WITH txn_medicines AS (
+        SELECT medicine_id AS id FROM purchase_items
+        UNION
+        SELECT medicine_id AS id FROM sale_items
+        UNION
+        SELECT medicine_id AS id FROM sale_return_items
+      ),
+      fefo_prices AS (
+        SELECT
+          sb.medicine_id,
+          CASE
+            WHEN sb.selling_price_per_pill > 0 THEN sb.selling_price_per_pill
+            WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
+            ELSE sb.cost_price_per_pill
+          END AS price,
+          ROW_NUMBER() OVER (
+            PARTITION BY sb.medicine_id
+            ORDER BY date(sb.expiry_date) ASC, sb.id ASC
+          ) AS rn
+        FROM stock_batches sb
+        LEFT JOIN purchase_items pi ON pi.id = sb.purchase_item_id
+        WHERE date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION}
+          AND sb.qty_remaining > 0
+      )
+      SELECT
+        m.id,
+        m.name,
+        m.barcode,
+        m.pill_quantity,
+        m.status,
+        m.manufacturer,
+        m.brand_name,
+        COALESCE(m.minimum_stock_level, 0) AS minimum_stock_level,
+        CASE WHEN tm.id IS NOT NULL THEN 1 ELSE 0 END AS has_transaction_history,
+        COALESCE(SUM(sb.qty_remaining), 0) AS total_available_pills,
+        COALESCE(SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END), 0) AS sellable_pills,
+        COALESCE(SUM(CASE WHEN date(sb.expiry_date) >= ${NEAR_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END), 0) AS normal_expiry_pills,
+        COALESCE(SUM(CASE WHEN date(sb.expiry_date) >= ${CRITICAL_THRESHOLD_EXPRESSION} AND date(sb.expiry_date) < ${NEAR_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END), 0) AS near_expiry_pills,
+        COALESCE(SUM(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} AND date(sb.expiry_date) < ${CRITICAL_THRESHOLD_EXPRESSION} THEN sb.qty_remaining ELSE 0 END), 0) AS critical_expiry_pills,
+        MIN(CASE WHEN date(sb.expiry_date) >= ${UNEXPIRED_THRESHOLD_EXPRESSION} AND sb.qty_remaining > 0 THEN date(sb.expiry_date) ELSE NULL END) AS next_expiry_date,
+        fp.price AS avg_sellable_price_per_pill
+      FROM medicines m
+      LEFT JOIN stock_batches sb ON sb.medicine_id = m.id
+      LEFT JOIN txn_medicines tm ON tm.id = m.id
+      LEFT JOIN (SELECT medicine_id, price FROM fefo_prices WHERE rn = 1) fp ON fp.medicine_id = m.id
     `;
   }
 
@@ -389,21 +452,13 @@ export class MedicineService {
     offset: number = 0
   ): Promise<MedicineWithInventory[]> {
     const hasPagination = typeof limit === 'number' && Number.isFinite(limit) && limit > 0;
-    const sql = hasPagination
-      ? `
-      ${this.baseInventorySelect}
+    const sql = `
+      ${this.cteInventorySelect}
       GROUP BY m.id
       ORDER BY m.name ASC
-      LIMIT ? OFFSET ?
-    `
-      : `
-      ${this.baseInventorySelect}
-      GROUP BY m.id
-      ORDER BY m.name ASC
+      ${hasPagination ? 'LIMIT ? OFFSET ?' : ''}
     `;
-    const rows = hasPagination
-      ? await this.dbService.query(sql, [limit, offset])
-      : await this.dbService.query(sql);
+    const rows = await this.dbService.query(sql, hasPagination ? [limit, offset] : []);
     return rows.map((row) => this.mapRowToMedicine(row));
   }
 
@@ -418,66 +473,91 @@ export class MedicineService {
 
   /**
    * Get medicine by barcode (includes inventory aggregates).
-   * Tries exact variants (leading zeros, trim), case-insensitive exact, then LIKE fallbacks
-   * so hardware scanners match the same records as search.
+   *
+   * Performance strategy — two phases:
+   *   Phase 1: lightweight `SELECT id` queries (no JOINs, no aggregation) to resolve
+   *            barcode → medicine_id using the barcode index.
+   *   Phase 2: single `getMedicineById` call (PK lookup) to fetch the full inventory row.
+   *
+   * This replaces the old approach that ran the full heavy baseInventorySelect (with
+   * JOINs, aggregation, correlated subqueries) up to 4 times per scan.
+   * Results are also cached for BARCODE_CACHE_TTL_MS to absorb rapid repeat scans.
    */
   public async getMedicineByBarcode(barcode: string): Promise<MedicineWithInventory | null> {
-    const candidates = buildBarcodeLookupCandidates(barcode);
-    const baseSqlExact = `
-      ${this.baseInventorySelect}
-      WHERE %WHERE%
-      GROUP BY m.id
-      LIMIT 1
-    `;
-    /** Prefer longest stored barcode when several rows fuzzy-match (more specific GTIN / payload). */
-    const baseSqlFuzzy = `
-      ${this.baseInventorySelect}
-      WHERE %WHERE%
-      GROUP BY m.id
-      ORDER BY LENGTH(TRIM(m.barcode)) DESC, m.id ASC
-      LIMIT 1
-    `;
-
-    // Try exact match with all candidates in one query using OR
-    if (candidates.length > 0) {
-      const placeholders = candidates.map(() => 'm.barcode = ?').join(' OR ');
-      const sql = baseSqlExact.replace('%WHERE%', placeholders);
-      const result = await this.dbService.queryOne(sql, candidates);
-      if (result) return this.mapRowToMedicine(result);
-    }
-
     const primary = normalizeScannedBarcode(barcode);
-    if (primary) {
-      // Try case-insensitive match with all candidates in one query
-      const placeholders = candidates.map(() => 'LOWER(TRIM(m.barcode)) = LOWER(TRIM(?))').join(' OR ');
-      const sqlCi = baseSqlExact.replace(
-        '%WHERE%',
-        `m.barcode IS NOT NULL AND (${placeholders})`
-      );
-      const rowCi = await this.dbService.queryOne(sqlCi, candidates);
-      if (rowCi) return this.mapRowToMedicine(rowCi);
+    if (!primary) return null;
+
+    // Cache hit — skip DB entirely for repeated scans of the same barcode.
+    const cacheKey = primary.toLowerCase();
+    const cached = this.barcodeScanCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
     }
 
-    // Fuzzy paths: align with short product codes (EAN-8) and long GS1 strings
-    if (primary.length >= 8) {
+    const candidates = buildBarcodeLookupCandidates(barcode);
+    let medicineId: number | null = null;
+
+    // Phase 1a: exact match — all candidates in one IN clause, uses idx_medicines_barcode.
+    if (candidates.length > 0 && medicineId === null) {
+      const placeholders = candidates.map(() => '?').join(', ');
+      const row = await this.dbService.queryOne(
+        `SELECT id FROM medicines WHERE barcode IN (${placeholders}) LIMIT 1`,
+        candidates
+      );
+      if (row) medicineId = row.id;
+    }
+
+    // Phase 1b: case-insensitive exact — still just an id lookup, no JOINs.
+    if (medicineId === null && candidates.length > 0) {
+      const placeholders = candidates.map(() => 'LOWER(TRIM(?))').join(', ');
+      const row = await this.dbService.queryOne(
+        `SELECT id FROM medicines WHERE barcode IS NOT NULL AND LOWER(TRIM(barcode)) IN (${placeholders}) LIMIT 1`,
+        candidates
+      );
+      if (row) medicineId = row.id;
+    }
+
+    // Phase 1c: LIKE fuzzy — for long GS1 / DataMatrix codes.
+    if (medicineId === null && primary.length >= 8) {
       const esc = escapeSqlLikePattern(primary);
-      const likeParam = `%${esc}%`;
-      const sqlLike = baseSqlFuzzy.replace(
-        '%WHERE%',
-        "m.barcode IS NOT NULL AND m.barcode != '' AND m.barcode LIKE ? ESCAPE '\\'"
+      const row = await this.dbService.queryOne(
+        `SELECT id FROM medicines WHERE barcode IS NOT NULL AND barcode != '' AND barcode LIKE ? ESCAPE '\\' ORDER BY LENGTH(TRIM(barcode)) DESC LIMIT 1`,
+        [`%${esc}%`]
       );
-      const rowLike = await this.dbService.queryOne(sqlLike, [likeParam]);
-      if (rowLike) return this.mapRowToMedicine(rowLike);
+      if (row) medicineId = row.id;
     }
 
-    const sqlRev = baseSqlFuzzy.replace(
-      '%WHERE%',
-      'm.barcode IS NOT NULL AND LENGTH(TRIM(m.barcode)) >= 8 AND ? LIKE (\'%\' || m.barcode || \'%\')'
-    );
-    const rowRev = await this.dbService.queryOne(sqlRev, [primary]);
-    if (rowRev) return this.mapRowToMedicine(rowRev);
+    // Phase 1d: reverse LIKE — stored barcode is a substring of the scanned value.
+    if (medicineId === null) {
+      const row = await this.dbService.queryOne(
+        `SELECT id FROM medicines WHERE barcode IS NOT NULL AND LENGTH(TRIM(barcode)) >= 8 AND ? LIKE ('%' || barcode || '%') ORDER BY LENGTH(TRIM(barcode)) DESC LIMIT 1`,
+        [primary]
+      );
+      if (row) medicineId = row.id;
+    }
 
-    return null;
+    // Phase 2: single PK-filtered inventory query (O(1) medicine lookup via rowid).
+    const result = medicineId !== null ? await this.getMedicineById(medicineId) : null;
+
+    // Evict stale entries lazily to prevent unbounded memory growth.
+    if (this.barcodeScanCache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of this.barcodeScanCache) {
+        if (v.expiresAt <= now) this.barcodeScanCache.delete(k);
+      }
+    }
+
+    this.barcodeScanCache.set(cacheKey, { result, expiresAt: Date.now() + this.BARCODE_CACHE_TTL_MS });
+    return result;
+  }
+
+  /** Call after stock changes so the next scan fetches fresh data for that barcode. */
+  public invalidateBarcodeCache(barcode?: string): void {
+    if (barcode) {
+      this.barcodeScanCache.delete(normalizeScannedBarcode(barcode).toLowerCase());
+    } else {
+      this.barcodeScanCache.clear();
+    }
   }
 
   /**
@@ -499,7 +579,7 @@ export class MedicineService {
    */
   public async searchMedicines(searchTerm: string): Promise<MedicineWithInventory[]> {
     const sql = `
-      ${this.baseInventorySelect}
+      ${this.cteInventorySelect}
       WHERE m.name LIKE ? OR m.barcode LIKE ?
         OR IFNULL(m.manufacturer, '') LIKE ?
         OR IFNULL(m.brand_name, '') LIKE ?
@@ -643,28 +723,17 @@ export class MedicineService {
    * Check if medicine has been used in any transactions
    */
   private async hasMedicineBeenUsed(id: number): Promise<boolean> {
-    // Check purchase items
-    const purchaseCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM purchase_items WHERE medicine_id = ?',
-      [id]
+    const row = await this.dbService.queryOne(
+      `SELECT 1 FROM (
+        SELECT 1 FROM purchase_items    WHERE medicine_id = ?
+        UNION ALL
+        SELECT 1 FROM sale_items        WHERE medicine_id = ?
+        UNION ALL
+        SELECT 1 FROM sale_return_items WHERE medicine_id = ?
+      ) LIMIT 1`,
+      [id, id, id]
     );
-    if (purchaseCheck && purchaseCheck.count > 0) return true;
-
-    // Check sale items
-    const saleCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM sale_items WHERE medicine_id = ?',
-      [id]
-    );
-    if (saleCheck && saleCheck.count > 0) return true;
-
-    // Check sale return items
-    const returnCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM sale_return_items WHERE medicine_id = ?',
-      [id]
-    );
-    if (returnCheck && returnCheck.count > 0) return true;
-
-    return false;
+    return row != null;
   }
 
   /**
@@ -672,39 +741,22 @@ export class MedicineService {
    * Only allows deletion if medicine has never been used in any transactions.
    */
   public async deleteMedicine(id: number): Promise<void> {
-    // Check if medicine is used in any purchase items
-    const purchaseCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM purchase_items WHERE medicine_id = ?',
-      [id]
+    const used = await this.dbService.queryOne(
+      `SELECT 1 FROM (
+        SELECT 1 FROM purchase_items    WHERE medicine_id = ?
+        UNION ALL
+        SELECT 1 FROM sale_items        WHERE medicine_id = ?
+        UNION ALL
+        SELECT 1 FROM sale_return_items WHERE medicine_id = ?
+      ) LIMIT 1`,
+      [id, id, id]
     );
-    
-    if (purchaseCheck && purchaseCheck.count > 0) {
-      throw new Error('Cannot delete medicine: It has been used in purchase transactions. You can mark it as inactive instead.');
+
+    if (used) {
+      throw new Error('Cannot delete medicine: It has been used in transactions. You can mark it as inactive instead.');
     }
 
-    // Check if medicine is used in any sale items
-    const saleCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM sale_items WHERE medicine_id = ?',
-      [id]
-    );
-    
-    if (saleCheck && saleCheck.count > 0) {
-      throw new Error('Cannot delete medicine: It has been used in sale transactions. You can mark it as inactive instead.');
-    }
-
-    // Check if medicine is used in any sale return items
-    const returnCheck = await this.dbService.queryOne(
-      'SELECT COUNT(*) as count FROM sale_return_items WHERE medicine_id = ?',
-      [id]
-    );
-    
-    if (returnCheck && returnCheck.count > 0) {
-      throw new Error('Cannot delete medicine: It has been used in return transactions. You can mark it as inactive instead.');
-    }
-
-    // If no transactions found, safe to delete
-    const sql = `DELETE FROM medicines WHERE id = ?`;
-    await this.dbService.execute(sql, [id]);
+    await this.dbService.execute(`DELETE FROM medicines WHERE id = ?`, [id]);
   }
 
   /**
@@ -836,3 +888,11 @@ export class MedicineService {
 }
 
 export default MedicineService;
+
+let medicineServiceInstance: MedicineService | null = null;
+export const getMedicineService = (): MedicineService => {
+  if (!medicineServiceInstance) {
+    medicineServiceInstance = new MedicineService();
+  }
+  return medicineServiceInstance;
+};

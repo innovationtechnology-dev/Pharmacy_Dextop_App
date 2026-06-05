@@ -66,3 +66,16 @@ export function buildBarcodeLookupCandidates(raw: string): string[] {
 export function escapeSqlLikePattern(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
 }
+
+/**
+ * Returns a short, human-readable label for a scanned barcode.
+ * GS1/DataMatrix codes encode multiple fields — we extract just the GTIN (AI 01).
+ * Plain short barcodes are returned as-is (truncated at 20 chars).
+ */
+export function formatBarcodeForDisplay(raw: string): string {
+  const s = normalizeScannedBarcode(raw);
+  const gtin = s.match(/\(01\)(\d{8,14})/);
+  if (gtin) return `${gtin[1]}`;
+  if (s.length > 20) return s.slice(0, 20) + '…';
+  return s;
+}

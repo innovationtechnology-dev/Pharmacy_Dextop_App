@@ -37,7 +37,7 @@ import {
   FiPrinter,
   FiX,
   FiMail,
-  FiPhone
+  FiPhone,
 } from 'react-icons/fi';
 
 interface PanelVisibilitySettings {
@@ -94,9 +94,8 @@ const MainMenu: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
-  const [panelVisibility, setPanelVisibility] = useState<PanelVisibilitySettings>(
-    getStoredPanelVisibilitySettings()
-  );
+  const [panelVisibility, setPanelVisibility] =
+    useState<PanelVisibilitySettings>(getStoredPanelVisibilitySettings());
   const menuBarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -113,10 +112,16 @@ const MainMenu: React.FC = () => {
       setPanelVisibility(event.detail);
     };
 
-    window.addEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
-    
+    window.addEventListener(
+      'panel-visibility-updated',
+      handlePanelVisibilityUpdate
+    );
+
     return () => {
-      window.removeEventListener('panel-visibility-updated', handlePanelVisibilityUpdate);
+      window.removeEventListener(
+        'panel-visibility-updated',
+        handlePanelVisibilityUpdate
+      );
     };
   }, []);
 
@@ -150,7 +155,10 @@ const MainMenu: React.FC = () => {
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (menuBarRef.current && !menuBarRef.current.contains(event.target as Node)) {
+      if (
+        menuBarRef.current &&
+        !menuBarRef.current.contains(event.target as Node)
+      ) {
         setActiveMenu(null);
       }
     };
@@ -160,11 +168,16 @@ const MainMenu: React.FC = () => {
 
   const categories = [
     { id: 'all', label: 'All Modules', icon: FiDatabase, shortcut: 'Ctrl+1' },
-    { id: 'operations', label: 'Operations', icon: FiPackage, shortcut: 'Ctrl+2' },
+    {
+      id: 'operations',
+      label: 'Operations',
+      icon: FiPackage,
+      shortcut: 'Ctrl+2',
+    },
     { id: 'reports', label: 'Reports', icon: FiBarChart2, shortcut: 'Ctrl+3' },
     { id: 'settings', label: 'Settings', icon: FiSettings, shortcut: 'Ctrl+4' },
   ];
- 
+
   const currentUser = getAuthUser();
   const isCashier = currentUser?.role === 'cashier';
   const isAdmin = currentUser?.role === 'admin';
@@ -180,7 +193,8 @@ const MainMenu: React.FC = () => {
       description: 'Point of Sale',
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
-      disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
+      // disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
+      disabled: isAdmin ? true : false,
     },
     {
       id: 'medicines',
@@ -210,7 +224,8 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Management',
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
-      disabled: isAdmin ? !panelVisibility.showPurchasingPanel : false,
+      // disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
+      disabled: isAdmin ? true : false,
     },
     {
       id: 'customers',
@@ -306,8 +321,17 @@ const MainMenu: React.FC = () => {
       description: 'Purchase Analytics',
       route: '/purchases',
     },
+    {
+      id: 'medicine-analytics',
+      title: 'Medicine Analytics',
+      icon: <FiTrendingUp className="w-5 h-5" />,
+      color: 'from-violet-500 to-purple-600',
+      gradient: 'bg-gradient-to-br from-violet-500/10 to-purple-600/10',
+      description: 'Drug Performance Insights',
+      route: '/medicine-analytics',
+      disabled: isCashier,
+    },
   ];
-
 
   const settingsModules: MenuItem[] = [
     {
@@ -334,7 +358,7 @@ const MainMenu: React.FC = () => {
   const allModules = [
     ...operationsModules,
     ...reportModules,
-    ...settingsModules
+    ...settingsModules,
   ];
 
   const filteredModules = allModules.filter((module) => {
@@ -371,14 +395,38 @@ const MainMenu: React.FC = () => {
     {
       label: 'File',
       items: [
-        { label: 'New Transaction', shortcut: 'Ctrl+N', icon: <FiPlus className="w-4 h-4" /> },
-        { label: 'Open', shortcut: 'Ctrl+O', icon: <FiUpload className="w-4 h-4" /> },
+        {
+          label: 'New Transaction',
+          shortcut: 'Ctrl+N',
+          icon: <FiPlus className="w-4 h-4" />,
+        },
+        {
+          label: 'Open',
+          shortcut: 'Ctrl+O',
+          icon: <FiUpload className="w-4 h-4" />,
+        },
         { label: '', separator: true },
-        { label: 'Save', shortcut: 'Ctrl+S', icon: <FiSave className="w-4 h-4" /> },
-        { label: 'Export', shortcut: 'Ctrl+E', icon: <FiDownload className="w-4 h-4" /> },
-        { label: 'Print', shortcut: 'Ctrl+P', icon: <FiPrinter className="w-4 h-4" /> },
+        {
+          label: 'Save',
+          shortcut: 'Ctrl+S',
+          icon: <FiSave className="w-4 h-4" />,
+        },
+        {
+          label: 'Export',
+          shortcut: 'Ctrl+E',
+          icon: <FiDownload className="w-4 h-4" />,
+        },
+        {
+          label: 'Print',
+          shortcut: 'Ctrl+P',
+          icon: <FiPrinter className="w-4 h-4" />,
+        },
         { label: '', separator: true },
-        { label: 'Exit', action: handleLogout, icon: <FiX className="w-4 h-4" /> },
+        {
+          label: 'Exit',
+          action: handleLogout,
+          icon: <FiX className="w-4 h-4" />,
+        },
       ],
     },
     {
@@ -391,27 +439,63 @@ const MainMenu: React.FC = () => {
         { label: 'Copy', shortcut: 'Ctrl+C' },
         { label: 'Paste', shortcut: 'Ctrl+V' },
         { label: '', separator: true },
-        { label: 'Find', shortcut: 'Ctrl+F', icon: <FiSearch className="w-4 h-4" /> },
+        {
+          label: 'Find',
+          shortcut: 'Ctrl+F',
+          icon: <FiSearch className="w-4 h-4" />,
+        },
       ],
     },
     {
       label: 'View',
       items: [
-        { label: 'Refresh', shortcut: 'Ctrl+R', icon: <FiRefreshCw className="w-4 h-4" /> },
+        {
+          label: 'Refresh',
+          shortcut: 'Ctrl+R',
+          icon: <FiRefreshCw className="w-4 h-4" />,
+        },
         { label: '', separator: true },
-        { label: 'All Modules', shortcut: 'Ctrl+1', action: () => setActiveCategory('all') },
-        { label: 'Operations', shortcut: 'Ctrl+2', action: () => setActiveCategory('operations') },
-        { label: 'Reports', shortcut: 'Ctrl+3', action: () => setActiveCategory('reports') },
-        { label: 'Settings', shortcut: 'Ctrl+4', action: () => setActiveCategory('settings') },
+        {
+          label: 'All Modules',
+          shortcut: 'Ctrl+1',
+          action: () => setActiveCategory('all'),
+        },
+        {
+          label: 'Operations',
+          shortcut: 'Ctrl+2',
+          action: () => setActiveCategory('operations'),
+        },
+        {
+          label: 'Reports',
+          shortcut: 'Ctrl+3',
+          action: () => setActiveCategory('reports'),
+        },
+        {
+          label: 'Settings',
+          shortcut: 'Ctrl+4',
+          action: () => setActiveCategory('settings'),
+        },
       ],
     },
     {
       label: 'Tools',
       items: [
-        { label: 'Dashboard', shortcut: 'Ctrl+D', action: () => navigate('/dashboard') },
-        { label: 'Settings', shortcut: 'Ctrl+,', action: () => navigate('/settings') },
+        {
+          label: 'Dashboard',
+          shortcut: 'Ctrl+D',
+          action: () => navigate('/dashboard'),
+        },
+        {
+          label: 'Settings',
+          shortcut: 'Ctrl+,',
+          action: () => navigate('/settings'),
+        },
         { label: '', separator: true },
-        { label: 'Alerts', shortcut: 'Ctrl+A', action: () => navigate('/alerts') },
+        {
+          label: 'Alerts',
+          shortcut: 'Ctrl+A',
+          action: () => navigate('/alerts'),
+        },
       ],
     },
     {
@@ -438,7 +522,7 @@ const MainMenu: React.FC = () => {
         <WelcomeNotification onClose={handleCloseWelcomeNotification} />
       )}
       {/* Menu Bar */}
-      <div 
+      <div
         ref={menuBarRef}
         className="flex-shrink-0 bg-gray-100 dark:bg-gray-800 border-b border-gray-300 dark:border-gray-700 px-2 h-7 flex items-center text-xs font-medium text-gray-700 dark:text-gray-300 select-none"
       >
@@ -446,7 +530,11 @@ const MainMenu: React.FC = () => {
           <div key={menuItem.label} className="relative">
             <button
               type="button"
-              onClick={() => setActiveMenu(activeMenu === menuItem.label ? null : menuItem.label)}
+              onClick={() =>
+                setActiveMenu(
+                  activeMenu === menuItem.label ? null : menuItem.label
+                )
+              }
               className={`px-3 py-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${
                 activeMenu === menuItem.label
                   ? 'bg-gray-200 dark:bg-gray-700'
@@ -478,7 +566,11 @@ const MainMenu: React.FC = () => {
                       className="w-full flex items-center justify-between px-4 py-2 text-sm text-left hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <div className="flex items-center gap-3">
-                        {item.icon && <span className="text-gray-500 dark:text-gray-400">{item.icon}</span>}
+                        {item.icon && (
+                          <span className="text-gray-500 dark:text-gray-400">
+                            {item.icon}
+                          </span>
+                        )}
                         <span>{item.label}</span>
                       </div>
                       {item.shortcut && (
@@ -641,13 +733,18 @@ const MainMenu: React.FC = () => {
             <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">
-                  {categories.find((c) => c.id === activeCategory)?.label || 'All Modules'}
+                  {categories.find((c) => c.id === activeCategory)?.label ||
+                    'All Modules'}
                 </h1>
                 <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {activeCategory === 'all' && 'Access all your business management modules'}
-                  {activeCategory === 'operations' && 'Daily operations and transaction management'}
-                  {activeCategory === 'reports' && 'Analytics, reports and business insights'}
-                  {activeCategory === 'settings' && 'System configuration and preferences'}
+                  {activeCategory === 'all' &&
+                    'Access all your business management modules'}
+                  {activeCategory === 'operations' &&
+                    'Daily operations and transaction management'}
+                  {activeCategory === 'reports' &&
+                    'Analytics, reports and business insights'}
+                  {activeCategory === 'settings' &&
+                    'System configuration and preferences'}
                 </p>
               </div>
               {currentUser && (
@@ -674,7 +771,9 @@ const MainMenu: React.FC = () => {
                       onClick={() => handleModuleClick(module)}
                       className="group relative p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all text-left"
                     >
-                      <div className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm`}>
+                      <div
+                        className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm`}
+                      >
                         {module.icon}
                       </div>
                       <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
@@ -695,55 +794,67 @@ const MainMenu: React.FC = () => {
             )}
 
             {/* Module Grid */}
-            {activeCategory === 'all' && filteredModules.length > quickAccessModules.length && (
-              <>
-                <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-                  All Modules
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {filteredModules
-                    .filter((m) => !quickAccessModules.some((q) => q.id === m.id))
-                    .map((module) => (
-                      <button
-                        key={module.id}
-                        type="button"
-                        onClick={() => handleModuleClick(module)}
-                        disabled={module.disabled}
-                        className={`group relative p-4 border rounded-lg text-left transition-all ${
-                          module.disabled
-                            ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
-                        }`}
-                      >
-                        <div className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                          !module.disabled && 'group-hover:scale-105 transition-transform'
-                        }`}>
-                          {module.icon}
-                        </div>
-                        <h3 className={`text-sm font-semibold mb-1 ${
-                          module.disabled
-                            ? 'text-gray-400 dark:text-gray-600'
-                            : 'text-gray-900 dark:text-white'
-                        }`}>
-                          {module.title}
-                        </h3>
-                        <p className={`text-xs mb-2 ${
-                          module.disabled
-                            ? 'text-gray-400 dark:text-gray-600'
-                            : 'text-gray-500 dark:text-gray-400'
-                        }`}>
-                          {module.description}
-                        </p>
-                        {module.shortcut && !module.disabled && (
-                          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                            {module.shortcut}
-                          </span>
-                        )}
-                      </button>
-                    ))}
-                </div>
-              </>
-            )}
+            {activeCategory === 'all' &&
+              filteredModules.length > quickAccessModules.length && (
+                <>
+                  <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                    All Modules
+                  </h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                    {filteredModules
+                      .filter(
+                        (m) => !quickAccessModules.some((q) => q.id === m.id)
+                      )
+                      .map((module) => (
+                        <button
+                          key={module.id}
+                          type="button"
+                          onClick={() => handleModuleClick(module)}
+                          disabled={module.disabled}
+                          className={`group relative p-4 border rounded-lg text-left transition-all ${
+                            module.disabled
+                              ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
+                              : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
+                          }`}
+                        >
+                          <div
+                            className={`w-10 h-10 bg-gradient-to-br ${
+                              module.color
+                            } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
+                              !module.disabled &&
+                              'group-hover:scale-105 transition-transform'
+                            }`}
+                          >
+                            {module.icon}
+                          </div>
+                          <h3
+                            className={`text-sm font-semibold mb-1 ${
+                              module.disabled
+                                ? 'text-gray-400 dark:text-gray-600'
+                                : 'text-gray-900 dark:text-white'
+                            }`}
+                          >
+                            {module.title}
+                          </h3>
+                          <p
+                            className={`text-xs mb-2 ${
+                              module.disabled
+                                ? 'text-gray-400 dark:text-gray-600'
+                                : 'text-gray-500 dark:text-gray-400'
+                            }`}
+                          >
+                            {module.description}
+                          </p>
+                          {module.shortcut && !module.disabled && (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                              {module.shortcut}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                  </div>
+                </>
+              )}
 
             {activeCategory !== 'all' && (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -759,23 +870,32 @@ const MainMenu: React.FC = () => {
                         : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
                     }`}
                   >
-                    <div className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                      !module.disabled && 'group-hover:scale-105 transition-transform'
-                    }`}>
+                    <div
+                      className={`w-10 h-10 bg-gradient-to-br ${
+                        module.color
+                      } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
+                        !module.disabled &&
+                        'group-hover:scale-105 transition-transform'
+                      }`}
+                    >
                       {module.icon}
                     </div>
-                    <h3 className={`text-sm font-semibold mb-1 ${
-                      module.disabled
-                        ? 'text-gray-400 dark:text-gray-600'
-                        : 'text-gray-900 dark:text-white'
-                    }`}>
+                    <h3
+                      className={`text-sm font-semibold mb-1 ${
+                        module.disabled
+                          ? 'text-gray-400 dark:text-gray-600'
+                          : 'text-gray-900 dark:text-white'
+                      }`}
+                    >
                       {module.title}
                     </h3>
-                    <p className={`text-xs mb-2 ${
-                      module.disabled
-                        ? 'text-gray-400 dark:text-gray-600'
-                        : 'text-gray-500 dark:text-gray-400'
-                    }`}>
+                    <p
+                      className={`text-xs mb-2 ${
+                        module.disabled
+                          ? 'text-gray-400 dark:text-gray-600'
+                          : 'text-gray-500 dark:text-gray-400'
+                      }`}
+                    >
                       {module.description}
                     </p>
                     {module.shortcut && !module.disabled && (
@@ -804,40 +924,58 @@ const MainMenu: React.FC = () => {
       </div>
 
       {/* Status Bar */}
-      <div 
+      <div
         className={`flex-shrink-0 border-t px-4 py-1.5 flex items-center justify-between text-[10px] font-semibold transition-all duration-300 ${
-          theme === 'light' 
-            ? 'bg-black border-gray-700 text-white' 
+          theme === 'light'
+            ? 'bg-black border-gray-700 text-white'
             : 'bg-white/90 border-gray-300 text-black'
         }`}
       >
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${theme === 'light' ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.7)]' : 'bg-green-600 shadow-[0_0_8px_rgba(22,163,74,0.7)]'}`} />
-            <span >System Online</span>
+            <div
+              className={`w-1.5 h-1.5 rounded-full animate-pulse ${
+                theme === 'light'
+                  ? 'bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.7)]'
+                  : 'bg-green-600 shadow-[0_0_8px_rgba(22,163,74,0.7)]'
+              }`}
+            />
+            <span>System Online</span>
           </span>
-          <span >v2.0.1</span>
+          <span>v2.0.1</span>
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-4">
             <span>Developed By</span>
-            <span className={`w-px h-3 ${theme === 'light' ? 'bg-white' : 'bg-black'}` } />
+            <span
+              className={`w-px h-3 ${
+                theme === 'light' ? 'bg-white' : 'bg-black'
+              }`}
+            />
             <span>Innovation Technology</span>
-            <a 
+            <a
               href="mailto:innovationtechnology.dev@gmail.com"
               target="_blank"
               rel="noopener noreferrer"
               title="Open Email"
-              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${theme === 'light' ? 'hover:text-emerald-400' : 'hover:text-emerald-600'}`}
+              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${
+                theme === 'light'
+                  ? 'hover:text-emerald-400'
+                  : 'hover:text-emerald-600'
+              }`}
             >
               <FiMail className="w-3" />
               innovationtechnology.dev@gmail.com
             </a>
-            <a 
-              href="https://wa.me/923205720774" 
+            <a
+              href="https://wa.me/923205720774"
               target="_blank"
               rel="noopener noreferrer"
-              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${theme === 'light' ? 'hover:text-emerald-400' : 'hover:text-emerald-600'}`}
+              className={`flex items-center gap-1.5 transition-colors  cursor-pointer ${
+                theme === 'light'
+                  ? 'hover:text-emerald-400'
+                  : 'hover:text-emerald-600'
+              }`}
               title="Open WhatsApp"
             >
               <FiPhone className="w-3" />

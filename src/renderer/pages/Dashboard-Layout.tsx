@@ -544,7 +544,7 @@ const Dashboard_Layout: React.FC = () => {
                         title={pageTitle || 'Medicine Analytics'}
                         subtitle={customHeader?.subtitle}
                         actions={customHeader?.actions}
-                        backTo="/financial-summary"
+                        backTo="/main-menu"
                         compact
                       />
                     </div>
