@@ -122,7 +122,9 @@ const NetworkSettings: React.FC = () => {
               </div>
               <div className="flex items-center gap-2">
                 {showKey && (
-                  <span className="font-mono text-sm text-gray-900 dark:text-white">{info.accessKey}</span>
+                  <span className="font-mono text-sm text-gray-900 dark:text-white">
+                    {info.accessKey.match(/.{1,4}/g)?.join('-')}
+                  </span>
                 )}
                 <button
                   type="button"

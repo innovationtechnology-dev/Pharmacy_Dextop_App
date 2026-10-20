@@ -19,6 +19,7 @@ import {
   FiClock,
   FiCalendar,
   FiArrowLeft,
+  FiChevronLeft,
   FiChevronRight,
   FiSearch,
   FiTrendingUp,
@@ -94,6 +95,13 @@ const MainMenu: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('mainMenuSidebarCollapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [panelVisibility, setPanelVisibility] =
     useState<PanelVisibilitySettings>(getStoredPanelVisibilitySettings());
   const menuBarRef = useRef<HTMLDivElement>(null);
@@ -124,6 +132,18 @@ const MainMenu: React.FC = () => {
       );
     };
   }, []);
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('mainMenuSidebarCollapsed', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
 
   const handleCloseWelcomeNotification = () => {
     setShowWelcomeNotification(false);
@@ -665,19 +685,58 @@ const MainMenu: React.FC = () => {
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
-        <div className="w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col">
-          {/* Search */}
-          <div className="p-3 border-b border-gray-200 dark:border-gray-700">
-            <div className="relative">
-              <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-              <input
-                type="text"
-                placeholder="Search modules..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
-              />
-            </div>
+        <div
+          className={`${
+            isSidebarCollapsed ? 'w-16' : 'w-64'
+          } flex-shrink-0 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col transition-all duration-300 overflow-hidden`}
+        >
+          {/* Search + Collapse Toggle */}
+          <div
+            className={`p-3 border-b border-gray-200 dark:border-gray-700 flex items-center gap-2 ${
+              isSidebarCollapsed ? 'flex-col' : ''
+            }`}
+          >
+            {isSidebarCollapsed ? (
+              <>
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-300 transition-colors"
+                  title="Expand sidebar"
+                >
+                  <FiChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-500 dark:text-gray-400 transition-colors"
+                  title="Search modules"
+                >
+                  <FiSearch className="w-4 h-4" />
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="relative flex-1">
+                  <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="Search modules..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-gray-600 dark:text-gray-300 transition-colors"
+                  title="Collapse sidebar"
+                >
+                  <FiChevronLeft className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
 
           {/* Navigation */}
@@ -687,7 +746,10 @@ const MainMenu: React.FC = () => {
                 key={category.id}
                 type="button"
                 onClick={() => setActiveCategory(category.id)}
-                className={`w-full flex items-center justify-between px-4 py-2.5 text-sm transition-colors ${
+                title={isSidebarCollapsed ? category.label : undefined}
+                className={`w-full flex items-center ${
+                  isSidebarCollapsed ? 'justify-center' : 'justify-between'
+                } px-4 py-2.5 text-sm transition-colors ${
                   activeCategory === category.id
                     ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-l-2 border-blue-500'
                     : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
@@ -695,9 +757,11 @@ const MainMenu: React.FC = () => {
               >
                 <div className="flex items-center gap-3">
                   <category.icon className="w-4 h-4" />
-                  <span className="font-medium">{category.label}</span>
+                  {!isSidebarCollapsed && (
+                    <span className="font-medium">{category.label}</span>
+                  )}
                 </div>
-                {category.shortcut && (
+                {category.shortcut && !isSidebarCollapsed && (
                   <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
                     {category.shortcut.split('+')[1]}
                   </span>
@@ -710,25 +774,29 @@ const MainMenu: React.FC = () => {
           <div className="p-3 border-t border-gray-200 dark:border-gray-700 space-y-2">
             <button
               type="button"
+              title={isSidebarCollapsed ? 'Refresh' : undefined}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded text-sm font-medium transition-colors"
             >
               <FiRefreshCw className="w-4 h-4" />
-              <span>Refresh</span>
+              {!isSidebarCollapsed && <span>Refresh</span>}
             </button>
             <button
               type="button"
               onClick={handleLogout}
+              title={isSidebarCollapsed ? 'Logout' : undefined}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-700 dark:text-red-400 rounded text-sm font-medium transition-colors border border-red-200 dark:border-red-800"
             >
               <FiLogOut className="w-4 h-4" />
-              <span>Logout</span>
+              {!isSidebarCollapsed && <span>Logout</span>}
             </button>
           </div>
         </div>
 
         {/* Main Area */}
         <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-900">
-          <div className="max-w-7xl mx-auto p-6">
+          <div
+            className={`${isSidebarCollapsed ? '' : 'max-w-7xl'} mx-auto p-6`}
+          >
             {/* Page Header */}
             <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div>

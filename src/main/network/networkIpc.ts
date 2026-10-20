@@ -2,8 +2,9 @@ import os from 'os';
 import { ipcMain } from 'electron';
 import {
   DEFAULT_PORT,
-  generateAccessKey,
+  ensureServerIdentity,
   loadNetworkConfig,
+  normalizeAccessKey,
   saveNetworkConfig,
 } from './networkConfig';
 import { getLocalAddresses, stopRpcServer } from './rpcServer';
@@ -12,8 +13,8 @@ import {
   cancelPairing,
   discoverServers,
   getPairingStatus,
-  pingServer,
   requestPairing,
+  verifyServer,
 } from './rpcClient';
 import { listPendingPairRequests, respondToPairRequest } from './pairing';
 import {
@@ -67,7 +68,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
     'network-test-connection',
     async (_e, host: string, port: number, accessKey: string) => {
       try {
-        await pingServer({ serverHost: host, port: port || DEFAULT_PORT, accessKey });
+        await verifyServer({ serverHost: host, port: port || DEFAULT_PORT }, normalizeAccessKey(accessKey));
         return { success: true };
       } catch (error) {
         return { success: false, error: String((error as Error)?.message ?? error) };
@@ -77,11 +78,8 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
 
   ipcMain.handle('network-setup-server', async () => {
     try {
-      const existing = loadNetworkConfig();
-      saveNetworkConfig({
-        role: 'server',
-        accessKey: existing.accessKey || generateAccessKey(),
-      });
+      // Own key + id — never the key this computer may have used as a client.
+      ensureServerIdentity();
       await hooks.startAsServer();
       hooks.reloadWindow();
       return { success: true };
@@ -95,9 +93,11 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
     'network-setup-client',
     async (_e, host: string, port: number, accessKey: string) => {
       try {
-        const cfg = { serverHost: host.trim(), port: port || DEFAULT_PORT, accessKey: accessKey.trim() };
-        await pingServer(cfg);
-        saveNetworkConfig({ role: 'client', ...cfg });
+        const target = { serverHost: host.trim(), port: port || DEFAULT_PORT };
+        const key = normalizeAccessKey(accessKey);
+        // Verify the main computer proves it holds this key before we ever send the key to it.
+        const serverId = await verifyServer(target, key);
+        saveNetworkConfig({ role: 'client', ...target, accessKey: key, serverId });
         startMonitor();
         hooks.reloadWindow();
         return { success: true };
@@ -114,21 +114,44 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
   );
 
   // --- Other computer: ask the main computer for access and wait for Allow/Deny ---
-  let activePairing: { host: string; port: number; requestId: string; cancelled: boolean } | null = null;
+  interface Pairing {
+    host: string;
+    port: number;
+    requestId: string | null;
+    cancelled: boolean;
+  }
+  let activePairing: Pairing | null = null;
+
+  const sendCancel = (pairing: Pairing) => {
+    if (!pairing.requestId) return;
+    void cancelPairing({ serverHost: pairing.host, port: pairing.port }, pairing.requestId).catch(
+      () => undefined
+    );
+  };
 
   ipcMain.handle('network-request-access', async (_e, host: string, port: number) => {
     const target = { serverHost: host.trim(), port: port || DEFAULT_PORT };
     if (activePairing) activePairing.cancelled = true;
+    // Registered before the first await so "Cancel request" always has something to cancel.
+    const pairing: Pairing = { host: target.serverHost, port: target.port, requestId: null, cancelled: false };
+    activePairing = pairing;
+    const finish = (result: { success: boolean; reason?: string; error?: string }) => {
+      if (activePairing === pairing) activePairing = null;
+      return result;
+    };
     try {
       const deviceName = os.hostname().replace(/\.local$/, '');
       const { requestId, expiresAt } = await requestPairing(target, deviceName);
-      const pairing = { host: target.serverHost, port: target.port, requestId, cancelled: false };
-      activePairing = pairing;
+      pairing.requestId = requestId;
+      if (pairing.cancelled) {
+        sendCancel(pairing);
+        return finish({ success: false, reason: 'cancelled' });
+      }
 
-      while (!pairing.cancelled && Date.now() < expiresAt + 2000) {
+      while (Date.now() < expiresAt + 2000) {
         // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 1500));
-        if (pairing.cancelled) break;
+        if (pairing.cancelled) return finish({ success: false, reason: 'cancelled' });
         let status;
         try {
           // eslint-disable-next-line no-await-in-loop
@@ -136,43 +159,45 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
         } catch {
           continue; // brief network hiccup — keep waiting
         }
+        if (pairing.cancelled) {
+          sendCancel(pairing);
+          return finish({ success: false, reason: 'cancelled' });
+        }
         if (status.state === 'approved' && status.accessKey) {
-          const cfg = { ...target, accessKey: status.accessKey };
+          const key = normalizeAccessKey(status.accessKey);
           // eslint-disable-next-line no-await-in-loop
-          await pingServer(cfg);
-          saveNetworkConfig({ role: 'client', ...cfg });
-          activePairing = null;
+          const serverId = await verifyServer(target, key);
+          if (pairing.cancelled) return finish({ success: false, reason: 'cancelled' });
+          saveNetworkConfig({ role: 'client', ...target, accessKey: key, serverId });
+          finish({ success: true });
           startMonitor();
           hooks.reloadWindow();
           return { success: true };
         }
         if (status.state === 'denied' || status.state === 'expired') {
-          activePairing = null;
-          return { success: false, reason: status.state };
+          return finish({ success: false, reason: status.state });
         }
       }
-      if (activePairing === pairing) activePairing = null;
-      return { success: false, reason: pairing.cancelled ? 'cancelled' : 'expired' };
+      return finish({ success: false, reason: 'expired' });
     } catch (error) {
-      return { success: false, reason: 'error', error: String((error as Error)?.message ?? error) };
+      if (pairing.cancelled) return finish({ success: false, reason: 'cancelled' });
+      return finish({ success: false, reason: 'error', error: String((error as Error)?.message ?? error) });
     }
   });
 
-  ipcMain.handle('network-cancel-access', async () => {
+  ipcMain.handle('network-cancel-access', () => {
     const pairing = activePairing;
     if (!pairing) return;
     pairing.cancelled = true;
     activePairing = null;
-    await cancelPairing({ serverHost: pairing.host, port: pairing.port }, pairing.requestId).catch(
-      () => undefined
-    );
+    sendCancel(pairing); // if the request is still being sent, the flow above cancels it once sent
   });
 
   /** Lets the user switch back to the role picker (e.g. wrong server). */
   ipcMain.handle('network-reset', () => {
     stopConnectionMonitor();
     stopRpcServer();
-    saveNetworkConfig({ role: 'unset', serverHost: '' });
+    saveNetworkConfig({ role: 'unset', serverHost: '', serverId: '' });
     hooks.reloadWindow();
     return { success: true };
   });
@@ -184,7 +209,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
       const cfg = loadNetworkConfig();
       if (cfg.role !== 'client') return { ok: false, error: 'Not in client mode' };
       // Known to be down: confirm with one quick check rather than letting each call wait to time out.
-      if (getConnectionStatus()?.online === false && !(await checkNow()).online) {
+      if (getConnectionStatus()?.online === false && !(await checkNow())?.online) {
         return { ok: false, error: 'Cannot reach the main computer', unreachable: true };
       }
       try {

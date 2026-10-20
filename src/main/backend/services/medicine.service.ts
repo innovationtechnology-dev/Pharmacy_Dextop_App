@@ -519,16 +519,6 @@ export class MedicineService {
     const candidates = buildBarcodeLookupCandidates(barcode);
     let medicineId: number | null = null;
 
-    // Phase 0: GTIN match — same product regardless of batch, expiry or serial in the scan.
-    const gtin = extractGtin(barcode);
-    if (gtin) {
-      const row = await this.dbService.queryOne(
-        `SELECT id FROM medicines WHERE gtin = ? ORDER BY id LIMIT 1`,
-        [gtin]
-      );
-      if (row) medicineId = row.id;
-    }
-
     // Phase 1a: exact match — all candidates in one IN clause, uses idx_medicines_barcode.
     if (candidates.length > 0 && medicineId === null) {
       const placeholders = candidates.map(() => '?').join(', ');
@@ -545,6 +535,24 @@ export class MedicineService {
       const row = await this.dbService.queryOne(
         `SELECT id FROM medicines WHERE barcode IS NOT NULL AND LOWER(TRIM(barcode)) IN (${placeholders}) LIMIT 1`,
         candidates
+      );
+      if (row) medicineId = row.id;
+    }
+
+    // Phase 1g: GTIN match — same product regardless of batch, expiry or serial in the scan.
+    // Runs after the exact matches: databases from before GTIN support can hold the same product
+    // several times (one row per batch). Prefer the active row that has stock, then the newest.
+    const gtin = extractGtin(barcode);
+    if (medicineId === null && gtin) {
+      const row = await this.dbService.queryOne(
+        `SELECT m.id FROM medicines m
+         WHERE m.gtin = ?
+         ORDER BY
+           CASE m.status WHEN 'active' THEN 0 WHEN 'inactive' THEN 1 ELSE 2 END,
+           (SELECT COALESCE(SUM(sb.qty_remaining), 0) FROM stock_batches sb WHERE sb.medicine_id = m.id) > 0 DESC,
+           m.id DESC
+         LIMIT 1`,
+        [gtin]
       );
       if (row) medicineId = row.id;
     }
@@ -653,12 +661,24 @@ export class MedicineService {
     const rows = await this.dbService.query(
       `SELECT id, barcode FROM medicines WHERE gtin IS NULL AND barcode IS NOT NULL AND barcode != ''`
     );
+    if (rows.length === 0) return;
+    // '' marks "checked, not a GS1 product code" so these rows are not re-parsed every launch.
+    // One UPDATE per chunk (a single statement commits once). Values are inlined because they are
+    // validated: GTINs are exactly 14 digits and ids are integers.
     let filled = 0;
-    for (const row of rows) {
-      const gtin = extractGtin(row.barcode);
-      if (!gtin) continue;
-      await this.dbService.execute(`UPDATE medicines SET gtin = ? WHERE id = ?`, [gtin, row.id]);
-      filled += 1;
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      const cases = chunk
+        .map((row: any) => {
+          const gtin = extractGtin(row.barcode);
+          if (gtin) filled += 1;
+          return `WHEN ${Number(row.id)} THEN '${gtin && /^\d{14}$/.test(gtin) ? gtin : ''}'`;
+        })
+        .join(' ');
+      const ids = chunk.map((row: any) => Number(row.id)).join(',');
+      // eslint-disable-next-line no-await-in-loop
+      await this.dbService.execute(`UPDATE medicines SET gtin = CASE id ${cases} END WHERE id IN (${ids})`);
     }
     if (filled > 0) console.log(`[medicines] Back-filled GTIN for ${filled} medicine(s).`);
   }
@@ -680,6 +700,7 @@ export class MedicineService {
     }
     const gtin = extractGtin(medicine.barcode);
     await this.assertGtinUnused(gtin);
+    const gtinValue = gtin ?? (medicine.barcode ? '' : null); // '' = not a GS1 code
 
     const sql = `
       INSERT INTO medicines (barcode, gtin, name, pill_quantity, status, manufacturer, brand_name, minimum_stock_level)
@@ -687,7 +708,7 @@ export class MedicineService {
     `;
     const params = [
       medicine.barcode || null,
-      gtin,
+      gtinValue,
       medicine.name,
       medicine.pillQuantity,
       medicine.status || 'active',
@@ -738,7 +759,12 @@ export class MedicineService {
       if (existingMedicine) {
         throw new Error(`Barcode "${medicine.barcode}" already exists for medicine "${existingMedicine.name}". Please use a different barcode.`);
       }
-      await this.assertGtinUnused(extractGtin(medicine.barcode), id);
+      // The edit form always sends the barcode; only check GTIN when it actually changes, so
+      // older duplicate rows (same product registered per batch) can still be edited/discontinued.
+      const current = await this.dbService.queryOne('SELECT barcode FROM medicines WHERE id = ?', [id]);
+      if ((current?.barcode || '') !== (medicine.barcode || '')) {
+        await this.assertGtinUnused(extractGtin(medicine.barcode), id);
+      }
     }
 
     const updates: string[] = [];
@@ -750,7 +776,7 @@ export class MedicineService {
     }
     if (medicine.barcode !== undefined) {
       updates.push('barcode = ?', 'gtin = ?');
-      params.push(medicine.barcode || null, extractGtin(medicine.barcode));
+      params.push(medicine.barcode || null, extractGtin(medicine.barcode) ?? (medicine.barcode ? '' : null));
     }
     if (medicine.pillQuantity !== undefined) {
       updates.push('pill_quantity = ?');

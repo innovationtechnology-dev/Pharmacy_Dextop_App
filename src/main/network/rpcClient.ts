@@ -1,7 +1,9 @@
 import http from 'http';
 import dgram from 'dgram';
 import os from 'os';
+import crypto from 'crypto';
 import { DEFAULT_PORT, DISCOVERY_PORT, NetworkConfig } from './networkConfig';
+import { computeServerProof, proofsMatch } from './serverProof';
 import type { RpcRequest, RpcResponse } from './rpcServer';
 
 const REQUEST_TIMEOUT_MS = 65_000;
@@ -28,7 +30,8 @@ const request = (
         method,
         timeout: timeoutMs,
         headers: {
-          Authorization: `Bearer ${config.accessKey}`,
+          // Never send an empty bearer; routes without a key (/hello, /pair/*) do not need one.
+          ...(config.accessKey ? { Authorization: `Bearer ${config.accessKey}` } : {}),
           ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
         },
       },
@@ -84,6 +87,46 @@ export const getPairingStatus = async (target: Target, requestId: string) =>
 
 export const cancelPairing = async (target: Target, requestId: string) => {
   await request({ ...target, accessKey: '' }, 'POST', `/pair/cancel?id=${encodeURIComponent(requestId)}`, {}, 4000);
+};
+
+/**
+ * Prove the host at `target` is the main computer holding `accessKey` (and, when known, with
+ * identity `expectedServerId`) — without sending the key. Resolves with the server's id.
+ * Errors: 'Wrong access key' (proof fails) or code EWRONGSERVER (another main computer).
+ */
+export const verifyServer = async (
+  target: Target,
+  accessKey: string,
+  expectedServerId?: string,
+  timeoutMs = 4000
+): Promise<string> => {
+  const nonce = crypto.randomBytes(16).toString('hex');
+  let res: RpcResponse;
+  try {
+    res = await request({ ...target, accessKey: '' }, 'GET', `/hello?nonce=${nonce}`, undefined, timeoutMs);
+  } catch (error) {
+    // Versions before /hello check the key first and answer 401 to it.
+    if ((error as Error)?.message === 'Wrong access key') {
+      throw Object.assign(
+        new Error('The main computer is running an older version of the app. Update it there, then try again.'),
+        { code: 'EOLDSERVER' }
+      );
+    }
+    throw error;
+  }
+  const hello = res.ok ? (res.payload as { app?: string; serverId?: string; proof?: string }) : null;
+  if (!hello || hello.app !== 'pharmacy' || !hello.serverId || !hello.proof) {
+    throw new Error('Not a Pharmacy main computer (update the app on all computers)');
+  }
+  if (!proofsMatch(hello.proof, computeServerProof(accessKey, nonce, hello.serverId))) {
+    throw new Error('Wrong access key');
+  }
+  if (expectedServerId && hello.serverId !== expectedServerId) {
+    throw Object.assign(new Error('A different main computer answered at this address'), {
+      code: 'EWRONGSERVER',
+    });
+  }
+  return hello.serverId;
 };
 
 export const pingServer = (
@@ -204,10 +247,13 @@ const discoverByScan = async (port: number): Promise<DiscoveredServer[]> => {
 };
 
 /** Find main computers on the LAN: UDP broadcast and TCP subnet scan run together, results merged. */
-export const discoverServers = async (timeoutMs = 2500): Promise<DiscoveredServer[]> => {
+export const discoverServers = async (
+  timeoutMs = 2500,
+  port = DEFAULT_PORT
+): Promise<DiscoveredServer[]> => {
   const [broadcast, scanned] = await Promise.all([
     discoverByBroadcast(timeoutMs),
-    discoverByScan(DEFAULT_PORT),
+    discoverByScan(port),
   ]);
   const merged = new Map<string, DiscoveredServer>();
   [...scanned, ...broadcast].forEach((s) => merged.set(s.host, s));

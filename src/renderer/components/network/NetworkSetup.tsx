@@ -141,6 +141,8 @@ const NetworkSetup: React.FC = () => {
     if (res.reason === 'denied') setError('The main computer denied access.');
     else if (res.reason === 'expired')
       setError('No one answered on the main computer in time. Please try again.');
+    else if (res.reason === 'error' && /wait a few seconds|Too many|older version|Wrong access key|different main computer/i.test(res.error || ''))
+      setError(res.error as string);
     else if (res.reason === 'error')
       setError(`Could not reach ${host}. Check the address and that the app is open there. (${res.error})`);
   };
@@ -328,7 +330,7 @@ const NetworkSetup: React.FC = () => {
                     <input
                       id="ns-key"
                       className={`${input} pl-10 font-mono tracking-widest uppercase`}
-                      placeholder="e.g. 3FA9C21B"
+                      placeholder="XXXX-XXXX-XXXX-…"
                       value={accessKey}
                       onChange={(e) => setAccessKey(e.target.value.trim())}
                       autoComplete="off"

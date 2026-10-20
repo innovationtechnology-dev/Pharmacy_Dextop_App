@@ -2,11 +2,21 @@ import http from 'http';
 import dgram from 'dgram';
 import os from 'os';
 import crypto from 'crypto';
-import { DISCOVERY_PORT, NetworkConfig } from './networkConfig';
+import { DISCOVERY_PORT, NetworkConfig, loadNetworkConfig } from './networkConfig';
 import { getInvokeHandler, getSendHandlers } from './ipcRegistry';
 import { cancelPairRequest, createPairRequest, getPairStatus } from './pairing';
+import { computeServerProof, isValidNonce } from './serverProof';
+import { MAIN_COMPUTER_ONLY_CHANNELS, MAIN_COMPUTER_ONLY_MESSAGE } from './localOnlyChannels';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
+/** Unauthenticated routes only ever carry a device name. */
+const MAX_PAIR_BODY_BYTES = 1024;
+/** One access request per computer per this interval (stops notification floods). */
+const PAIR_REQUEST_COOLDOWN_MS = 10_000;
+/** Wrong-key lockout: this many failures within the window blocks the address for a while. */
+const AUTH_FAIL_LIMIT = 20;
+const AUTH_FAIL_WINDOW_MS = 60_000;
+const AUTH_BLOCK_MS = 60_000;
 const HANDLER_TIMEOUT_MS = 60_000;
 const DISCOVER_MESSAGE = 'PHARMACY_DISCOVER';
 
@@ -48,6 +58,7 @@ const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
 const dispatch = async (req: RpcRequest): Promise<RpcResponse> => {
   if (!req || typeof req.channel !== 'string') return { ok: false, error: 'Bad request' };
   if (isBlockedRemotely(req.channel)) return { ok: false, error: 'Channel not available remotely' };
+  if (MAIN_COMPUTER_ONLY_CHANNELS.has(req.channel)) return { ok: false, error: MAIN_COMPUTER_ONLY_MESSAGE };
 
   if (req.kind === 'invoke') {
     const handler = getInvokeHandler(req.channel);
@@ -80,13 +91,13 @@ const dispatch = async (req: RpcRequest): Promise<RpcResponse> => {
   return { ok: true, replyChannel: reply.channel, payload: reply.payload };
 };
 
-const readBody = (req: http.IncomingMessage): Promise<string> =>
+const readBody = (req: http.IncomingMessage, maxBytes = MAX_BODY_BYTES): Promise<string> =>
   new Promise((resolve, reject) => {
     let size = 0;
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => {
       size += c.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         reject(new Error('Payload too large'));
         req.destroy();
         return;
@@ -105,6 +116,26 @@ const send = (res: http.ServerResponse, status: number, body: unknown) => {
 let server: http.Server | null = null;
 let discovery: dgram.Socket | null = null;
 
+const normalizeAddress = (address: string) => address.replace(/^::ffff:/, '');
+const lastPairRequestAt = new Map<string, number>();
+const authFailures = new Map<string, { count: number; windowStart: number; blockedUntil: number }>();
+
+const isAuthBlocked = (address: string) => (authFailures.get(address)?.blockedUntil ?? 0) > Date.now();
+
+const recordAuthFailure = (address: string) => {
+  const now = Date.now();
+  const entry = authFailures.get(address);
+  if (!entry || now - entry.windowStart > AUTH_FAIL_WINDOW_MS) {
+    authFailures.set(address, { count: 1, windowStart: now, blockedUntil: 0 });
+    return;
+  }
+  entry.count += 1;
+  if (entry.count >= AUTH_FAIL_LIMIT) {
+    entry.blockedUntil = now + AUTH_BLOCK_MS;
+    console.warn(`[rpc] ${address} blocked for ${AUTH_BLOCK_MS / 1000}s after repeated wrong keys`);
+  }
+};
+
 export const startRpcServer = (config: NetworkConfig): Promise<void> =>
   new Promise((resolve, reject) => {
     if (server) { resolve(); return; }
@@ -114,9 +145,37 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
         // Access requests come from computers that do not have the key yet.
         const url = new URL(req.url ?? '/', 'http://localhost');
         const remote = req.socket.remoteAddress ?? '';
+        const address = normalizeAddress(remote);
+
+        // Identity check for clients: proves we hold the key without them sending it.
+        if (req.method === 'GET' && url.pathname === '/hello') {
+          const nonce = url.searchParams.get('nonce') ?? '';
+          if (!isValidNonce(nonce)) {
+            send(res, 400, { ok: false, error: 'Bad nonce' });
+            return;
+          }
+          const serverId = loadNetworkConfig().ownServerId;
+          send(res, 200, {
+            ok: true,
+            payload: {
+              app: 'pharmacy',
+              name: os.hostname(),
+              serverId,
+              proof: computeServerProof(config.accessKey, nonce, serverId),
+            },
+          });
+          return;
+        }
+
         if (url.pathname.startsWith('/pair/')) {
           if (req.method === 'POST' && url.pathname === '/pair/request') {
-            const body = JSON.parse((await readBody(req)) || '{}');
+            const last = lastPairRequestAt.get(address) ?? 0;
+            if (Date.now() - last < PAIR_REQUEST_COOLDOWN_MS) {
+              send(res, 429, { ok: false, error: 'Please wait a few seconds before asking again' });
+              return;
+            }
+            lastPairRequestAt.set(address, Date.now());
+            const body = JSON.parse((await readBody(req, MAX_PAIR_BODY_BYTES)) || '{}');
             const request = createPairRequest(body?.deviceName, remote);
             if (!request) {
               send(res, 429, { ok: false, error: 'Too many computers are waiting for approval' });
@@ -140,8 +199,14 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
           return;
         }
 
+        if (isAuthBlocked(address)) {
+          send(res, 429, { ok: false, error: 'Too many wrong access keys. Try again in a minute.' });
+          return;
+        }
         const auth = req.headers.authorization ?? '';
         if (!keysMatch(auth, `Bearer ${config.accessKey}`)) {
+          // A bare /ping without a key is how discovery recognises us — not a guess.
+          if (auth) recordAuthFailure(address);
           send(res, 401, { ok: false, app: 'pharmacy', name: os.hostname(), error: 'Invalid access key' });
           return;
         }

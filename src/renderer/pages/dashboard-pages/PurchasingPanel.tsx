@@ -199,6 +199,9 @@ const PurchasingPanel: React.FC = () => {
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
+  // Latest cart for callbacks that must not re-subscribe on every cart change (barcode scan).
+  const cartRef = useRef<PurchaseItem[]>(cart);
+  cartRef.current = cart;
   /** Draft discount while typing */
   const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
   /** Draft tax while typing */
@@ -642,10 +645,38 @@ const PurchasingPanel: React.FC = () => {
           // GS1 DataMatrix also carries expiry and batch. Batch is only trusted when the scan
           // kept its GS separators — otherwise it may have swallowed the serial number.
           const gs1 = parseGs1(code);
-          addToCart(medicine, {
-            expiryDate: gs1?.expiry,
-            batchNumber: gs1?.variableFieldsReliable ? gs1.batch : undefined,
-          });
+          const scannedExpiry = gs1?.expiry;
+          const scannedBatch = gs1?.variableFieldsReliable ? gs1.batch : undefined;
+
+          // One cart line per medicine: a pack from a *different* batch/expiry must not be
+          // merged into it, or it would be stocked under the wrong expiry.
+          const existing = cartRef.current.find((item) => item.medicine.id === medicine.id);
+          const expiryDiffers = !!(scannedExpiry && existing?.expiryDate && existing.expiryDate !== scannedExpiry);
+          const batchDiffers = !!(scannedBatch && existing?.batchNumber && existing.batchNumber !== scannedBatch);
+          if (existing && (expiryDiffers || batchDiffers)) {
+            warning(
+              <div>
+                <div className="font-semibold mb-1">Different batch scanned — not added</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>
+                    {medicine.name} is already in this purchase
+                    {existing.batchNumber ? ` (batch ${existing.batchNumber}` : ' ('}
+                    {existing.expiryDate ? `, expiry ${existing.expiryDate})` : ')'}
+                  </li>
+                  <li>
+                    This pack is
+                    {scannedBatch ? ` batch ${scannedBatch}` : ''}
+                    {scannedExpiry ? ` expiring ${scannedExpiry}` : ''}
+                  </li>
+                  <li>Save this purchase first, then add the other batch as a new purchase</li>
+                </ul>
+              </div>
+            );
+            setBarcodeInput('');
+            return;
+          }
+
+          addToCart(medicine, { expiryDate: scannedExpiry, batchNumber: scannedBatch });
           setIsScanning(true);
           setBarcodeInput('');
           setTimeout(() => {
@@ -679,7 +710,7 @@ const PurchasingPanel: React.FC = () => {
         setBarcodeInput('');
       }
     },
-    [addToCart, error]
+    [addToCart, error, warning]
   );
 
   // Debounce search to prevent firing on every keystroke

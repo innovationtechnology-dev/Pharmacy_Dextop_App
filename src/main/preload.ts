@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import { MAIN_COMPUTER_ONLY_CHANNELS, MAIN_COMPUTER_ONLY_MESSAGE } from './network/localOnlyChannels';
 
 export type Channels =
   | 'ipc-example'
@@ -94,6 +95,11 @@ const bridge = {
   sendMessage(channel: Channels, args: unknown[]) {
     if (!isClient || isLocalChannel(channel)) {
       ipcRenderer.send(channel, args);
+      return;
+    }
+    if (MAIN_COMPUTER_ONLY_CHANNELS.has(channel)) {
+      // Save/Open dialogs would appear on the main computer's screen — refuse up front.
+      setTimeout(() => emitLocal(`${channel}-reply`, { success: false, error: MAIN_COMPUTER_ONLY_MESSAGE }), 0);
       return;
     }
     ipcRenderer.invoke('network-rpc', 'send', channel, args).then((res) => {

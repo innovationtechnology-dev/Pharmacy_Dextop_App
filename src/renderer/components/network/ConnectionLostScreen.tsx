@@ -34,6 +34,23 @@ const COPY: Record<
       'Here, click "Connect to a different main computer" and enter the new key.',
     ],
   },
+  'other-server': {
+    icon: FiMonitor,
+    title: 'A different main computer is at this address',
+    body: (host) =>
+      `The computer at ${host} is a Pharmacy main computer, but not the one this computer was connected to. Its data was not used.`,
+    steps: [
+      'Turn on the original main computer — this computer will find it automatically.',
+      'Or click "Connect to a different main computer" if the main computer was changed on purpose.',
+    ],
+  },
+  'old-version': {
+    icon: FiRefreshCw,
+    title: 'Main computer needs an update',
+    body: (host) =>
+      `The main computer (${host}) is running an older version of the Pharmacy app that cannot talk to this one.`,
+    steps: ['Install the same app version on the main computer and open it.'],
+  },
   'no-network': {
     icon: FiWifiOff,
     title: 'This computer is not connected to WiFi',

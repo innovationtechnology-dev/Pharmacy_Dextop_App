@@ -75,7 +75,7 @@ export const getPairStatus = (id: string, rawAddress: string): PairStatus => {
   const request = requests.get(id);
   if (!request || request.address !== normalizeAddress(rawAddress)) return { state: 'expired' };
   if (request.state === 'approved') {
-    requests.delete(id); // key is delivered once
+    // Kept until the request expires so a lost reply can be retried; only this address gets it.
     return { state: 'approved', accessKey: loadNetworkConfig().accessKey };
   }
   if (request.state === 'denied') {

@@ -10,6 +10,7 @@ const PairingRequestPrompt: React.FC = () => {
   const [pending, setPending] = useState<PairRequest[]>([]);
   const [busy, setBusy] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [shownId, setShownId] = useState<string | null>(null);
 
   useEffect(() => {
     window.electron.ipcRenderer
@@ -21,7 +22,11 @@ const PairingRequestPrompt: React.FC = () => {
     return () => off?.();
   }, []);
 
-  const request = pending[0];
+  // Keep showing the same request while it is pending, so the dialog never swaps under the cursor.
+  const request = pending.find((r) => r.id === shownId) ?? pending[0];
+  useEffect(() => {
+    setShownId(request?.id ?? null);
+  }, [request?.id]);
 
   // Countdown until the request expires.
   useEffect(() => {
