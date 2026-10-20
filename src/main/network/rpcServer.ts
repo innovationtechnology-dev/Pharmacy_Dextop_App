@@ -7,6 +7,7 @@ import { getInvokeHandler, getSendHandlers } from './ipcRegistry';
 import { cancelPairRequest, createPairRequest, getPairStatus } from './pairing';
 import { computeServerProof, isValidNonce } from './serverProof';
 import { MAIN_COMPUTER_ONLY_CHANNELS, MAIN_COMPUTER_ONLY_MESSAGE } from './localOnlyChannels';
+import { ChangeOrigin, getSyncState, onDataChange } from './dataChanges';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 /** Unauthenticated routes only ever carry a device name. */
@@ -19,6 +20,8 @@ const AUTH_FAIL_WINDOW_MS = 60_000;
 const AUTH_BLOCK_MS = 60_000;
 const HANDLER_TIMEOUT_MS = 60_000;
 const DISCOVER_MESSAGE = 'PHARMACY_DISCOVER';
+/** Keeps idle event streams alive and lets clients notice a dead connection. */
+const EVENT_HEARTBEAT_MS = 20_000;
 
 /** Channels that must never be callable from another computer. */
 const isBlockedRemotely = (channel: string) =>
@@ -55,7 +58,7 @@ const withTimeout = <T,>(p: Promise<T>): Promise<T> =>
     );
   });
 
-const dispatch = async (req: RpcRequest): Promise<RpcResponse> => {
+const dispatch = async (req: RpcRequest, origin: ChangeOrigin): Promise<RpcResponse> => {
   if (!req || typeof req.channel !== 'string') return { ok: false, error: 'Bad request' };
   if (isBlockedRemotely(req.channel)) return { ok: false, error: 'Channel not available remotely' };
   if (MAIN_COMPUTER_ONLY_CHANNELS.has(req.channel)) return { ok: false, error: MAIN_COMPUTER_ONLY_MESSAGE };
@@ -64,7 +67,7 @@ const dispatch = async (req: RpcRequest): Promise<RpcResponse> => {
     const handler = getInvokeHandler(req.channel);
     if (!handler) return { ok: false, error: `Unknown channel: ${req.channel}` };
     const payload = await withTimeout(
-      Promise.resolve(handler({ sender: null }, ...(req.args ?? [])))
+      Promise.resolve(handler({ sender: null, origin }, ...(req.args ?? [])))
     );
     return { ok: true, payload };
   }
@@ -77,6 +80,7 @@ const dispatch = async (req: RpcRequest): Promise<RpcResponse> => {
     new Promise<{ channel: string; payload: unknown }>((resolve, reject) => {
       const fakeEvent = {
         sender: null,
+        origin,
         reply: (channel: string, payload: unknown) => resolve({ channel, payload }),
       };
       try {
@@ -115,8 +119,52 @@ const send = (res: http.ServerResponse, status: number, body: unknown) => {
 
 let server: http.Server | null = null;
 let discovery: dgram.Socket | null = null;
+const eventStreams = new Set<http.ServerResponse>();
 
 const normalizeAddress = (address: string) => address.replace(/^::ffff:/, '');
+
+const headerValue = (req: http.IncomingMessage, name: string) => {
+  const value = req.headers[name];
+  return (Array.isArray(value) ? value[0] : value) ?? '';
+};
+
+/** Which computer sent this request (its name is shown to the others when it changes data). */
+const originOf = (req: http.IncomingMessage, address: string): ChangeOrigin => {
+  let device = '';
+  try {
+    device = decodeURIComponent(headerValue(req, 'x-device-name'));
+  } catch {
+    // malformed name — fall back to the address
+  }
+  return {
+    sourceId: headerValue(req, 'x-source-id').slice(0, 64) || address,
+    device: device.trim().slice(0, 64) || address,
+  };
+};
+
+/** Server-Sent Events: pushes every data change to a connected computer as it happens. */
+const openEventStream = (req: http.IncomingMessage, res: http.ServerResponse) => {
+  req.socket.setTimeout(0);
+  req.socket.setKeepAlive(true, EVENT_HEARTBEAT_MS);
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+  const write = (event: string, data: unknown) =>
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  // Current versions first, so a reconnecting computer can tell what it missed.
+  write('hello', getSyncState());
+  const unsubscribe = onDataChange((change) => write('change', change));
+  const heartbeat = setInterval(() => res.write(': ping\n\n'), EVENT_HEARTBEAT_MS);
+  eventStreams.add(res);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+    eventStreams.delete(res);
+  });
+};
 const lastPairRequestAt = new Map<string, number>();
 const authFailures = new Map<string, { count: number; windowStart: number; blockedUntil: number }>();
 
@@ -210,6 +258,10 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
           send(res, 401, { ok: false, app: 'pharmacy', name: os.hostname(), error: 'Invalid access key' });
           return;
         }
+        if (req.method === 'GET' && url.pathname === '/events') {
+          openEventStream(req, res);
+          return;
+        }
         if (req.method === 'GET' && req.url === '/ping') {
           send(res, 200, { ok: true });
           return;
@@ -217,7 +269,7 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
         if (req.method === 'POST' && req.url === '/rpc') {
           const parsed = JSON.parse(await readBody(req)) as RpcRequest;
           const started = Date.now();
-          const result = await dispatch(parsed);
+          const result = await dispatch(parsed, originOf(req, address));
           console.log(
             `[rpc] ${req.socket.remoteAddress} ${parsed.kind} ${parsed.channel} -> ${result.ok ? 'ok' : result.error} (${Date.now() - started}ms)`
           );
@@ -258,6 +310,9 @@ const startDiscoveryResponder = (port: number) => {
 };
 
 export const stopRpcServer = () => {
+  // Open event streams would otherwise keep the server from ever closing.
+  eventStreams.forEach((res) => res.end());
+  eventStreams.clear();
   server?.close();
   server = null;
   discovery?.close();

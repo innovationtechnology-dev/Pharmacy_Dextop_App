@@ -1,5 +1,6 @@
 import { Channels } from 'main/preload';
 import type { ConnectionStatus } from 'main/network/connectionMonitor';
+import type { SyncEvent } from 'main/network/dataChanges';
 
 declare global {
   interface Window {
@@ -12,6 +13,10 @@ declare global {
         ): (() => void) | undefined;
         once(channel: Channels, func: (...args: unknown[]) => void): void;
         invoke(channel: Channels, ...args: unknown[]): Promise<unknown>;
+      };
+      dataSync: {
+        /** Pushed whenever data changes on the main computer, from any computer. */
+        onChange(fn: (event: SyncEvent) => void): () => void;
       };
       network: {
         mode: 'unset' | 'server' | 'client';

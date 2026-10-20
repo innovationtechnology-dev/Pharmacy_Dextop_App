@@ -23,6 +23,8 @@ import {
   startConnectionMonitor,
   stopConnectionMonitor,
 } from './connectionMonitor';
+import { SELF_SOURCE_ID, onDataChange } from './dataChanges';
+import { startDataSync, stopDataSync } from './dataSyncClient';
 
 interface NetworkIpcHooks {
   /** Initialise backend + start the server; called when this PC becomes the main computer. */
@@ -38,8 +40,20 @@ interface NetworkIpcHooks {
  * exposed through the RPC server (see isBlockedRemotely).
  */
 export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
-  const startMonitor = () =>
+  const startMonitor = () => {
     startConnectionMonitor((s) => hooks.sendToWindow('network-status', s));
+    // Other computer: live data changes from the main computer.
+    startDataSync((event) => hooks.sendToWindow('data-changed', event));
+  };
+
+  // Main computer: its own window hears about every change, whichever computer made it.
+  onDataChange((change) =>
+    hooks.sendToWindow('data-changed', {
+      topics: change.topics,
+      self: change.sourceId === SELF_SOURCE_ID,
+      change,
+    })
+  );
   if (loadNetworkConfig().role === 'client') startMonitor();
 
   /** Client mode: current reachability of the main computer (null until the first check). */
@@ -196,6 +210,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
   /** Lets the user switch back to the role picker (e.g. wrong server). */
   ipcMain.handle('network-reset', () => {
     stopConnectionMonitor();
+    stopDataSync();
     stopRpcServer();
     saveNetworkConfig({ role: 'unset', serverHost: '', serverId: '' });
     hooks.reloadWindow();

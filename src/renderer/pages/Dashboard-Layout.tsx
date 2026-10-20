@@ -26,6 +26,8 @@ import { getStoredPharmacySettings } from '../types/pharmacy';
 import Breadcrumbs from '../components/navigation/Breadcrumbs';
 import Loader from '../components/Loader';
 import LicenseOverlay from '../components/license/LicenseOverlay';
+import RemoteChangeNotifier from '../components/common/RemoteChangeNotifier';
+import { useDataSync } from '../hooks/useDataSync';
 import { PageHeader } from '../components/common/PageHeader';
 
 const ALERT_THRESHOLD_DAYS = 30;
@@ -230,6 +232,16 @@ const Dashboard_Layout: React.FC = () => {
     return () => clearInterval(interval);
   }, [fetchLowStockAlerts]);
 
+  // Stock and expiry alerts change whenever medicines, sales or purchases do — on any computer.
+  useDataSync(
+    ['medicine', 'sale', 'sale-return', 'purchase'],
+    () => {
+      fetchExpiringAlerts();
+      fetchLowStockAlerts();
+    },
+    { notify: false }
+  );
+
   const setHeaderConfig = useCallback<DashboardHeaderContextValue['setHeader']>(
     (config) => {
       setCustomHeader(config);
@@ -287,6 +299,7 @@ const Dashboard_Layout: React.FC = () => {
 
   return (
     <LicenseOverlay>
+      <RemoteChangeNotifier />
       <div className="h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 text-gray-800 dark:text-gray-100">
         {/* Scrollable Main Content */}
         <main

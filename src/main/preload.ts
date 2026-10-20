@@ -91,6 +91,12 @@ ipcRenderer.on('network-status', (_event, status: { online: boolean }) => {
   statusListeners.forEach((fn) => fn(status));
 });
 
+// Data changed on the main computer (made here or on another computer) — screens reload.
+const dataListeners = new Set<(event: unknown) => void>();
+ipcRenderer.on('data-changed', (_event, payload: unknown) => {
+  dataListeners.forEach((fn) => fn(payload));
+});
+
 const bridge = {
   sendMessage(channel: Channels, args: unknown[]) {
     if (!isClient || isLocalChannel(channel)) {
@@ -145,6 +151,14 @@ const bridge = {
 
 contextBridge.exposeInMainWorld('electron', {
   ipcRenderer: bridge,
+  dataSync: {
+    onChange(fn: (event: unknown) => void) {
+      dataListeners.add(fn);
+      return () => {
+        dataListeners.delete(fn);
+      };
+    },
+  },
   network: {
     mode: networkMode,
     onConnection(fn: (ok: boolean) => void) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, FormEvent } from 'react';
 import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { useDashboardHeader } from './useDashboardHeader';
+import { useDataSync } from '../../hooks/useDataSync';
 import {
   FiPlus,
   FiEdit2,
@@ -256,17 +257,18 @@ export default function MedicinesPage() {
     () => getSymbol(pharmacySettings.currency || 'USD'),
     [pharmacySettings.currency]
   );
-  const loadMedicines = useCallback(() => {
+  /** `quiet`: reload in the background (live update) without the loading state. */
+  const loadMedicines = useCallback((quiet = false) => {
     if (!window?.electron) {
       setLoadError('Electron bridge unavailable. Please restart the app.');
       return;
     }
 
-    setIsLoading(true);
+    if (!quiet) setIsLoading(true);
     window.electron.ipcRenderer.once(
       'medicine-get-all-reply',
       (...args: unknown[]) => {
-        setIsLoading(false);
+        if (!quiet) setIsLoading(false);
         const response = args[0] as IpcResponse<BackendMedicine[]>;
 
         if (!response?.success || !Array.isArray(response.data)) {
@@ -282,6 +284,9 @@ export default function MedicinesPage() {
 
     window.electron.ipcRenderer.sendMessage('medicine-get-all', []);
   }, []);
+
+  // Medicines added or changed on another computer show up here without a manual refresh.
+  useDataSync(['medicine'], () => loadMedicines(true));
 
   useEffect(() => {
     loadMedicines();
@@ -937,7 +942,7 @@ export default function MedicinesPage() {
         </div>
 
         <button
-          onClick={loadMedicines}
+          onClick={() => loadMedicines()}
           className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
         >
           <FiRefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
@@ -1290,7 +1295,7 @@ export default function MedicinesPage() {
                     {loadError}
                   </p>
                   <button
-                    onClick={loadMedicines}
+                    onClick={() => loadMedicines()}
                     className="px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors text-sm"
                   >
                     Try Again

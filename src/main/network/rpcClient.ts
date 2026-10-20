@@ -5,10 +5,17 @@ import crypto from 'crypto';
 import { DEFAULT_PORT, DISCOVERY_PORT, NetworkConfig } from './networkConfig';
 import { computeServerProof, proofsMatch } from './serverProof';
 import type { RpcRequest, RpcResponse } from './rpcServer';
+import { SELF_SOURCE_ID, deviceName } from './dataChanges';
 
 const REQUEST_TIMEOUT_MS = 65_000;
 /** A switched-off computer never answers the TCP handshake; fail fast instead of waiting for the OS. */
 const CONNECT_TIMEOUT_MS = 5_000;
+
+/** Tells the main computer who is asking, so it can name this computer when it changes data. */
+export const originHeaders = () => ({
+  'X-Device-Name': encodeURIComponent(deviceName()),
+  'X-Source-Id': SELF_SOURCE_ID,
+});
 
 const timeoutError = () =>
   Object.assign(new Error('Main computer did not respond'), { code: 'ETIMEDOUT' });
@@ -30,6 +37,7 @@ const request = (
         method,
         timeout: timeoutMs,
         headers: {
+          ...originHeaders(),
           // Never send an empty bearer; routes without a key (/hello, /pair/*) do not need one.
           ...(config.accessKey ? { Authorization: `Bearer ${config.accessKey}` } : {}),
           ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}),
