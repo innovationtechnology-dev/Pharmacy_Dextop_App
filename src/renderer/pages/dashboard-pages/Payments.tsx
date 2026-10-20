@@ -225,7 +225,6 @@ const Payments: React.FC = () => {
 
   const [paymentDate, setPaymentDate] = useState(today);
   const [processing, setProcessing] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
   /** Ledger payment row opened via eye icon (full method / ref / notes). */
   const [viewLedgerPayment, setViewLedgerPayment] = useState<SupplierLedgerRow | null>(null);
@@ -910,30 +909,6 @@ const Payments: React.FC = () => {
     }
   };
 
-  const handleDeletePurchase = async (purchaseId: number) => {
-    if (!window.confirm(`Are you sure you want to delete purchase PO-${purchaseId}? This action cannot be undone.`)) {
-      return;
-    }
-    setProcessing(true);
-    try {
-      window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
-        setProcessing(false);
-        setDeleteConfirm(null);
-        if (response.success) {
-          loadAllData();
-          alert('Purchase deleted successfully!');
-        } else {
-          alert('Error deleting purchase: ' + (response.error || 'Unknown error'));
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
-    } catch (err) {
-      setProcessing(false);
-      setDeleteConfirm(null);
-      alert('Error deleting purchase. Please try again.');
-    }
-  };
-
   const handleDownloadFromPreview = async () => {
     if (!pdfHtmlContent) return;
     try {
@@ -1471,16 +1446,6 @@ const Payments: React.FC = () => {
                                 >
                                   <FiEye className="w-3.5 h-3.5" />
                                 </button>
-                                {isToday(row.eventAt) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setDeleteConfirm(row.purchaseId)}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                    title="Delete PO (today)"
-                                  >
-                                    <FiTrash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
                               </>
                             )}
                             {!isPurchase && row.paymentId != null && (
@@ -2697,33 +2662,6 @@ const Payments: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-          {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-              Are you sure you want to delete purchase PO-{deleteConfirm}? This will also delete all associated payment records. This action cannot be undone.
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleDeletePurchase(deleteConfirm)}
-                    disabled={processing}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-                  >
-                    {processing ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
         </div>
       )}
 
