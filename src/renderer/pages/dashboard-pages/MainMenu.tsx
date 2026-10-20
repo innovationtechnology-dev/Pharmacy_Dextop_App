@@ -90,6 +90,7 @@ interface MenuBarItem {
 
 import WelcomeNotification from '../../components/WelcomeNotification';
 import { useDashboardHeader } from './useDashboardHeader';
+import CalendarPanel from '../../components/common/CalendarPanel';
 
 const MainMenu: React.FC = () => {
   const navigate = useNavigate();
@@ -1100,163 +1101,182 @@ const MainMenu: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Access */}
-            {activeCategory === 'all' && quickAccessModules.length > 0 && (
-              <div className="mb-8">
-                <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-                  Quick Access
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {quickAccessModules.map((module) => (
-                    <button
-                      key={module.id}
-                      type="button"
-                      onClick={() => handleModuleClick(module)}
-                      className="group relative p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all text-left"
-                    >
-                      <div
-                        className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm`}
-                      >
-                        {module.icon}
-                      </div>
-                      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-                        {module.title}
-                      </h3>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                        {module.description}
-                      </p>
-                      {module.shortcut && (
-                        <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                          {module.shortcut}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Module Grid */}
-            {activeCategory === 'all' && remainingModules.length > 0 && (
-              <>
-                <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
-                  All Modules
-                </h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {remainingModules.map((module) => (
-                    <button
-                      key={module.id}
-                      type="button"
-                      onClick={() => handleModuleClick(module)}
-                      disabled={module.disabled}
-                      className={`group relative p-4 border rounded-lg text-left transition-all ${
-                        module.disabled
-                          ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-                          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
-                      }`}
-                    >
-                      <div
-                        className={`w-10 h-10 bg-gradient-to-br ${
-                          module.color
-                        } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                          !module.disabled &&
-                          'group-hover:scale-105 transition-transform'
-                        }`}
-                      >
-                        {module.icon}
-                      </div>
-                      <h3
-                        className={`text-sm font-semibold mb-1 ${
-                          module.disabled
-                            ? 'text-gray-400 dark:text-gray-600'
-                            : 'text-gray-900 dark:text-white'
-                        }`}
-                      >
-                        {module.title}
-                      </h3>
-                      <p
-                        className={`text-xs mb-2 ${
-                          module.disabled
-                            ? 'text-gray-400 dark:text-gray-600'
-                            : 'text-gray-500 dark:text-gray-400'
-                        }`}
-                      >
-                        {module.description}
-                      </p>
-                      {module.shortcut && !module.disabled && (
-                        <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                          {module.shortcut}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {activeCategory !== 'all' && (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {filteredModules.map((module) => (
-                  <button
-                    key={module.id}
-                    type="button"
-                    onClick={() => handleModuleClick(module)}
-                    disabled={module.disabled}
-                    className={`group relative p-4 border rounded-lg text-left transition-all ${
-                      module.disabled
-                        ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
-                    }`}
-                  >
+            <div className="flex gap-6 items-start">
+              <div className="flex-1 min-w-0">
+                {/* Quick Access */}
+                {activeCategory === 'all' && quickAccessModules.length > 0 && (
+                  <div className="mb-8">
+                    <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                      Quick Access
+                    </h2>
                     <div
-                      className={`w-10 h-10 bg-gradient-to-br ${
-                        module.color
-                      } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                        !module.disabled &&
-                        'group-hover:scale-105 transition-transform'
+                      className={`grid grid-cols-1 gap-3 ${
+                        quickAccessModules.length >= 3
+                          ? 'md:grid-cols-3'
+                          : 'md:grid-cols-2'
                       }`}
                     >
-                      {module.icon}
+                      {quickAccessModules.map((module) => (
+                        <button
+                          key={module.id}
+                          type="button"
+                          onClick={() => handleModuleClick(module)}
+                          className="group relative p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all text-left"
+                        >
+                          <div
+                            className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm`}
+                          >
+                            {module.icon}
+                          </div>
+                          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
+                            {module.title}
+                          </h3>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            {module.description}
+                          </p>
+                          {module.shortcut && (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                              {module.shortcut}
+                            </span>
+                          )}
+                        </button>
+                      ))}
                     </div>
-                    <h3
-                      className={`text-sm font-semibold mb-1 ${
-                        module.disabled
-                          ? 'text-gray-400 dark:text-gray-600'
-                          : 'text-gray-900 dark:text-white'
-                      }`}
-                    >
-                      {module.title}
-                    </h3>
-                    <p
-                      className={`text-xs mb-2 ${
-                        module.disabled
-                          ? 'text-gray-400 dark:text-gray-600'
-                          : 'text-gray-500 dark:text-gray-400'
-                      }`}
-                    >
-                      {module.description}
-                    </p>
-                    {module.shortcut && !module.disabled && (
-                      <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                        {module.shortcut}
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
+                  </div>
+                )}
 
-            {filteredModules.length === 0 && (
-              <div className="text-center py-16">
-                <FiAlertCircle className="w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                  No modules found
-                </h3>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Try adjusting your search or category filter
-                </p>
+                {/* Module Grid */}
+                {activeCategory === 'all' && remainingModules.length > 0 && (
+                  <>
+                    <h2 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+                      All Modules
+                    </h2>
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                      {remainingModules.map((module) => (
+                        <button
+                          key={module.id}
+                          type="button"
+                          onClick={() => handleModuleClick(module)}
+                          disabled={module.disabled}
+                          className={`group relative p-4 border rounded-lg text-left transition-all ${
+                            module.disabled
+                              ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
+                              : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
+                          }`}
+                        >
+                          <div
+                            className={`w-10 h-10 bg-gradient-to-br ${
+                              module.color
+                            } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
+                              !module.disabled &&
+                              'group-hover:scale-105 transition-transform'
+                            }`}
+                          >
+                            {module.icon}
+                          </div>
+                          <h3
+                            className={`text-sm font-semibold mb-1 ${
+                              module.disabled
+                                ? 'text-gray-400 dark:text-gray-600'
+                                : 'text-gray-900 dark:text-white'
+                            }`}
+                          >
+                            {module.title}
+                          </h3>
+                          <p
+                            className={`text-xs mb-2 ${
+                              module.disabled
+                                ? 'text-gray-400 dark:text-gray-600'
+                                : 'text-gray-500 dark:text-gray-400'
+                            }`}
+                          >
+                            {module.description}
+                          </p>
+                          {module.shortcut && !module.disabled && (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                              {module.shortcut}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+
+                {activeCategory !== 'all' && (
+                  <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredModules.map((module) => (
+                      <button
+                        key={module.id}
+                        type="button"
+                        onClick={() => handleModuleClick(module)}
+                        disabled={module.disabled}
+                        className={`group relative p-4 border rounded-lg text-left transition-all ${
+                          module.disabled
+                            ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
+                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
+                        }`}
+                      >
+                        <div
+                          className={`w-10 h-10 bg-gradient-to-br ${
+                            module.color
+                          } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
+                            !module.disabled &&
+                            'group-hover:scale-105 transition-transform'
+                          }`}
+                        >
+                          {module.icon}
+                        </div>
+                        <h3
+                          className={`text-sm font-semibold mb-1 ${
+                            module.disabled
+                              ? 'text-gray-400 dark:text-gray-600'
+                              : 'text-gray-900 dark:text-white'
+                          }`}
+                        >
+                          {module.title}
+                        </h3>
+                        <p
+                          className={`text-xs mb-2 ${
+                            module.disabled
+                              ? 'text-gray-400 dark:text-gray-600'
+                              : 'text-gray-500 dark:text-gray-400'
+                          }`}
+                        >
+                          {module.description}
+                        </p>
+                        {module.shortcut && !module.disabled && (
+                          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
+                            {module.shortcut}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {filteredModules.length === 0 && (
+                  <div className="text-center py-16">
+                    <FiAlertCircle className="w-12 h-12 text-gray-400 dark:text-gray-600 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
+                      No modules found
+                    </h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Try adjusting your search or category filter
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
+
+              {/* Calendar & Clock */}
+              <aside className="hidden lg:block w-80 flex-shrink-0 sticky top-0">
+                <CalendarPanel
+                  userName={currentUser?.name}
+                  expiringCount={expiringAlerts.length}
+                  lowStockCount={lowStockAlerts.length}
+                />
+              </aside>
+            </div>
           </div>
         </div>
       </div>
