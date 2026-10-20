@@ -48,12 +48,31 @@ export class PaymentService {
         if (!ppInfo.some((col: any) => col.name === 'supplier_balance_after')) {
             await this.dbService.execute(`ALTER TABLE purchase_payments ADD COLUMN supplier_balance_after REAL`);
         }
+
+        // Repair payments previously stamped at a fixed 12:00:00 on the day they were entered:
+        // use the real entry time so they sort correctly against that day's purchases.
+        const repaired = await this.dbService.execute(`
+      UPDATE purchase_payments
+      SET payment_date = created_at
+      WHERE created_at IS NOT NULL
+        AND time(payment_date) = '12:00:00'
+        AND date(payment_date) = date(created_at)
+        AND time(created_at) <> '12:00:00'
+    `);
+        if ((repaired as any)?.changes > 0) {
+            await this.repersistSupplierRunningBalances();
+        }
     }
 
     private paymentDateSqlValue(payment: Payment): string {
         if (payment.paymentDate && String(payment.paymentDate).trim()) {
             const d = String(payment.paymentDate).trim();
-            return d.includes('T') || d.includes(' ') ? d : `${d} 12:00:00`;
+            if (d.includes('T') || d.includes(' ')) return d;
+            // Date-only (from the date picker): stamp with the current local time so the
+            // payment sorts after purchases made earlier that day instead of at a fixed noon.
+            const now = new Date();
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${d} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
         }
         return `datetime('now', 'localtime')`;
     }
