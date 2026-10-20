@@ -18,7 +18,8 @@ import {
     FiUpload,
     FiShoppingBag,
     FiShoppingCart,
-    FiEye
+    FiEye,
+    FiWifi
 } from 'react-icons/fi';
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -26,8 +27,9 @@ import { PharmacySettings, defaultPharmacySettings, getStoredPharmacySettings } 
 import { getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { useTheme } from '../../contexts/ThemeContext';
 import { colorThemes, ColorTheme } from '../../themes/colorThemes';
+import NetworkSettings from '../../components/network/NetworkSettings';
 
-type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management' | 'module-visibility';
+type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management' | 'module-visibility' | 'network';
 
 interface ProfileData {
     firstName: string;
@@ -450,13 +452,14 @@ const Settings: React.FC = () => {
         { id: 'security' as SettingsSection, label: 'Security', icon: FiShield },
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
         // { id: 'module-visibility' as SettingsSection, label: 'Module Visibility', icon: FiEye },
+        { id: 'network' as SettingsSection, label: 'Network', icon: FiWifi },
         { id: 'data-management' as SettingsSection, label: 'Data Management', icon: FiTrash2 },
     ].filter(section => {
         if (user?.role === 'cashier') {
             return ['profile', 'pharmacy', 'appearance', 'security'].includes(section.id);
         }
-        // Only admin can access data-management
-        if (section.id === 'data-management' && user?.role !== 'admin') {
+        // Only admin can access data-management and network
+        if ((section.id === 'data-management' || section.id === 'network') && user?.role !== 'admin') {
             return false;
         }
         return true;
@@ -1261,6 +1264,8 @@ const Settings: React.FC = () => {
             //         </div>
             //     );
 
+            case 'network':
+                return <NetworkSettings />;
             case 'data-management':
                 return (
                     <div className="space-y-4 animate-fadeIn">
@@ -1648,6 +1653,11 @@ const Settings: React.FC = () => {
             //         title: 'Module Visibility',
             //         subtitle: 'Control which panels are displayed in the admin interface',
             //     };
+            case 'network':
+                return {
+                    title: 'Network',
+                    subtitle: 'Main computer address, access key and role (Admin Only)',
+                };
             case 'data-management':
                 return {
                     title: 'Data Management',
