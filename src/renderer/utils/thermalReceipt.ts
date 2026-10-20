@@ -427,6 +427,14 @@ export const buildThermalReceiptHtml = (
       text-transform: uppercase;
       font-weight: 600;
     }
+    .footer .powered .contact {
+      margin-top: 2px;
+      white-space: nowrap;
+    }
+    .footer .powered .email {
+      text-transform: none;
+      letter-spacing: 0.2px;
+    }
 
     @media print {
       html, body { background: #fff; }
@@ -562,7 +570,10 @@ export const buildThermalReceiptHtml = (
       <div class="note">
         ${profile.invoiceNotes || 'Medicines once sold will not be returned without a valid reason and original bill.'}
       </div>
-      <div class="powered">Printed by Innovation Technology &bull; 03405939713</div>
+      <div class="powered">
+        Printed by Innovation Technology
+        <div class="contact">03405939713 &bull; <span class="email">innovationtechnology.dev@gmail.com</span></div>
+      </div>
     </div>
 
   </div>
