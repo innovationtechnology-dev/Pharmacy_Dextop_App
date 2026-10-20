@@ -230,7 +230,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
       </div>
 
       {/* Today's overview */}
-      <div className="rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+      {/* <div className="rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
         <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
           Today&apos;s Overview
         </h3>
@@ -254,7 +254,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
             </p>
           </div>
         </div>
-      </div>
+      </div> */}
     </div>
   );
 };
