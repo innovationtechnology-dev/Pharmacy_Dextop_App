@@ -3,6 +3,7 @@ import { repairMedicineForeignKeyReferences } from '../database/medicine-fk-repa
 import {
   buildBarcodeLookupCandidates,
   escapeSqlLikePattern,
+  extractGtin,
   normalizeScannedBarcode,
 } from '../../../common/barcodeLookup';
 
@@ -127,6 +128,14 @@ export class MedicineService {
     if (!medicinesInfo.some((col: any) => col.name === 'minimum_stock_level')) {
       await this.dbService.execute(`ALTER TABLE medicines ADD COLUMN minimum_stock_level INTEGER NOT NULL DEFAULT 0`);
     }
+    // gtin: product identity extracted from the barcode (GS1 AI 01). The full scanned string
+    // also carries batch/expiry/serial, which change per batch, so lookups must use this.
+    if (!medicinesInfo.some((col: any) => col.name === 'gtin')) {
+      await this.dbService.execute(`ALTER TABLE medicines ADD COLUMN gtin TEXT`);
+    }
+    await this.dbService.execute(`
+      CREATE INDEX IF NOT EXISTS idx_medicines_gtin ON medicines(gtin)
+    `);
 
     await this.dbService.execute(`
       CREATE INDEX IF NOT EXISTS idx_medicines_barcode ON medicines(barcode)
@@ -172,6 +181,8 @@ export class MedicineService {
       await this.dbService.execute('DROP TABLE IF EXISTS medicines_legacy');
       await this.dbService.execute('PRAGMA foreign_keys = ON');
     }
+
+    await this.backfillMedicineGtins();
 
     // Fix child tables that still reference dropped medicines_legacy (one-time repair)
     await repairMedicineForeignKeyReferences(this.dbService);
@@ -248,6 +259,17 @@ export class MedicineService {
 
     // --- Idempotent migration: populate stock_batches from existing purchase_items ---
     // Only runs once on first launch after this schema upgrade.
+    // This runs before PurchaseService.initializeTables, so purchase_items may not exist yet
+    // (fresh DB) or may lack selling_price_per_pill (old DB) — inspect the schema first.
+    const purchaseItemsInfo = await this.dbService.query(`PRAGMA table_info(purchase_items)`);
+    if (purchaseItemsInfo.length === 0) return;
+    const hasPiSellingPrice = purchaseItemsInfo.some(
+      (col: any) => col.name === 'selling_price_per_pill'
+    );
+    const piSellingPriceCase = hasPiSellingPrice
+      ? 'WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill'
+      : '';
+
     const stockBatchCount = await this.dbService.queryOne(
       `SELECT COUNT(*) as cnt FROM stock_batches`
     );
@@ -276,7 +298,7 @@ export class MedicineService {
           pi.available_pills,
           pi.price_per_pill,
           CASE
-            WHEN pi.selling_price_per_pill > 0 THEN pi.selling_price_per_pill
+            ${piSellingPriceCase}
             WHEN pi.pills_per_packet > 0 THEN (pi.price_per_packet * 1.0 / pi.pills_per_packet)
             ELSE pi.price_per_pill
           END,
@@ -497,6 +519,16 @@ export class MedicineService {
     const candidates = buildBarcodeLookupCandidates(barcode);
     let medicineId: number | null = null;
 
+    // Phase 0: GTIN match — same product regardless of batch, expiry or serial in the scan.
+    const gtin = extractGtin(barcode);
+    if (gtin) {
+      const row = await this.dbService.queryOne(
+        `SELECT id FROM medicines WHERE gtin = ? ORDER BY id LIMIT 1`,
+        [gtin]
+      );
+      if (row) medicineId = row.id;
+    }
+
     // Phase 1a: exact match — all candidates in one IN clause, uses idx_medicines_barcode.
     if (candidates.length > 0 && medicineId === null) {
       const placeholders = candidates.map(() => '?').join(', ');
@@ -581,6 +613,7 @@ export class MedicineService {
     const sql = `
       ${this.cteInventorySelect}
       WHERE m.name LIKE ? OR m.barcode LIKE ?
+        OR IFNULL(m.gtin, '') LIKE ?
         OR IFNULL(m.manufacturer, '') LIKE ?
         OR IFNULL(m.brand_name, '') LIKE ?
       GROUP BY m.id
@@ -588,13 +621,46 @@ export class MedicineService {
       LIMIT 50
     `;
     const searchPattern = `%${searchTerm}%`;
+    // A pasted/scanned full GS1 code searches by its GTIN.
+    const gtinPattern = `%${extractGtin(searchTerm) ?? searchTerm}%`;
     const rows = await this.dbService.query(sql, [
       searchPattern,
       searchPattern,
+      gtinPattern,
       searchPattern,
       searchPattern,
     ]);
     return rows.map((row) => this.mapRowToMedicine(row));
+  }
+
+  /**
+   * Same product (GTIN) must not be registered twice, even when the two scans differ in
+   * batch / expiry / serial.
+   */
+  private async assertGtinUnused(gtin: string | null, excludeId?: number): Promise<void> {
+    if (!gtin) return;
+    const existing = await this.dbService.queryOne(
+      'SELECT id, name FROM medicines WHERE gtin = ? AND id != ? LIMIT 1',
+      [gtin, excludeId ?? -1]
+    );
+    if (existing) {
+      throw new Error(`This product (GTIN ${gtin}) is already registered as "${existing.name}".`);
+    }
+  }
+
+  /** Fill medicines.gtin from stored barcodes (new column, or rows saved before GTIN support). */
+  private async backfillMedicineGtins(): Promise<void> {
+    const rows = await this.dbService.query(
+      `SELECT id, barcode FROM medicines WHERE gtin IS NULL AND barcode IS NOT NULL AND barcode != ''`
+    );
+    let filled = 0;
+    for (const row of rows) {
+      const gtin = extractGtin(row.barcode);
+      if (!gtin) continue;
+      await this.dbService.execute(`UPDATE medicines SET gtin = ? WHERE id = ?`, [gtin, row.id]);
+      filled += 1;
+    }
+    if (filled > 0) console.log(`[medicines] Back-filled GTIN for ${filled} medicine(s).`);
   }
 
   /**
@@ -612,13 +678,16 @@ export class MedicineService {
         throw new Error(`Barcode "${medicine.barcode}" already exists for medicine "${existingMedicine.name}". Please use a different barcode.`);
       }
     }
+    const gtin = extractGtin(medicine.barcode);
+    await this.assertGtinUnused(gtin);
 
     const sql = `
-      INSERT INTO medicines (barcode, name, pill_quantity, status, manufacturer, brand_name, minimum_stock_level)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO medicines (barcode, gtin, name, pill_quantity, status, manufacturer, brand_name, minimum_stock_level)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
       medicine.barcode || null,
+      gtin,
       medicine.name,
       medicine.pillQuantity,
       medicine.status || 'active',
@@ -669,6 +738,7 @@ export class MedicineService {
       if (existingMedicine) {
         throw new Error(`Barcode "${medicine.barcode}" already exists for medicine "${existingMedicine.name}". Please use a different barcode.`);
       }
+      await this.assertGtinUnused(extractGtin(medicine.barcode), id);
     }
 
     const updates: string[] = [];
@@ -679,8 +749,8 @@ export class MedicineService {
       params.push(medicine.name);
     }
     if (medicine.barcode !== undefined) {
-      updates.push('barcode = ?');
-      params.push(medicine.barcode || null);
+      updates.push('barcode = ?', 'gtin = ?');
+      params.push(medicine.barcode || null, extractGtin(medicine.barcode));
     }
     if (medicine.pillQuantity !== undefined) {
       updates.push('pill_quantity = ?');

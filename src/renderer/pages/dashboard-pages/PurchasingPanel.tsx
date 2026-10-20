@@ -13,6 +13,7 @@ import {
   looksLikeBarcodeInput,
   normalizeScannedBarcode,
   formatBarcodeForDisplay,
+  parseGs1,
 } from '../../../common/barcodeLookup';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
@@ -551,11 +552,16 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const addToCart = useCallback(async (medicine: Medicine) => {
+  /** `scanned` carries batch/expiry read from a GS1 DataMatrix scan, when available. */
+  const addToCart = useCallback(async (
+    medicine: Medicine,
+    scanned?: { batchNumber?: string; expiryDate?: string }
+  ) => {
     const mergedMedicine = mergeMedicineWithCatalog(medicine);
 
     // Generate auto batch number
-    const autoBatchNumber = await generateAutoBatchNumber(medicine.id, medicine.name);
+    const autoBatchNumber =
+      scanned?.batchNumber || (await generateAutoBatchNumber(medicine.id, medicine.name));
 
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
@@ -564,6 +570,7 @@ const PurchasingPanel: React.FC = () => {
         const updatedItem = recalculatePurchaseItem({
           ...existingItem,
           packetQuantity: existingItem.packetQuantity + 1,
+          expiryDate: existingItem.expiryDate || scanned?.expiryDate || '',
           medicine: mergeMedicineWithCatalog(existingItem.medicine),
         });
         return prevCart.map((item) =>
@@ -583,7 +590,7 @@ const PurchasingPanel: React.FC = () => {
         pricePerPill: 0,
         discount: 0,
         tax: 0,
-        expiryDate: '',
+        expiryDate: scanned?.expiryDate || '',
         batchNumber: autoBatchNumber,
         lineSubtotal: 0,
         lineTotal: 0,
@@ -632,7 +639,13 @@ const PurchasingPanel: React.FC = () => {
 
         if (response.data) {
           const medicine = response.data as Medicine;
-          addToCart(medicine);
+          // GS1 DataMatrix also carries expiry and batch. Batch is only trusted when the scan
+          // kept its GS separators — otherwise it may have swallowed the serial number.
+          const gs1 = parseGs1(code);
+          addToCart(medicine, {
+            expiryDate: gs1?.expiry,
+            batchNumber: gs1?.variableFieldsReliable ? gs1.batch : undefined,
+          });
           setIsScanning(true);
           setBarcodeInput('');
           setTimeout(() => {
@@ -1546,7 +1559,8 @@ const PurchasingPanel: React.FC = () => {
       const normalized = normalizeScannedBarcode(raw);
       resetScanState();
       if (!normalized || normalized.length < MIN_BARCODE_LENGTH) return;
-      void handleBarcodeScan(normalized);
+      // Pass the raw buffer: it may contain GS separators that delimit batch/serial.
+      void handleBarcodeScan(raw);
     };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -1557,6 +1571,21 @@ const PurchasingPanel: React.FC = () => {
         target?.id === 'product-search' ||
         target?.id === 'purchasing-barcode-scan-input'
       ) {
+        return;
+      }
+
+      // Keyboard-wedge scanners send the GS1 group separator (GS, ASCII 29) as Ctrl+].
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        (event.key === ']' || event.code === 'BracketRight') &&
+        globalBarcodeBufferRef.current.length > 0
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        globalBarcodeBufferRef.current += '\x1d';
+        lastKeyMsRef.current = Date.now();
         return;
       }
 
