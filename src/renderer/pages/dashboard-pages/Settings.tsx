@@ -430,8 +430,22 @@ const Settings: React.FC = () => {
         }
     }, [activeSection, pharmacySettings, profileData, user, security, panelVisibility]);
 
+    // Persist the photo immediately so it survives navigation/restart without pressing Save
+    const saveProfilePicture = async (profilePicture: string) => {
+        setProfileData((prev) => ({ ...prev, profilePicture }));
+        if (!user?.id) return;
+        const result = await updateProfile(user.id, { name: user.name, profilePicture });
+        if (result.success) {
+            setUser(result.user ?? user);
+            window.dispatchEvent(new CustomEvent('user-profile-updated', { detail: result.user }));
+        } else {
+            alert(result.error || 'Failed to save profile picture.');
+        }
+    };
+
     const handleProfilePictureChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+        e.target.value = '';
         if (file) {
             if (file.size > 1024 * 1024) {
                 alert('File size must be less than 1MB');
@@ -439,7 +453,7 @@ const Settings: React.FC = () => {
             }
             const reader = new FileReader();
             reader.onloadend = () => {
-                setProfileData((prev) => ({ ...prev, profilePicture: reader.result as string }));
+                saveProfilePicture(reader.result as string);
             };
             reader.readAsDataURL(file);
         }
@@ -522,7 +536,7 @@ const Settings: React.FC = () => {
                                         {profileData.profilePicture && (
                                             <button
                                                 type="button"
-                                                onClick={() => setProfileData(prev => ({ ...prev, profilePicture: '' }))}
+                                                onClick={() => saveProfilePicture('')}
                                                 className="mt-3 flex items-center gap-2 px-3 py-1.5 bg-red-50 dark:bg-red-900/10 hover:bg-red-100 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 text-[10px] font-bold rounded-lg border border-red-200 dark:border-red-800 transition-all group"
                                             >
                                                 <FiTrash2 className="w-3 h-3 group-hover:scale-110 transition-transform" />
