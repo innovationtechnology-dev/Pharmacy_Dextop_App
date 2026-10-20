@@ -121,7 +121,12 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
         }
         if (req.method === 'POST' && req.url === '/rpc') {
           const parsed = JSON.parse(await readBody(req)) as RpcRequest;
-          send(res, 200, await dispatch(parsed));
+          const started = Date.now();
+          const result = await dispatch(parsed);
+          console.log(
+            `[rpc] ${req.socket.remoteAddress} ${parsed.kind} ${parsed.channel} -> ${result.ok ? 'ok' : result.error} (${Date.now() - started}ms)`
+          );
+          send(res, 200, result);
           return;
         }
         send(res, 404, { ok: false, error: 'Not found' });

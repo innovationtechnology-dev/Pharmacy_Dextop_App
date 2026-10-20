@@ -29,8 +29,12 @@ const NetworkGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   if (info.role === 'unset') return <NetworkSetup />;
 
   const switchComputer = async () => {
+    const message =
+      info.role === 'server'
+        ? 'Stop being the main computer? Other computers will be disconnected. The data on this computer is kept.'
+        : 'Disconnect this computer from the main computer?';
     // eslint-disable-next-line no-alert
-    if (window.confirm('Disconnect this computer from the main computer?')) {
+    if (window.confirm(message)) {
       await window.electron.ipcRenderer.invoke('network-reset');
     }
   };
@@ -55,6 +59,9 @@ const NetworkGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             onClick={() => setShowKey((v) => !v)}
           >
             {showKey ? `Key: ${info.accessKey}` : 'Show access key'}
+          </button>
+          <button type="button" className="underline ml-3" onClick={switchComputer}>
+            Change role
           </button>
         </div>
       )}

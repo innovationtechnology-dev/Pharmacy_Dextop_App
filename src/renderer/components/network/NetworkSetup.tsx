@@ -159,7 +159,13 @@ const NetworkSetup: React.FC = () => {
               disabled={busy || !host || !accessKey}
               className={primaryBtn}
             >
-              {busy && searched ? 'Connecting…' : 'Connect'}
+              {busy && searched
+                ? 'Connecting…'
+                : !host
+                  ? 'Enter the main computer address'
+                  : !accessKey
+                    ? 'Enter the access key to connect'
+                    : 'Connect'}
             </button>
             <button
               type="button"

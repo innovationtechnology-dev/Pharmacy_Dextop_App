@@ -5,7 +5,7 @@ import {
   loadNetworkConfig,
   saveNetworkConfig,
 } from './networkConfig';
-import { getLocalAddresses } from './rpcServer';
+import { getLocalAddresses, stopRpcServer } from './rpcServer';
 import { callServer, discoverServers, pingServer } from './rpcClient';
 
 interface NetworkIpcHooks {
@@ -83,6 +83,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
 
   /** Lets the user switch back to the role picker (e.g. wrong server). */
   ipcMain.handle('network-reset', () => {
+    stopRpcServer();
     saveNetworkConfig({ role: 'unset', serverHost: '' });
     hooks.reloadWindow();
     return { success: true };
@@ -95,8 +96,10 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
       const cfg = loadNetworkConfig();
       if (cfg.role !== 'client') return { ok: false, error: 'Not in client mode' };
       try {
+        console.log(`[rpc-client] -> ${cfg.serverHost}:${cfg.port} ${kind} ${channel}`);
         return await callServer(cfg, { kind, channel, args });
       } catch (error) {
+        console.log(`[rpc-client] ${channel} failed: ${(error as Error)?.message}`);
         return { ok: false, error: String((error as Error)?.message ?? error), unreachable: true };
       }
     }
