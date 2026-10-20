@@ -99,7 +99,6 @@ const MainMenu: React.FC = () => {
   const [currentDate, setCurrentDate] = useState<string>('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [expandedCategories, setExpandedCategories] = useState<string[]>([]);
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
@@ -449,16 +448,7 @@ const MainMenu: React.FC = () => {
 
   const handleSidebarCategoryClick = (categoryId: string) => {
     setActiveCategory(categoryId);
-    if (isSidebarCollapsed) {
-      toggleSidebar();
-      setExpandedCategories([categoryId]);
-      return;
-    }
-    setExpandedCategories((prev) =>
-      prev.includes(categoryId)
-        ? prev.filter((id) => id !== categoryId)
-        : [...prev, categoryId]
-    );
+    if (isSidebarCollapsed) toggleSidebar();
   };
 
   const handleModuleClick = (module: MenuItem) => {
@@ -467,6 +457,62 @@ const MainMenu: React.FC = () => {
       navigate(module.route);
     }
   };
+
+  const renderModuleCard = (module: MenuItem) => (
+    <button
+      key={module.id}
+      type="button"
+      onClick={() => handleModuleClick(module)}
+      disabled={module.disabled}
+      className={`group relative h-full flex flex-col p-4 border rounded-xl text-left transition-all duration-200 ${
+        module.disabled
+          ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
+          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-lg hover:-translate-y-0.5'
+      }`}
+    >
+      <div className="w-full flex items-start gap-3">
+        <div
+          className={`w-11 h-11 flex-shrink-0 bg-gradient-to-br ${
+            module.color
+          } rounded-xl flex items-center justify-center text-white shadow-sm ${
+            module.disabled ? '' : 'group-hover:scale-105 transition-transform'
+          }`}
+        >
+          {module.icon}
+        </div>
+        <div className="flex-1 min-w-0 pt-0.5">
+          <h3
+            className={`truncate text-[15px] font-semibold leading-tight ${
+              module.disabled
+                ? 'text-gray-400 dark:text-gray-600'
+                : 'text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors'
+            }`}
+          >
+            {module.title}
+          </h3>
+          <p
+            className={`mt-1 text-[13px] leading-snug ${
+              module.disabled
+                ? 'text-gray-400 dark:text-gray-600'
+                : 'text-gray-500 dark:text-gray-400'
+            }`}
+          >
+            {module.description}
+          </p>
+        </div>
+        {!module.disabled && (
+          <FiChevronRight className="w-4 h-4 mt-3 flex-shrink-0 text-gray-300 dark:text-gray-600 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
+        )}
+      </div>
+      {module.shortcut && !module.disabled && (
+        <div className="w-full mt-auto pt-3 pl-14">
+          <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/60 text-[11px] font-mono text-gray-500 dark:text-gray-400 shadow-[inset_0_-1px_0_rgba(0,0,0,0.06)]">
+            {module.shortcut}
+          </kbd>
+        </div>
+      )}
+    </button>
+  );
 
   const handleLogout = () => {
     authLogout();
@@ -780,8 +826,9 @@ const MainMenu: React.FC = () => {
           {/* Navigation */}
           <nav className="flex-1 overflow-y-auto py-2">
             {categories.map((category) => {
+              // Only the active category's list is open, and it always is.
               const isExpanded =
-                !isSidebarCollapsed && expandedCategories.includes(category.id);
+                !isSidebarCollapsed && activeCategory === category.id;
               const categoryModules = getCategoryModules(category.id);
               return (
                 <div key={category.id}>
@@ -1116,31 +1163,7 @@ const MainMenu: React.FC = () => {
                           : 'md:grid-cols-2'
                       }`}
                     >
-                      {quickAccessModules.map((module) => (
-                        <button
-                          key={module.id}
-                          type="button"
-                          onClick={() => handleModuleClick(module)}
-                          className="group relative p-4 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md transition-all text-left"
-                        >
-                          <div
-                            className={`w-10 h-10 bg-gradient-to-br ${module.color} rounded-lg flex items-center justify-center text-white mb-3 shadow-sm`}
-                          >
-                            {module.icon}
-                          </div>
-                          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-1">
-                            {module.title}
-                          </h3>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            {module.description}
-                          </p>
-                          {module.shortcut && (
-                            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                              {module.shortcut}
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                      {quickAccessModules.map(renderModuleCard)}
                     </div>
                   </div>
                 )}
@@ -1152,106 +1175,14 @@ const MainMenu: React.FC = () => {
                       All Modules
                     </h2>
                     <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                      {remainingModules.map((module) => (
-                        <button
-                          key={module.id}
-                          type="button"
-                          onClick={() => handleModuleClick(module)}
-                          disabled={module.disabled}
-                          className={`group relative p-4 border rounded-lg text-left transition-all ${
-                            module.disabled
-                              ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-                              : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
-                          }`}
-                        >
-                          <div
-                            className={`w-10 h-10 bg-gradient-to-br ${
-                              module.color
-                            } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                              !module.disabled &&
-                              'group-hover:scale-105 transition-transform'
-                            }`}
-                          >
-                            {module.icon}
-                          </div>
-                          <h3
-                            className={`text-sm font-semibold mb-1 ${
-                              module.disabled
-                                ? 'text-gray-400 dark:text-gray-600'
-                                : 'text-gray-900 dark:text-white'
-                            }`}
-                          >
-                            {module.title}
-                          </h3>
-                          <p
-                            className={`text-xs mb-2 ${
-                              module.disabled
-                                ? 'text-gray-400 dark:text-gray-600'
-                                : 'text-gray-500 dark:text-gray-400'
-                            }`}
-                          >
-                            {module.description}
-                          </p>
-                          {module.shortcut && !module.disabled && (
-                            <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                              {module.shortcut}
-                            </span>
-                          )}
-                        </button>
-                      ))}
+                      {remainingModules.map(renderModuleCard)}
                     </div>
                   </>
                 )}
 
                 {activeCategory !== 'all' && (
                   <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-                    {filteredModules.map((module) => (
-                      <button
-                        key={module.id}
-                        type="button"
-                        onClick={() => handleModuleClick(module)}
-                        disabled={module.disabled}
-                        className={`group relative p-4 border rounded-lg text-left transition-all ${
-                          module.disabled
-                            ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-                            : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500 hover:shadow-md'
-                        }`}
-                      >
-                        <div
-                          className={`w-10 h-10 bg-gradient-to-br ${
-                            module.color
-                          } rounded-lg flex items-center justify-center text-white mb-3 shadow-sm ${
-                            !module.disabled &&
-                            'group-hover:scale-105 transition-transform'
-                          }`}
-                        >
-                          {module.icon}
-                        </div>
-                        <h3
-                          className={`text-sm font-semibold mb-1 ${
-                            module.disabled
-                              ? 'text-gray-400 dark:text-gray-600'
-                              : 'text-gray-900 dark:text-white'
-                          }`}
-                        >
-                          {module.title}
-                        </h3>
-                        <p
-                          className={`text-xs mb-2 ${
-                            module.disabled
-                              ? 'text-gray-400 dark:text-gray-600'
-                              : 'text-gray-500 dark:text-gray-400'
-                          }`}
-                        >
-                          {module.description}
-                        </p>
-                        {module.shortcut && !module.disabled && (
-                          <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">
-                            {module.shortcut}
-                          </span>
-                        )}
-                      </button>
-                    ))}
+                    {filteredModules.map(renderModuleCard)}
                   </div>
                 )}
 
