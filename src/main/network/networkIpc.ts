@@ -7,12 +7,20 @@ import {
 } from './networkConfig';
 import { getLocalAddresses, stopRpcServer } from './rpcServer';
 import { callServer, discoverServers, pingServer } from './rpcClient';
+import {
+  checkNow,
+  getConnectionStatus,
+  startConnectionMonitor,
+  stopConnectionMonitor,
+} from './connectionMonitor';
 
 interface NetworkIpcHooks {
   /** Initialise backend + start the server; called when this PC becomes the main computer. */
   startAsServer: () => Promise<void>;
   /** Re-run the renderer so the preload picks up the new mode. */
   reloadWindow: () => void;
+  /** Push an event to the renderer. */
+  sendToWindow: (channel: string, payload: unknown) => void;
 }
 
 /**
@@ -20,6 +28,14 @@ interface NetworkIpcHooks {
  * exposed through the RPC server (see isBlockedRemotely).
  */
 export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
+  const startMonitor = () =>
+    startConnectionMonitor((s) => hooks.sendToWindow('network-status', s));
+  if (loadNetworkConfig().role === 'client') startMonitor();
+
+  /** Client mode: current reachability of the main computer (null until the first check). */
+  ipcMain.handle('network-get-status', () => getConnectionStatus());
+  ipcMain.handle('network-retry', () => checkNow());
+
   // Preload needs the mode synchronously, before the page runs.
   ipcMain.on('network-get-mode', (event) => {
     event.returnValue = loadNetworkConfig().role;
@@ -73,6 +89,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
         const cfg = { serverHost: host.trim(), port: port || DEFAULT_PORT, accessKey: accessKey.trim() };
         await pingServer(cfg);
         saveNetworkConfig({ role: 'client', ...cfg });
+        startMonitor();
         hooks.reloadWindow();
         return { success: true };
       } catch (error) {
@@ -83,6 +100,7 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
 
   /** Lets the user switch back to the role picker (e.g. wrong server). */
   ipcMain.handle('network-reset', () => {
+    stopConnectionMonitor();
     stopRpcServer();
     saveNetworkConfig({ role: 'unset', serverHost: '' });
     hooks.reloadWindow();
@@ -95,11 +113,16 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
     async (_e, kind: 'send' | 'invoke', channel: string, args: unknown[]) => {
       const cfg = loadNetworkConfig();
       if (cfg.role !== 'client') return { ok: false, error: 'Not in client mode' };
+      // Known to be down: confirm with one quick check rather than letting each call wait to time out.
+      if (getConnectionStatus()?.online === false && !(await checkNow()).online) {
+        return { ok: false, error: 'Cannot reach the main computer', unreachable: true };
+      }
       try {
         console.log(`[rpc-client] -> ${cfg.serverHost}:${cfg.port} ${kind} ${channel}`);
         return await callServer(cfg, { kind, channel, args });
       } catch (error) {
         console.log(`[rpc-client] ${channel} failed: ${(error as Error)?.message}`);
+        void checkNow(); // update the status screen with the reason
         return { ok: false, error: String((error as Error)?.message ?? error), unreachable: true };
       }
     }

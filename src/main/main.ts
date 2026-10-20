@@ -211,6 +211,7 @@ app
     registerNetworkIpc({
       startAsServer,
       reloadWindow: () => mainWindow?.webContents.reload(),
+      sendToWindow: (channel, payload) => mainWindow?.webContents.send(channel, payload),
     });
 
     // Only the main computer owns the database. Additional computers (role

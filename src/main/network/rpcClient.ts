@@ -5,6 +5,11 @@ import { DEFAULT_PORT, DISCOVERY_PORT, NetworkConfig } from './networkConfig';
 import type { RpcRequest, RpcResponse } from './rpcServer';
 
 const REQUEST_TIMEOUT_MS = 65_000;
+/** A switched-off computer never answers the TCP handshake; fail fast instead of waiting for the OS. */
+const CONNECT_TIMEOUT_MS = 5_000;
+
+const timeoutError = () =>
+  Object.assign(new Error('Main computer did not respond'), { code: 'ETIMEDOUT' });
 
 const request = (
   config: Pick<NetworkConfig, 'serverHost' | 'port' | 'accessKey'>,
@@ -44,7 +49,13 @@ const request = (
         });
       }
     );
-    req.on('timeout', () => req.destroy(new Error('Main computer did not respond')));
+    req.on('socket', (socket) => {
+      if (!socket.connecting) return;
+      const t = setTimeout(() => req.destroy(timeoutError()), Math.min(CONNECT_TIMEOUT_MS, timeoutMs));
+      socket.once('connect', () => clearTimeout(t));
+      socket.once('close', () => clearTimeout(t));
+    });
+    req.on('timeout', () => req.destroy(timeoutError()));
     req.on('error', (e) => reject(e));
     if (data) req.write(data);
     req.end();

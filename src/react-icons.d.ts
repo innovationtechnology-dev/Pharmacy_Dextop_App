@@ -79,6 +79,8 @@ declare module 'react-icons/fi' {
   export const FiCopy: any;
   export const FiMonitor: any;
   export const FiWifi: any;
+  export const FiPower: any;
+  export const FiWifiOff: any;
 }
 
 declare module 'react-icons/fa' {

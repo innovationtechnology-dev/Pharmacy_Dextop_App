@@ -20,6 +20,9 @@ const NetworkSettings: React.FC = () => {
     window.electron.ipcRenderer
       .invoke('network-get-config')
       .then((c) => setInfo(c as NetworkInfo));
+    window.electron.ipcRenderer
+      .invoke('network-get-status')
+      .then((s) => s && setOnline((s as { online: boolean }).online));
     return window.electron.network?.onConnection(setOnline);
   }, []);
 

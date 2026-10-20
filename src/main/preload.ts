@@ -80,6 +80,13 @@ const connectionListeners = new Set<(ok: boolean) => void>();
 const notifyConnection = (ok: boolean) =>
   connectionListeners.forEach((fn) => fn(ok));
 
+// Pushed by the main process connection monitor (client mode): online flag + reason when down.
+const statusListeners = new Set<(status: unknown) => void>();
+ipcRenderer.on('network-status', (_event, status: { online: boolean }) => {
+  notifyConnection(status.online);
+  statusListeners.forEach((fn) => fn(status));
+});
+
 const bridge = {
   sendMessage(channel: Channels, args: unknown[]) {
     if (!isClient || isLocalChannel(channel)) {
@@ -133,6 +140,12 @@ contextBridge.exposeInMainWorld('electron', {
       connectionListeners.add(fn);
       return () => {
         connectionListeners.delete(fn);
+      };
+    },
+    onStatus(fn: (status: unknown) => void) {
+      statusListeners.add(fn);
+      return () => {
+        statusListeners.delete(fn);
       };
     },
   },
