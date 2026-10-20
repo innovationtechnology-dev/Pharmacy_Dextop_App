@@ -18,7 +18,7 @@ import {
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
-import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
+import { extractGtin, normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -437,7 +437,9 @@ export default function MedicinesPage() {
         searchWords.every(word =>
           medicine.name.toLowerCase().includes(word) ||
           formatNumericId(medicine.id).toLowerCase().includes(word) ||
-          medicine.barcode?.toLowerCase().includes(word)
+          medicine.barcode?.toLowerCase().includes(word) ||
+          // GTIN: a scan from a newer batch shares only the GTIN with the stored barcode
+          (extractGtin(medicine.barcode)?.includes(word) ?? false)
         );
 
       const matchesStatus =
@@ -551,8 +553,9 @@ export default function MedicinesPage() {
               normalized
             )) as IpcResponse<BackendMedicine>;
             if (response?.success && response?.data?.id) {
-              // Medicine exists — show it in the search list, don't populate the add form
-              setSearchTerm(normalized);
+              // Medicine exists — show it in the search list, don't populate the add form.
+              // Search by GTIN: the full scan includes batch/expiry/price that differ per batch.
+              setSearchTerm(extractGtin(raw) ?? normalized);
               return;
             }
           } catch {
@@ -700,7 +703,7 @@ export default function MedicinesPage() {
                   normalized
                 )) as IpcResponse<BackendMedicine>;
                 if (res?.success && res?.data?.id) {
-                  setSearchTerm(normalized);
+                  setSearchTerm(extractGtin(scanned) ?? normalized);
                   return;
                 }
               } catch {
