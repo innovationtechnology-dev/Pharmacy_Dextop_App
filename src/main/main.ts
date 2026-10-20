@@ -15,6 +15,13 @@ import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { getBackend } from './backend';
+import { installIpcRegistry } from './network/ipcRegistry';
+import { loadNetworkConfig } from './network/networkConfig';
+import { registerNetworkIpc } from './network/networkIpc';
+import { startRpcServer, stopRpcServer } from './network/rpcServer';
+
+// Must run before any controller registers its IPC handlers.
+installIpcRegistry();
 
 // Suppress SSL certificate errors in development mode (must be called before app ready)
 if (process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true') {
@@ -65,6 +72,19 @@ if (isDebug) {
 
 // Initialize backend
 const backend = getBackend();
+let backendReady = false;
+
+/**
+ * Main-computer startup: open the database, then expose the controllers on the LAN.
+ * Safe to call more than once.
+ */
+const startAsServer = async () => {
+  if (!backendReady) {
+    await backend.initialize();
+    backendReady = true;
+  }
+  await startRpcServer(loadNetworkConfig());
+};
 
 const installExtensions = async () => {
   try {
@@ -176,6 +196,7 @@ const createWindow = async () => {
  */
 
 app.on('window-all-closed', async () => {
+  stopRpcServer();
   // Respect the OSX convention of having the application in memory even
   // after all windows have been closed
   await backend.cleanup();
@@ -187,8 +208,16 @@ app.on('window-all-closed', async () => {
 app
   .whenReady()
   .then(async () => {
-    // Initialize backend before creating window
-    await backend.initialize();
+    registerNetworkIpc({
+      startAsServer,
+      reloadWindow: () => mainWindow?.webContents.reload(),
+    });
+
+    // Only the main computer owns the database. Additional computers (role
+    // 'client') and fresh installs (role 'unset') do not open it.
+    if (loadNetworkConfig().role === 'server') {
+      await startAsServer();
+    }
     createWindow();
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the

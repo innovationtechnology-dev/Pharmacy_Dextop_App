@@ -47,26 +47,93 @@ export type Channels =
   | 'get-table-counts' | 'get-table-counts-reply'
   | (string & {});
 
-contextBridge.exposeInMainWorld('electron', {
-  ipcRenderer: {
-    sendMessage(channel: Channels, args: unknown[]) {
-      ipcRenderer.send(channel, args);
-    },
-    on(channel: Channels, func: (...args: unknown[]) => void) {
-      const subscription = (_event: IpcRendererEvent, ...args: unknown[]) =>
-        func(...args);
-      ipcRenderer.on(channel, subscription);
+const networkMode: string = ipcRenderer.sendSync('network-get-mode');
+const isClient = networkMode === 'client';
 
-      return () => {
-        ipcRenderer.removeListener(channel, subscription);
-      };
-    },
-    once(channel: Channels, func: (...args: unknown[]) => void) {
-      ipcRenderer.once(channel, (_event, ...args) => func(...args));
-    },
-    /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
-    invoke(channel: Channels, ...args: unknown[]) {
+type Listener = (...args: unknown[]) => void;
+const clientListeners = new Map<string, Set<{ fn: Listener; once: boolean }>>();
+
+const emitLocal = (channel: string, payload: unknown) => {
+  const set = clientListeners.get(channel);
+  if (!set) return;
+  [...set].forEach((entry) => {
+    if (entry.once) set.delete(entry);
+    entry.fn(payload);
+  });
+};
+
+const addLocal = (channel: string, fn: Listener, once: boolean) => {
+  const set = clientListeners.get(channel) ?? new Set();
+  const entry = { fn, once };
+  set.add(entry);
+  clientListeners.set(channel, set);
+  return () => {
+    set.delete(entry);
+  };
+};
+
+const isLocalChannel = (channel: string) =>
+  channel.startsWith('network-') || channel === 'ipc-example';
+
+// Event.detail does not survive the context-isolation boundary, so expose a callback API instead.
+const connectionListeners = new Set<(ok: boolean) => void>();
+const notifyConnection = (ok: boolean) =>
+  connectionListeners.forEach((fn) => fn(ok));
+
+const bridge = {
+  sendMessage(channel: Channels, args: unknown[]) {
+    if (!isClient || isLocalChannel(channel)) {
+      ipcRenderer.send(channel, args);
+      return;
+    }
+    ipcRenderer.invoke('network-rpc', 'send', channel, args).then((res) => {
+      notifyConnection(!res?.unreachable);
+      if (res?.ok) {
+        emitLocal(res.replyChannel, res.payload);
+      } else {
+        emitLocal(`${channel}-reply`, {
+          success: false,
+          error: res?.error || 'Cannot reach the main computer',
+        });
+      }
+    });
+  },
+  on(channel: Channels, func: Listener) {
+    if (isClient && !isLocalChannel(channel)) return addLocal(channel, func, false);
+    const subscription = (_event: IpcRendererEvent, ...args: unknown[]) => func(...args);
+    ipcRenderer.on(channel, subscription);
+    return () => {
+      ipcRenderer.removeListener(channel, subscription);
+    };
+  },
+  once(channel: Channels, func: Listener) {
+    if (isClient && !isLocalChannel(channel)) {
+      addLocal(channel, func, true);
+      return;
+    }
+    ipcRenderer.once(channel, (_event, ...args) => func(...args));
+  },
+  /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
+  async invoke(channel: Channels, ...args: unknown[]) {
+    if (!isClient || isLocalChannel(channel)) {
       return ipcRenderer.invoke(channel, ...args);
+    }
+    const res = await ipcRenderer.invoke('network-rpc', 'invoke', channel, args);
+    notifyConnection(!res?.unreachable);
+    if (!res?.ok) throw new Error(res?.error || 'Cannot reach the main computer');
+    return res.payload;
+  },
+};
+
+contextBridge.exposeInMainWorld('electron', {
+  ipcRenderer: bridge,
+  network: {
+    mode: networkMode,
+    onConnection(fn: (ok: boolean) => void) {
+      connectionListeners.add(fn);
+      return () => {
+        connectionListeners.delete(fn);
+      };
     },
   },
 });

@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import * as MiscAppFxns from './pages/lib/app/misc';
 import { ThemeProvider } from './contexts/ThemeContext';
+import NetworkGate from './components/network/NetworkGate';
 
 import Home from './pages/home';
 // import SqlDemo from './pages/sqlDemoPage.js';
@@ -47,6 +48,7 @@ export default class App extends React.Component {
     return (
       <ThemeProvider>
         <fieldset id="app">
+          <NetworkGate>
           <Router>
             <Routes>
               <Route path="/" element={<Home />} />
@@ -78,6 +80,7 @@ export default class App extends React.Component {
               </Route>
             </Routes>
           </Router>
+          </NetworkGate>
         </fieldset>
       </ThemeProvider>
     );
