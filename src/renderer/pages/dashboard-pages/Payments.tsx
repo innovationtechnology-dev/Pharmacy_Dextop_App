@@ -273,13 +273,16 @@ const Payments: React.FC = () => {
 
   const formatDateTime = useCallback((value?: string) => {
     if (!value) return '—';
-    return new Date(value).toLocaleString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return new Date(value)
+      .toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      })
+      .replace(/\b(am|pm)\b/, (m) => m.toUpperCase());
   }, []);
 
   const isToday = useCallback((dateString?: string) => {
@@ -2060,10 +2063,13 @@ const Payments: React.FC = () => {
                                   {formatCurrency(record.amount)}
                                 </div>
                                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                                  {new Date(record.paymentDate).toLocaleTimeString('en-GB', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
+                                  {new Date(record.paymentDate)
+                                    .toLocaleTimeString('en-GB', {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true,
+                                    })
+                                    .replace(/\b(am|pm)\b/, (m) => m.toUpperCase())}
                                 </div>
                               </div>
                               {isToday(record.paymentDate) && (

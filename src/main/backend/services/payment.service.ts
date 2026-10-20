@@ -12,10 +12,16 @@ export interface Payment {
     createdAt?: string;
 }
 
+/**
+ * Shared across all PaymentService instances (each controller creates its own): repersist runs
+ * must not overlap on the single DB connection, or one run's RELEASE drops the other's SAVEPOINT.
+ */
+let repersistQueue: Promise<void> = Promise.resolve();
+let repersistSavepointSeq = 0;
+
 export class PaymentService {
     private dbService = getDatabaseService();
     private purchaseService: PurchaseService;
-    private repersistSavepointSeq = 0;
 
     constructor() {
         this.purchaseService = new PurchaseService();
@@ -177,7 +183,13 @@ export class PaymentService {
     /**
      * Recompute and persist supplier running balance after each purchase and each payment (global timeline).
      */
-    public async repersistSupplierRunningBalances(): Promise<void> {
+    public repersistSupplierRunningBalances(): Promise<void> {
+        const run = repersistQueue.then(() => this.repersistSupplierRunningBalancesNow());
+        repersistQueue = run.catch(() => undefined);
+        return run;
+    }
+
+    private async repersistSupplierRunningBalancesNow(): Promise<void> {
         const purchaseRows = await this.dbService.query(
             `SELECT id AS purchase_id, created_at AS event_at, supplier_id, grand_total AS gtot
              FROM purchases ORDER BY datetime(created_at) ASC, id ASC`,
@@ -234,7 +246,7 @@ export class PaymentService {
 
         // Use SAVEPOINT so this work can run while another handler still holds an open
         // transaction (SQLite rejects nested BEGIN on the same connection).
-        const sp = `sb_rep_${++this.repersistSavepointSeq}_${Date.now()}`;
+        const sp = `sb_rep_${++repersistSavepointSeq}_${Date.now()}`;
         await this.dbService.execute(`SAVEPOINT ${sp}`);
         try {
             const balanceBySupplier = new Map<number, number>();
