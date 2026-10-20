@@ -12,6 +12,27 @@ interface NetworkInfo {
   addresses: string[];
 }
 
+const UNREACHABLE_MESSAGE = 'Cannot reach the main computer';
+
+// Client mode: while the main computer is down, every page's data request fails with
+// UNREACHABLE_MESSAGE. The connection-lost screen already explains that, so drop those
+// rejections instead of letting each one surface as an error (dev overlay / console).
+// Capture phase on window runs before other listeners, so stopping it here hides it from them.
+if (window.electron?.network?.mode === 'client') {
+  window.addEventListener(
+    'unhandledrejection',
+    (event) => {
+      const { reason } = event;
+      const message = typeof reason === 'string' ? reason : reason?.message;
+      if (message === UNREACHABLE_MESSAGE) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    },
+    { capture: true }
+  );
+}
+
 /**
  * Shows the role picker on first launch, and on clients a full-screen explanation while the
  * main computer is unreachable. Address, access key and role switching live in Settings → Network.

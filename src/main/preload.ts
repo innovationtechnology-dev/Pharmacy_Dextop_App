@@ -72,6 +72,9 @@ const addLocal = (channel: string, fn: Listener, once: boolean) => {
   };
 };
 
+/** Every "main computer unreachable" failure uses this exact message (the renderer filters on it). */
+const UNREACHABLE_MESSAGE = 'Cannot reach the main computer';
+
 const isLocalChannel = (channel: string) =>
   channel.startsWith('network-') || channel === 'ipc-example';
 
@@ -100,7 +103,7 @@ const bridge = {
       } else {
         emitLocal(`${channel}-reply`, {
           success: false,
-          error: res?.error || 'Cannot reach the main computer',
+          error: res?.unreachable ? UNREACHABLE_MESSAGE : res?.error || UNREACHABLE_MESSAGE,
         });
       }
     });
@@ -127,7 +130,9 @@ const bridge = {
     }
     const res = await ipcRenderer.invoke('network-rpc', 'invoke', channel, args);
     notifyConnection(!res?.unreachable);
-    if (!res?.ok) throw new Error(res?.error || 'Cannot reach the main computer');
+    if (!res?.ok) {
+      throw new Error(res?.unreachable ? UNREACHABLE_MESSAGE : res?.error || UNREACHABLE_MESSAGE);
+    }
     return res.payload;
   },
 };
