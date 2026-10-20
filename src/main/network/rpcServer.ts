@@ -7,6 +7,7 @@ import { getInvokeHandler, getSendHandlers } from './ipcRegistry';
 import { cancelPairRequest, createPairRequest, getPairStatus } from './pairing';
 import { computeServerProof, isValidNonce } from './serverProof';
 import { MAIN_COMPUTER_ONLY_CHANNELS, MAIN_COMPUTER_ONLY_MESSAGE } from './localOnlyChannels';
+import { startKeepAwake, stopKeepAwake } from './keepAwake';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 /** Unauthenticated routes only ever carry a device name. */
@@ -238,6 +239,7 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
     server.listen(config.port, '0.0.0.0', () => {
       console.log(`Pharmacy server listening on port ${config.port}`);
       startDiscoveryResponder(config.port);
+      startKeepAwake();
       resolve();
     });
   });
@@ -258,6 +260,7 @@ const startDiscoveryResponder = (port: number) => {
 };
 
 export const stopRpcServer = () => {
+  stopKeepAwake();
   server?.close();
   server = null;
   discovery?.close();
