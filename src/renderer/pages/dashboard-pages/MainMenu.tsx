@@ -504,13 +504,6 @@ const MainMenu: React.FC = () => {
           <FiChevronRight className="w-4 h-4 mt-3 flex-shrink-0 text-gray-300 dark:text-gray-600 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
         )}
       </div>
-      {module.shortcut && !module.disabled && (
-        <div className="w-full mt-auto pt-3 pl-14">
-          <kbd className="inline-flex items-center px-1.5 py-0.5 rounded-md border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/60 text-[11px] font-mono text-gray-500 dark:text-gray-400 shadow-[inset_0_-1px_0_rgba(0,0,0,0.06)]">
-            {module.shortcut}
-          </kbd>
-        </div>
-      )}
     </button>
   );
 
