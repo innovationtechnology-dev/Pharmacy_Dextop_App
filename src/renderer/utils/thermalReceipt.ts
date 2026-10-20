@@ -571,8 +571,7 @@ export const buildThermalReceiptHtml = (
         ${profile.invoiceNotes || 'Medicines once sold will not be returned without a valid reason and original bill.'}
       </div>
       <div class="powered">
-        Printed by Innovation Technology
-        <div class="contact">03405939713 &bull; <span class="email">innovationtechnology.dev@gmail.com</span></div>
+        Developed by Innovation Technologies &bull; 03405939713
       </div>
     </div>
 
