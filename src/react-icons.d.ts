@@ -81,6 +81,7 @@ declare module 'react-icons/fi' {
   export const FiWifi: any;
   export const FiPower: any;
   export const FiWifiOff: any;
+  export const FiSend: any;
 }
 
 declare module 'react-icons/fa' {

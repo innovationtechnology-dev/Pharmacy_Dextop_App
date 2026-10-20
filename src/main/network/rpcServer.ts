@@ -4,6 +4,7 @@ import os from 'os';
 import crypto from 'crypto';
 import { DISCOVERY_PORT, NetworkConfig } from './networkConfig';
 import { getInvokeHandler, getSendHandlers } from './ipcRegistry';
+import { cancelPairRequest, createPairRequest, getPairStatus } from './pairing';
 
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 const HANDLER_TIMEOUT_MS = 60_000;
@@ -110,6 +111,35 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
 
     server = http.createServer(async (req, res) => {
       try {
+        // Access requests come from computers that do not have the key yet.
+        const url = new URL(req.url ?? '/', 'http://localhost');
+        const remote = req.socket.remoteAddress ?? '';
+        if (url.pathname.startsWith('/pair/')) {
+          if (req.method === 'POST' && url.pathname === '/pair/request') {
+            const body = JSON.parse((await readBody(req)) || '{}');
+            const request = createPairRequest(body?.deviceName, remote);
+            if (!request) {
+              send(res, 429, { ok: false, error: 'Too many computers are waiting for approval' });
+              return;
+            }
+            console.log(`[pair] ${request.deviceName} (${request.address}) requested access`);
+            send(res, 200, { ok: true, payload: { requestId: request.id, expiresAt: request.expiresAt } });
+            return;
+          }
+          const id = url.searchParams.get('id') ?? '';
+          if (req.method === 'GET' && url.pathname === '/pair/status') {
+            send(res, 200, { ok: true, payload: getPairStatus(id, remote) });
+            return;
+          }
+          if (req.method === 'POST' && url.pathname === '/pair/cancel') {
+            cancelPairRequest(id, remote);
+            send(res, 200, { ok: true });
+            return;
+          }
+          send(res, 404, { ok: false, error: 'Not found' });
+          return;
+        }
+
         const auth = req.headers.authorization ?? '';
         if (!keysMatch(auth, `Bearer ${config.accessKey}`)) {
           send(res, 401, { ok: false, app: 'pharmacy', name: os.hostname(), error: 'Invalid access key' });

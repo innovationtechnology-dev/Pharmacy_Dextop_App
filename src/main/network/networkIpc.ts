@@ -1,3 +1,4 @@
+import os from 'os';
 import { ipcMain } from 'electron';
 import {
   DEFAULT_PORT,
@@ -6,7 +7,15 @@ import {
   saveNetworkConfig,
 } from './networkConfig';
 import { getLocalAddresses, stopRpcServer } from './rpcServer';
-import { callServer, discoverServers, pingServer } from './rpcClient';
+import {
+  callServer,
+  cancelPairing,
+  discoverServers,
+  getPairingStatus,
+  pingServer,
+  requestPairing,
+} from './rpcClient';
+import { listPendingPairRequests, respondToPairRequest } from './pairing';
 import {
   checkNow,
   getConnectionStatus,
@@ -97,6 +106,67 @@ export const registerNetworkIpc = (hooks: NetworkIpcHooks): void => {
       }
     }
   );
+
+  // --- Main computer: answer "Request access" prompts ---
+  ipcMain.handle('network-pair-pending', () => listPendingPairRequests());
+  ipcMain.handle('network-pair-respond', (_e, id: string, allow: boolean) =>
+    respondToPairRequest(id, !!allow)
+  );
+
+  // --- Other computer: ask the main computer for access and wait for Allow/Deny ---
+  let activePairing: { host: string; port: number; requestId: string; cancelled: boolean } | null = null;
+
+  ipcMain.handle('network-request-access', async (_e, host: string, port: number) => {
+    const target = { serverHost: host.trim(), port: port || DEFAULT_PORT };
+    if (activePairing) activePairing.cancelled = true;
+    try {
+      const deviceName = os.hostname().replace(/\.local$/, '');
+      const { requestId, expiresAt } = await requestPairing(target, deviceName);
+      const pairing = { host: target.serverHost, port: target.port, requestId, cancelled: false };
+      activePairing = pairing;
+
+      while (!pairing.cancelled && Date.now() < expiresAt + 2000) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 1500));
+        if (pairing.cancelled) break;
+        let status;
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          status = await getPairingStatus(target, requestId);
+        } catch {
+          continue; // brief network hiccup — keep waiting
+        }
+        if (status.state === 'approved' && status.accessKey) {
+          const cfg = { ...target, accessKey: status.accessKey };
+          // eslint-disable-next-line no-await-in-loop
+          await pingServer(cfg);
+          saveNetworkConfig({ role: 'client', ...cfg });
+          activePairing = null;
+          startMonitor();
+          hooks.reloadWindow();
+          return { success: true };
+        }
+        if (status.state === 'denied' || status.state === 'expired') {
+          activePairing = null;
+          return { success: false, reason: status.state };
+        }
+      }
+      if (activePairing === pairing) activePairing = null;
+      return { success: false, reason: pairing.cancelled ? 'cancelled' : 'expired' };
+    } catch (error) {
+      return { success: false, reason: 'error', error: String((error as Error)?.message ?? error) };
+    }
+  });
+
+  ipcMain.handle('network-cancel-access', async () => {
+    const pairing = activePairing;
+    if (!pairing) return;
+    pairing.cancelled = true;
+    activePairing = null;
+    await cancelPairing({ serverHost: pairing.host, port: pairing.port }, pairing.requestId).catch(
+      () => undefined
+    );
+  });
 
   /** Lets the user switch back to the role picker (e.g. wrong server). */
   ipcMain.handle('network-reset', () => {

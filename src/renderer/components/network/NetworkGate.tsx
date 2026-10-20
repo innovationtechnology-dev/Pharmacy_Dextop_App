@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ConnectionStatus } from '../../../main/network/connectionMonitor';
 import NetworkSetup from './NetworkSetup';
 import ConnectionLostScreen from './ConnectionLostScreen';
+import PairingRequestPrompt from './PairingRequestPrompt';
 
 interface NetworkInfo {
   role: 'unset' | 'server' | 'client';
@@ -52,6 +53,7 @@ const NetworkGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   return (
     <>
+      {info.role === 'server' && <PairingRequestPrompt />}
       {info.role === 'client' && status && !status.online && (
         <ConnectionLostScreen status={status} />
       )}

@@ -64,6 +64,28 @@ const request = (
 export const callServer = (config: NetworkConfig, rpc: RpcRequest): Promise<RpcResponse> =>
   request(config, 'POST', '/rpc', rpc);
 
+type Target = Pick<NetworkConfig, 'serverHost' | 'port'>;
+
+const payloadOf = <T,>(res: RpcResponse): T => {
+  if (!res.ok) throw new Error(res.error || 'Request failed');
+  return res.payload as T;
+};
+
+/** Ask the main computer for access; someone there must click Allow. */
+export const requestPairing = async (target: Target, deviceName: string) =>
+  payloadOf<{ requestId: string; expiresAt: number }>(
+    await request({ ...target, accessKey: '' }, 'POST', '/pair/request', { deviceName }, 8000)
+  );
+
+export const getPairingStatus = async (target: Target, requestId: string) =>
+  payloadOf<{ state: 'pending' | 'approved' | 'denied' | 'expired'; accessKey?: string }>(
+    await request({ ...target, accessKey: '' }, 'GET', `/pair/status?id=${encodeURIComponent(requestId)}`, undefined, 8000)
+  );
+
+export const cancelPairing = async (target: Target, requestId: string) => {
+  await request({ ...target, accessKey: '' }, 'POST', `/pair/cancel?id=${encodeURIComponent(requestId)}`, {}, 4000);
+};
+
 export const pingServer = (
   config: Pick<NetworkConfig, 'serverHost' | 'port' | 'accessKey'>
 ): Promise<RpcResponse> => request(config, 'GET', '/ping', undefined, 4000);

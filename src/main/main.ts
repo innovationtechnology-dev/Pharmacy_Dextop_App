@@ -9,7 +9,7 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, session, screen } from 'electron';
+import { app, BrowserWindow, Notification, shell, session, screen } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
@@ -19,6 +19,7 @@ import { installIpcRegistry } from './network/ipcRegistry';
 import { loadNetworkConfig } from './network/networkConfig';
 import { registerNetworkIpc } from './network/networkIpc';
 import { startRpcServer, stopRpcServer } from './network/rpcServer';
+import { setPairingListener } from './network/pairing';
 
 // Must run before any controller registers its IPC handlers.
 installIpcRegistry();
@@ -212,6 +213,28 @@ app
       startAsServer,
       reloadWindow: () => mainWindow?.webContents.reload(),
       sendToWindow: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+    });
+
+    // Main computer: another computer asked for access — show the prompt and get attention.
+    let notifiedIds = new Set<string>();
+    setPairingListener((pending) => {
+      mainWindow?.webContents.send('network-pair-requests', pending);
+      const fresh = pending.filter((r) => !notifiedIds.has(r.id));
+      notifiedIds = new Set(pending.map((r) => r.id));
+      if (!fresh.length || !mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.flashFrame(true);
+      if (Notification.isSupported()) {
+        const n = new Notification({
+          title: 'Computer wants to connect',
+          body: `${fresh[0].deviceName} (${fresh[0].address}) is asking for access. Open the app to allow or deny.`,
+        });
+        n.on('click', () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
+        n.show();
+      }
     });
 
     // Only the main computer owns the database. Additional computers (role

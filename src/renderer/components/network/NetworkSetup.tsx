@@ -8,6 +8,7 @@ import {
   FiKey,
   FiMonitor,
   FiSearch,
+  FiSend,
   FiShield,
   FiWifi,
 } from 'react-icons/fi';
@@ -21,7 +22,7 @@ interface DiscoveredServer {
 const invoke = <T,>(channel: string, ...args: unknown[]) =>
   window.electron.ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
-type Busy = null | 'starting' | 'searching' | 'connecting';
+type Busy = null | 'starting' | 'searching' | 'connecting' | 'requesting';
 
 const label = 'block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-1.5';
 const input =
@@ -79,6 +80,7 @@ const NetworkSetup: React.FC = () => {
   const [host, setHost] = useState('');
   const [port, setPort] = useState('3737');
   const [accessKey, setAccessKey] = useState('');
+  const [showKeyEntry, setShowKeyEntry] = useState(false);
 
   const chooseServer = async () => {
     setBusy('starting');
@@ -122,6 +124,29 @@ const NetworkSetup: React.FC = () => {
       );
       setBusy(null);
     }
+  };
+
+  /** Ask the main computer; someone there clicks Allow and the key comes back automatically. */
+  const requestAccess = async () => {
+    if (!host || busy) return;
+    setBusy('requesting');
+    setError('');
+    const res = await invoke<{ success: boolean; reason?: string; error?: string }>(
+      'network-request-access',
+      host,
+      Number(port)
+    );
+    if (res.success) return; // window reloads itself
+    setBusy(null);
+    if (res.reason === 'denied') setError('The main computer denied access.');
+    else if (res.reason === 'expired')
+      setError('No one answered on the main computer in time. Please try again.');
+    else if (res.reason === 'error')
+      setError(`Could not reach ${host}. Check the address and that the app is open there. (${res.error})`);
+  };
+
+  const cancelRequest = () => {
+    void invoke('network-cancel-access');
   };
 
   const selectServer = (s: DiscoveredServer) => {
@@ -217,12 +242,12 @@ const NetworkSetup: React.FC = () => {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                void connect();
+                void (showKeyEntry ? connect() : requestAccess());
               }}
             >
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Connect to the main computer</h1>
               <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 mb-6">
-                Make sure the Pharmacy app is open on the main computer and both are on the same WiFi.
+                Find the main computer, then request access — someone there approves it with one click.
               </p>
 
               <button type="button" onClick={search} disabled={!!busy} className={secondaryBtn}>
@@ -295,24 +320,26 @@ const NetworkSetup: React.FC = () => {
                 </div>
               </div>
 
-              <div className="mt-4">
-                <label className={label} htmlFor="ns-key">Access key</label>
-                <div className="relative">
-                  <FiKey className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                  <input
-                    id="ns-key"
-                    className={`${input} pl-10 font-mono tracking-widest uppercase`}
-                    placeholder="e.g. 3FA9C21B"
-                    value={accessKey}
-                    onChange={(e) => setAccessKey(e.target.value.trim())}
-                    autoComplete="off"
-                    spellCheck={false}
-                  />
+              {showKeyEntry && (
+                <div className="mt-4">
+                  <label className={label} htmlFor="ns-key">Access key</label>
+                  <div className="relative">
+                    <FiKey className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      id="ns-key"
+                      className={`${input} pl-10 font-mono tracking-widest uppercase`}
+                      placeholder="e.g. 3FA9C21B"
+                      value={accessKey}
+                      onChange={(e) => setAccessKey(e.target.value.trim())}
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
+                    Shown on the main computer in Settings → Network.
+                  </p>
                 </div>
-                <p className="mt-1.5 text-xs text-gray-400 dark:text-gray-500">
-                  Shown on the main computer in Settings → Network.
-                </p>
-              </div>
+              )}
 
               {error && (
                 <div className="mt-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300 flex gap-2">
@@ -321,24 +348,67 @@ const NetworkSetup: React.FC = () => {
                 </div>
               )}
 
-              <div className="mt-6 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setError('');
-                    setStep('choose');
-                  }}
-                  disabled={busy === 'connecting'}
-                  className={`${secondaryBtn} !w-auto px-4`}
-                >
-                  <FiArrowLeft className="w-4 h-4" />
-                  Back
-                </button>
-                <button type="submit" disabled={!!busy || !host || !accessKey} className={primaryBtn}>
-                  {busy === 'connecting' && <Spinner />}
-                  {busy === 'connecting' ? 'Connecting…' : 'Connect'}
-                </button>
-              </div>
+              {busy === 'requesting' ? (
+                <div className="mt-6 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-900/20">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 text-emerald-600 dark:text-emerald-400">
+                      <Spinner />
+                    </span>
+                    <div className="flex-1">
+                      <div className="text-sm font-semibold text-gray-900 dark:text-white">
+                        Waiting for approval…
+                      </div>
+                      <p className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">
+                        A request was sent to <span className="font-mono">{host}</span>. Ask someone at
+                        the main computer to click <strong>Allow</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <button type="button" onClick={cancelRequest} className={`${secondaryBtn} mt-4 bg-white dark:bg-gray-800`}>
+                    Cancel request
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mt-6 flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError('');
+                        setStep('choose');
+                      }}
+                      disabled={busy === 'connecting'}
+                      className={`${secondaryBtn} !w-auto px-4`}
+                    >
+                      <FiArrowLeft className="w-4 h-4" />
+                      Back
+                    </button>
+                    {showKeyEntry ? (
+                      <button type="submit" disabled={!!busy || !host || !accessKey} className={primaryBtn}>
+                        {busy === 'connecting' && <Spinner />}
+                        {busy === 'connecting' ? 'Connecting…' : 'Connect with key'}
+                      </button>
+                    ) : (
+                      <button type="submit" disabled={!!busy || !host} className={primaryBtn}>
+                        <FiSend className="w-4 h-4" />
+                        Request access
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('');
+                      setShowKeyEntry((v) => !v);
+                    }}
+                    className="mt-3 w-full text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                  >
+                    {showKeyEntry
+                      ? 'Request access from the main computer instead'
+                      : 'Have an access key? Enter it instead'}
+                  </button>
+                </>
+              )}
             </form>
           )}
 
