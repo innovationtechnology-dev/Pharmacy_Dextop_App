@@ -13,6 +13,12 @@ import {
   FiUser,
   FiMapPin,
   FiMessageCircle,
+  FiShoppingCart,
+  FiTruck,
+  FiPackage,
+  FiBarChart2,
+  FiUsers,
+  FiWifi,
 } from 'react-icons/fi';
 import { getAuthUser } from '../../utils/auth';
 import { getLicenseStatus, getLicense, LicenseStatus, License as LicenseType } from '../../utils/license';
@@ -48,7 +54,7 @@ function GeneratedKeyCard({ licenseKey }: { licenseKey: string }) {
 
   return (
     <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-700/40 border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2">
-      <span className="font-mono text-sm font-bold tracking-[0.18em] text-gray-900 dark:text-white flex-1 select-all">
+      <span className="font-mono text-base font-bold tracking-[0.2em] text-gray-900 dark:text-white flex-1 select-all">
         {formatKey(licenseKey)}
       </span>
       <button
@@ -350,6 +356,14 @@ const License: React.FC = () => {
     setCloudServerUrl(getCloudLicenseApiBaseUrl());
   }, []);
 
+  useEffect(() => {
+    // Admins: check the saved license server up front so the generate form is ready to use
+    if ((currentUserRole === 'admin' || currentUserRole === 'super_admin') && getCloudLicenseApiBaseUrl()) {
+      handlePingServer();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserRole]);
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
@@ -372,380 +386,363 @@ const License: React.FC = () => {
   // Regular admin should never see the raw key — they rely on super_admin to share it.
   const canSeeGeneratedKey = currentUserRole === 'super_admin';
 
+  const tone = isActive ? 'active' : isExpired ? 'expired' : 'warning';
+  const toneClasses = {
+    active: {
+      stroke: 'text-emerald-500',
+      track: 'text-emerald-500/15',
+      text: 'text-emerald-600 dark:text-emerald-400',
+      badge: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/50',
+      dot: 'bg-emerald-500',
+    },
+    expired: {
+      stroke: 'text-red-500',
+      track: 'text-red-500/15',
+      text: 'text-red-600 dark:text-red-400',
+      badge: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/50',
+      dot: 'bg-red-500',
+    },
+    warning: {
+      stroke: 'text-amber-500',
+      track: 'text-amber-500/15',
+      text: 'text-amber-600 dark:text-amber-400',
+      badge: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700/50',
+      dot: 'bg-amber-500',
+    },
+  }[tone];
+
+  const daysLeft = licenseStatus?.daysUntilExpiry ?? null;
+  const startMs = license?.created_at ? new Date(license.created_at).getTime() : null;
+  const endMs = licenseStatus?.expiryDate ? new Date(licenseStatus.expiryDate).getTime() : null;
+  const totalDays = startMs && endMs && endMs > startMs ? Math.round((endMs - startMs) / 86400000) : null;
+  const remainingPct =
+    daysLeft !== null && totalDays ? Math.max(0, Math.min(100, (daysLeft / totalDays) * 100)) : license ? 100 : 0;
+
+  const ringRadius = 54;
+  const ringCircumference = 2 * Math.PI * ringRadius;
+
+  const stats = [
+    {
+      label: 'Validity',
+      value: daysLeft !== null ? (daysLeft >= 0 ? `${daysLeft} Days Left` : 'Terminated') : 'Unlimited',
+      icon: FiClock,
+    },
+    { label: 'Expiry Date', value: licenseStatus?.expiryDate ? formatDate(licenseStatus.expiryDate) : 'Perpetual', icon: FiCalendar },
+    { label: 'Activated On', value: formatDateTime(license?.created_at), icon: FiCheckCircle },
+    { label: 'Last Verification', value: formatDateTime(license?.updated_at), icon: FiRefreshCw },
+  ];
+
+  const includedModules = [
+    { label: 'Selling Panel & POS', icon: FiShoppingCart },
+    { label: 'Purchasing & Suppliers', icon: FiTruck },
+    { label: 'Medicines & Stock', icon: FiPackage },
+    { label: 'Sales & Financial Reports', icon: FiBarChart2 },
+    { label: 'Customers & Payments', icon: FiUsers },
+    { label: 'Multi-Computer Network', icon: FiWifi },
+  ];
+
+  const activationSteps = [
+    { title: 'Request a license', text: 'Contact support with your pharmacy name, email and phone number.' },
+    { title: 'Receive your key', text: 'You will receive a unique activation key for this system.' },
+    { title: 'Activate the software', text: 'Click "Activate Software" and enter the key to unlock all features.' },
+  ];
+
+  const cardClass = 'bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm';
+  const labelClass = 'flex items-center gap-1.5 text-[10px] font-bold mb-1.5 uppercase tracking-wide text-gray-500 dark:text-gray-400';
+  const inputClass = 'w-full px-3.5 py-2 text-xs font-semibold bg-gray-50/60 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:bg-white dark:focus:bg-gray-700 focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 outline-none transition-all';
+  const serverOk = serverStatus.state === 'ok';
+
   return (
-    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
-      
-      {/* Stats Header Row */}
-      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
-        
-        {/* Status Stat */}
-        <div className="flex items-center gap-2">
-          <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border shadow-sm ${
-            isActive 
-              ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-600/50' 
-              : isExpired 
-                ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-600/50'
-                : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-600/50'
-          }`}>
-            <FiShield className={`w-3.5 h-3.5 ${
-              isActive ? 'text-emerald-500' : isExpired ? 'text-red-500' : 'text-amber-500'
-            }`} />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Status
-            </span>
-            <span className={`text-xs font-bold ml-1 ${
-              isActive ? 'text-emerald-600 dark:text-emerald-400' : isExpired ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'
-            }`}>
-              {isActive ? 'Verified' : isExpired ? 'Expired' : 'Warning'}
-            </span>
-          </div>
-        </div>
+    <div className="flex flex-col lg:flex-row gap-3 h-auto lg:h-[calc(100vh-80px)] w-full px-4 pb-4 overflow-y-auto lg:overflow-hidden">
+      {/* ── Left: status overview ── */}
+      <div className={`${cardClass} lg:w-[340px] shrink-0 flex flex-col overflow-hidden`}>
+        <div className="flex-1 flex flex-col items-center justify-center text-center px-6 pt-8 pb-6 bg-gradient-to-b from-emerald-50/70 to-transparent dark:from-emerald-900/10">
+          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-widest mb-6 ${toneClasses.badge}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${toneClasses.dot} ${isActive ? 'animate-pulse' : ''}`} />
+            {isActive ? 'Verified' : isExpired ? (license ? 'Expired' : 'Not Activated') : 'Expiring Soon'}
+          </span>
 
-        {/* Days Left Stat */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-            <FiClock className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Validity
-            </span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {licenseStatus && licenseStatus.daysUntilExpiry !== null
-                ? licenseStatus.daysUntilExpiry >= 0
-                  ? `${licenseStatus.daysUntilExpiry} Days Left`
-                  : 'Terminated'
-                : 'Unlimited'}
-            </span>
-          </div>
-        </div>
-
-        {/* Expiry Stat */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-purple-50 dark:bg-purple-900/20 px-2.5 py-1.5 rounded-md border border-purple-200 dark:border-purple-600/50 shadow-sm">
-            <FiCalendar className="w-3.5 h-3.5 text-purple-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Expiry
-            </span>
-            <span className="text-xs font-bold text-purple-600 dark:text-purple-400 ml-1">
-              {licenseStatus?.expiryDate ? formatDate(licenseStatus.expiryDate) : ' Perpetual'}
-            </span>
-          </div>
-        </div>
-
-        {/* Activation Date Stat */}
-        {license && (
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-teal-50 dark:bg-teal-900/20 px-2.5 py-1.5 rounded-md border border-teal-200 dark:border-teal-600/50 shadow-sm">
-              <FiCalendar className="w-3.5 h-3.5 text-teal-500" />
-              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-                Activation Date
-              </span>
-              <span className="text-xs font-bold text-teal-600 dark:text-teal-400 ml-1">
-                {license.created_at ? formatDateTime(license.created_at) : 'N/A'}
-              </span>
+          {/* Validity ring */}
+          <div className="relative w-36 h-36 mb-5">
+            <svg className="w-full h-full -rotate-90" viewBox="0 0 128 128">
+              <circle cx="64" cy="64" r={ringRadius} fill="none" strokeWidth="10" stroke="currentColor" className={toneClasses.track} />
+              <circle
+                cx="64"
+                cy="64"
+                r={ringRadius}
+                fill="none"
+                strokeWidth="10"
+                strokeLinecap="round"
+                stroke="currentColor"
+                className={`${toneClasses.stroke} transition-all duration-700`}
+                strokeDasharray={ringCircumference}
+                strokeDashoffset={ringCircumference * (1 - remainingPct / 100)}
+              />
+            </svg>
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+              {license && daysLeft !== null && daysLeft >= 0 ? (
+                <>
+                  <span className="text-3xl font-extrabold text-gray-900 dark:text-white leading-none">{daysLeft}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mt-1">Days Left</span>
+                </>
+              ) : isActive ? (
+                <FiShield className={`w-12 h-12 ${toneClasses.text}`} />
+              ) : (
+                <FiAlertTriangle className={`w-12 h-12 ${toneClasses.text}`} />
+              )}
             </div>
           </div>
-        )}
 
-        {/* Last Verification Stat */}
-        {license && (
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
-              <FiRefreshCw className="w-3.5 h-3.5 text-orange-500" />
-              <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-                Last Verification
-              </span>
-              <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-                {license.updated_at ? formatDateTime(license.updated_at) : 'N/A'}
-              </span>
-            </div>
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-1.5">
+            {isActive ? 'License Active' : isExpired ? (license ? 'License Expired' : 'Software Not Activated') : 'Expiry Near'}
+          </h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400 font-medium leading-relaxed max-w-[260px]">
+            {isActive
+              ? 'Your system is fully activated and receiving security updates.'
+              : isExpired
+                ? license
+                  ? 'Features are locked. Please provide a new activation key.'
+                  : 'Activate this system with a license key to unlock all features.'
+                : 'System will require re-activation shortly to maintain full functionality.'}
+          </p>
+
+          <button
+            onClick={() => setShowActivationDialog(true)}
+            className="mt-6 w-full py-2.5 rounded-lg font-bold text-xs uppercase tracking-widest transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-700 hover:to-emerald-600"
+          >
+            <FiKey className="w-4 h-4" />
+            {license ? 'Update License Key' : 'Activate Software'}
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="mt-2 w-full py-2 rounded-lg text-[11px] font-bold uppercase tracking-widest text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            <FiRefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh Status
+          </button>
+        </div>
+
+        {/* Support */}
+        <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-800/60 space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">Need Help?</p>
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-gray-700 dark:text-gray-200">
+            <FiMail className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <span className="truncate select-all">innovationtechnology.dev@gmail.com</span>
           </div>
-        )}
-
-        {/* Refresh Button */}
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm disabled:opacity-50"
-        >
-          <FiRefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-gray-700 dark:text-gray-200">
+            <FiPhone className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+            <span className="select-all">(+92) 3205720-774</span>
+          </div>
+        </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex flex-col md:flex-row gap-3 flex-1 overflow-y-auto min-h-0 scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
-        {/* Left Side: Status Visualization */}
-        <div className="w-full md:w-1/3 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col">
-            <div className={`px-4 py-3 border-b flex items-center gap-3 ${
-              isActive 
-                ? 'bg-gradient-to-r from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-800/10 border-emerald-200/50 dark:border-emerald-800/30'
-                : 'bg-gradient-to-r from-amber-50 to-amber-100/50 dark:from-amber-900/20 dark:to-amber-800/10 border-amber-200/50 dark:border-amber-800/30'
-            }`}>
-              <div className={`p-1.5 rounded-lg bg-gradient-to-br ${isActive ? 'from-emerald-500 to-emerald-600' : 'from-amber-500 to-amber-600'}`}>
-                <FiCheckCircle className="w-4 h-4 text-white" />
+      {/* ── Right: details ── */}
+      <div className="flex-1 min-w-0 flex flex-col gap-3 lg:min-h-0">
+        {/* License key */}
+        <div className={`${cardClass} p-4 flex flex-col sm:flex-row sm:items-center gap-4 shrink-0`}>
+          <div className="p-3 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-600 text-white shadow-md shrink-0 w-fit">
+            <FiKey className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">Active License Key</p>
+            {license ? (
+              <GeneratedKeyCard licenseKey={license.activation_code} />
+            ) : (
+              <div className="px-3 py-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-xs font-semibold text-gray-400 dark:text-gray-500">
+                No license key registered on this system
               </div>
-              <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">System Activation Status</h3>
-            </div>
-
-            <div className="flex-1 p-6 flex flex-col items-center justify-center text-center">
-              <div className="relative mb-6">
-                <div className={`w-32 h-32 rounded-full border-8 flex items-center justify-center transition-all duration-700 ${
-                  isActive 
-                    ? 'border-emerald-500/20 dark:border-emerald-500/10' 
-                    : isExpired 
-                      ? 'border-red-500/20 dark:border-red-500/10'
-                      : 'border-amber-500/20 dark:border-amber-500/10'
-                }`}>
-                  <div className={`w-24 h-24 rounded-full flex items-center justify-center shadow-inner ${
-                    isActive 
-                      ? 'bg-emerald-500 text-white shadow-emerald-900/20' 
-                      : isExpired 
-                        ? 'bg-red-500 text-white shadow-red-900/20'
-                        : 'bg-amber-500 text-white shadow-amber-900/20'
-                  }`}>
-                    {isActive ? <FiShield className="w-12 h-12" /> : <FiAlertTriangle className="w-12 h-12" />}
-                  </div>
-                  
-                  {/* Pulse Effect */}
-                  {isActive && (
-                    <div className="absolute inset-0 rounded-full border-4 border-emerald-500 animate-[ping_2s_ease-in-out_infinite] opacity-20"></div>
-                  )}
-                </div>
-              </div>
-
-              <h2 className={`text-xl font-bold mb-2 ${
-                isActive ? 'text-emerald-600 dark:text-emerald-400' : isExpired ? 'text-red-600 dark:text-red-400' : 'text-amber-600 dark:text-amber-400'
-              }`}>
-                {isActive ? 'License Active' : isExpired ? 'License Expired' : 'Urgent: Expiry Near'}
-              </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400 px-6 font-medium">
-                {isActive 
-                  ? 'Your system is fully activated and receiving security updates.' 
-                  : isExpired 
-                    ? 'Features are locked. Please provide a new activation key.'
-                    : 'System will require re-activation shortly to maintain full functionality.'}
-              </p>
-
-              <div className="mt-8 w-full space-y-3">
-                <button
-                  onClick={() => setShowActivationDialog(true)}
-                  className={`w-full py-3 rounded-lg font-bold text-sm uppercase tracking-widest transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 ${
-                    isActive 
-                      ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-700 hover:to-emerald-600' 
-                      : 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:from-blue-700 hover:to-blue-600'
-                  }`}
-                >
-                  <FiKey className="w-4 h-4" />
-                  {license ? 'Update License Key' : 'Activate Software'}
-                </button>
-              </div>
-            </div>
+            )}
+          </div>
+          <div className="shrink-0 sm:text-right">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">Certificate</p>
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-bold uppercase tracking-widest ${toneClasses.badge}`}>
+              <FiShield className="w-3 h-3" />
+              {isActive ? 'Valid' : 'Invalid'}
+            </span>
           </div>
         </div>
 
-        {/* Right Side: Detailed Info + Cloud License (admin) */}
-        <div className="w-full md:w-2/3 flex flex-col overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-hidden">
-            {/* Header row: License key + Cloud server (admin) */}
-            <div className="px-4 py-3 bg-gradient-to-r from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex items-center gap-3 shrink-0 flex-wrap">
-              <div className="p-2 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 shrink-0">
-                <FiKey className="w-4 h-4" />
+        {/* Stats + term progress (only once licensed) */}
+        {license && (
+          <>
+            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 shrink-0">
+              {stats.map(({ label, value, icon: Icon }) => (
+                <div key={label} className={`${cardClass} p-3.5 flex items-center gap-3`}>
+                  <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 shrink-0">
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">{label}</p>
+                    <p className="text-xs font-bold text-gray-900 dark:text-white truncate" title={value}>{value}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {totalDays && (
+              <div className={`${cardClass} p-4 shrink-0`}>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400">License Term</p>
+                  <p className="text-[11px] font-bold text-gray-700 dark:text-gray-200">
+                    {Math.round(100 - remainingPct)}% used · {totalDays} days total
+                  </p>
+                </div>
+                <div className="h-2 rounded-full bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-emerald-400 transition-all duration-700"
+                    style={{ width: `${100 - remainingPct}%` }}
+                  />
+                </div>
+                <div className="flex items-center justify-between mt-2 text-[10px] font-semibold text-gray-500 dark:text-gray-400">
+                  <span>{formatDate(license.created_at)}</span>
+                  <span>{formatDate(licenseStatus?.expiryDate)}</span>
+                </div>
               </div>
-              <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest shrink-0">Active License Key</span>
-              {license ? (
-                <div className="font-mono text-sm font-bold text-gray-900 dark:text-white bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 tracking-[0.2em] text-center select-all shrink-0">
-                  {license.activation_code}
+            )}
+          </>
+        )}
+
+        {/* Admin: generate license key (always shown; submit needs a reachable server) */}
+        {isAdmin ? (
+          <div className={`${cardClass} flex-1 lg:min-h-0 flex flex-col overflow-hidden`}>
+            <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex flex-col xl:flex-row xl:items-center gap-3 shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="p-1.5 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
+                  <FiFileText className="w-4 h-4 text-white" />
                 </div>
-              ) : (
-                <div className="font-mono text-xs text-gray-400 dark:text-gray-500 px-3 py-1.5 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 shrink-0">
-                  No License
-                </div>
-              )}
-              {isAdmin && <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 shrink-0" />}
-              {isAdmin && (
-                <span className="text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-widest shrink-0">Cloud License Server</span>
-              )}
-              {isAdmin && (
+                <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">Generate License Key</h3>
+              </div>
+              <div className="flex items-center gap-2 xl:ml-auto xl:max-w-md w-full">
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    serverOk ? 'bg-emerald-500' : serverStatus.state === 'error' ? 'bg-red-500' : 'bg-gray-300 dark:bg-gray-600'
+                  }`}
+                  title={'message' in serverStatus ? serverStatus.message : 'Not connected'}
+                />
                 <input
                   type="text"
                   value={cloudServerUrl}
                   onChange={(e) => handleServerUrlChange(e.target.value)}
                   placeholder="https://your-cloud-license-admin-domain"
-                  className="flex-1 min-w-0 px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                  className={`${inputClass} flex-1 min-w-0 py-1.5`}
                 />
-              )}
-              {isAdmin && (
                 <button
                   type="button"
                   onClick={handlePingServer}
                   disabled={isCheckingServer}
-                  className="shrink-0 px-3 py-1.5 text-xs font-semibold rounded-md bg-emerald-500 hover:bg-emerald-600 text-white disabled:opacity-50 transition-colors"
+                  className="shrink-0 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide rounded-lg border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
                 >
-                  {isCheckingServer ? 'Checking...' : 'Check Connection'}
+                  <FiRefreshCw className={`w-3 h-3 ${isCheckingServer ? 'animate-spin' : ''}`} />
+                  {isCheckingServer ? 'Checking' : 'Check'}
                 </button>
-              )}
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {serverStatus.state === 'ok' && (
-                <div className="flex items-center gap-2.5 py-1.5 px-3 bg-white dark:bg-[#1a2235] border border-gray-200 dark:border-[#2a3650] rounded-md shadow-sm w-fit">
-                  <div className="w-6 h-6 rounded-full bg-blue-100 dark:bg-[#253768] flex items-center justify-center shrink-0">
-                    <FiCheckCircle className="w-3 h-3 text-blue-600 dark:text-[#8db3ff]" />
-                  </div>
-                  <div>
-                    <h4 className="text-[10px] font-bold text-gray-900 dark:text-[#b4cbf5] uppercase tracking-widest leading-none mb-0.5">Connection Stable</h4>
-                    <p className="text-[9px] text-gray-500 dark:text-[#7d9bd1] leading-none">{serverStatus.message || 'License server reachable'}</p>
-                  </div>
-                </div>
-              )}
+            <form onSubmit={handleSubmitLicenseRequest} className="flex-1 lg:min-h-0 overflow-y-auto p-4 flex flex-col gap-4">
               {serverStatus.state === 'error' && (
-                <div className="flex items-center gap-2.5 py-1.5 px-3 bg-white dark:bg-[#351a1a] border border-gray-200 dark:border-[#502a2a] rounded-md shadow-sm w-fit">
-                  <div className="w-6 h-6 rounded-full bg-red-100 dark:bg-[#682525] flex items-center justify-center shrink-0">
-                    <FiAlertTriangle className="w-3 h-3 text-red-600 dark:text-[#ff8d8d]" />
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/50 text-[11px] font-semibold text-red-700 dark:text-red-300">
+                  <FiAlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  {serverStatus.message || 'Could not reach license server'}
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+                <div>
+                  <label className={labelClass}>
+                    <FiFileText className="w-3.5 h-3.5 text-emerald-500" />
+                    Pharmacy Name <span className="text-red-500">*</span>
+                  </label>
+                  <input type="text" value={pharmacyName} onChange={(e) => setPharmacyName(e.target.value)} placeholder="Enter pharmacy name" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    <FiUser className="w-3.5 h-3.5 text-emerald-500" />
+                    Doctor / Owner Name
+                  </label>
+                  <input type="text" value={doctorName} onChange={(e) => setDoctorName(e.target.value)} placeholder="Enter doctor or owner name" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    <FiMail className="w-3.5 h-3.5 text-emerald-500" />
+                    Email <span className="text-red-500">*</span>
+                  </label>
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    <FiPhone className="w-3.5 h-3.5 text-emerald-500" />
+                    Phone <span className="text-red-500">*</span>
+                  </label>
+                  <input type="text" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1234567890" className={inputClass} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    <FiMapPin className="w-3.5 h-3.5 text-emerald-500" />
+                    Address
+                  </label>
+                  <textarea value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, City, Country" rows={3} className={`${inputClass} resize-none`} />
+                </div>
+                <div>
+                  <label className={labelClass}>
+                    <FiMessageCircle className="w-3.5 h-3.5 text-emerald-500" />
+                    Note / Message
+                  </label>
+                  <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Additional notes or message..." rows={3} className={`${inputClass} resize-none`} />
+                </div>
+              </div>
+              <div className="mt-auto pt-2 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
+                <p className="text-[10px] text-gray-400 dark:text-gray-500 italic">
+                  {serverOk ? 'License server connected — ready to generate.' : 'Check the server connection to enable key generation.'}
+                </p>
+                <button
+                  type="submit"
+                  disabled={isSubmittingRequest || !serverOk}
+                  className="px-6 py-2.5 text-xs font-bold uppercase tracking-widest rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md min-w-[220px] flex items-center justify-center gap-2"
+                >
+                  <FiKey className="w-4 h-4" />
+                  {isSubmittingRequest ? 'Generating...' : 'Generate License Key'}
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : !license ? (
+          /* Non-admin without a license: how to activate */
+          <div className={`${cardClass} flex-1 lg:min-h-0 overflow-y-auto p-6 flex flex-col justify-center`}>
+            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-1">How to activate</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-6">Follow these steps to get this pharmacy system up and running.</p>
+            <div className="space-y-5">
+              {activationSteps.map((step, i) => (
+                <div key={step.title} className="flex gap-4">
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-bold text-sm flex items-center justify-center shrink-0">
+                    {i + 1}
                   </div>
                   <div>
-                    <h4 className="text-[10px] font-bold text-gray-900 dark:text-[#f5b4b4] uppercase tracking-widest leading-none mb-0.5">Connection Failed</h4>
-                    <p className="text-[9px] text-gray-500 dark:text-[#d17d7d] leading-none">{serverStatus.message || 'Could not reach license server'}</p>
+                    <p className="text-xs font-bold text-gray-900 dark:text-white">{step.title}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{step.text}</p>
                   </div>
                 </div>
-              )}
-              {!license && (!isAdmin || serverStatus.state !== 'ok') && (
-                <div className="h-full flex flex-col items-center justify-center py-12 opacity-60">
-                  <div className="w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-700 flex items-center justify-center mb-4">
-                    <FiKey className="w-10 h-10 text-gray-400" />
-                  </div>
-                  <p className="font-bold text-gray-500 uppercase tracking-widest text-xs">No System Registration Found</p>
-                  <p className="text-xs text-gray-400 mt-1 italic">Contact system administrator for activation. </p>
-                </div>
-              )}
-
-              {/* Generate License Key form — shown after successful connection check */}
-              {isAdmin && serverStatus.state === 'ok' && (
-                <div className="bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
-                  {/* Form header */}
-                  <div className="flex items-center gap-3 px-4 py-3 bg-blue-600 dark:bg-blue-700">
-                    <div className="w-7 h-7 rounded-lg bg-white/20 flex items-center justify-center">
-                      <FiKey className="w-4 h-4 text-white" />
-                    </div>
-                    <span className="text-[11px] font-bold text-white uppercase tracking-widest">Generate License Key</span>
-                  </div>
-
-                  <form onSubmit={handleSubmitLicenseRequest} className="p-4 space-y-2">
-                    {/* Row 1: Pharmacy Name + Doctor/Owner Name side by side */}
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiFileText className="w-3.5 h-3.5 text-blue-500" />
-                          Pharmacy Name <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={pharmacyName}
-                          onChange={(e) => setPharmacyName(e.target.value)}
-                          placeholder="Enter pharmacy name"
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiUser className="w-3.5 h-3.5 text-blue-500" />
-                          Doctor / Owner Name
-                        </label>
-                        <input
-                          type="text"
-                          value={doctorName}
-                          onChange={(e) => setDoctorName(e.target.value)}
-                          placeholder="Enter doctor or owner name"
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Email + Phone side by side */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiMail className="w-3.5 h-3.5 text-blue-500" />
-                          Email <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="email@example.com"
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
-                        />
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiPhone className="w-3.5 h-3.5 text-blue-500" />
-                          Phone <span className="text-red-500">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={phone}
-                          onChange={(e) => setPhone(e.target.value)}
-                          placeholder="+1234567890"
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Address + Note / Message side by side */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiMapPin className="w-3.5 h-3.5 text-blue-500" />
-                          Address
-                        </label>
-                        <textarea
-                          value={address}
-                          onChange={(e) => setAddress(e.target.value)}
-                          placeholder="Street, City, Country"
-                          rows={2}
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 resize-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-gray-400 mb-1.5">
-                          <FiMessageCircle className="w-3.5 h-3.5 text-blue-500" />
-                          Note / Message
-                        </label>
-                        <textarea
-                          value={notes}
-                          onChange={(e) => setNotes(e.target.value)}
-                          placeholder="Additional notes or message..."
-                          rows={2}
-                          className="w-full px-3 py-2.5 text-[11px] border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700/60 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-500 resize-none"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Submit */}
-                    <div className="flex justify-end pt-2">
-                      <button
-                        type="submit"
-                        disabled={isSubmittingRequest}
-                        className="px-6 py-2.5 text-xs font-bold uppercase tracking-widest rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 transition-colors shadow-md min-w-[200px]"
-                      >
-                        {isSubmittingRequest ? 'Generating...' : 'Generate License Key'}
-                      </button>
-                    </div>
-                  </form>
-                </div>
-              )}
-            </div>
-
-            <div className="p-4 bg-gray-50/50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between text-[11px] font-medium">
-              <span className="text-gray-500">Security Certificate Status:</span>
-              <span className={`px-2 py-0.5 rounded-full ${isActive ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
-                {isActive ? 'VALID' : 'INVALID'}
-              </span>
+              ))}
             </div>
           </div>
-
-        </div>
+        ) : (
+          /* Non-admin with a license: what the license covers */
+          <div className={`${cardClass} flex-1 lg:min-h-0 overflow-y-auto p-5`}>
+            <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide mb-4">Included In Your License</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {includedModules.map(({ label, icon: Icon }) => (
+                <div key={label} className="flex items-center gap-3 p-3 rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-700/30">
+                  <Icon className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 flex-1">{label}</span>
+                  {isActive ? (
+                    <FiCheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  ) : (
+                    <FiAlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Activation Dialog */}
