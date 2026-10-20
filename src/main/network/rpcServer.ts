@@ -112,7 +112,7 @@ export const startRpcServer = (config: NetworkConfig): Promise<void> =>
       try {
         const auth = req.headers.authorization ?? '';
         if (!keysMatch(auth, `Bearer ${config.accessKey}`)) {
-          send(res, 401, { ok: false, error: 'Invalid access key' });
+          send(res, 401, { ok: false, app: 'pharmacy', name: os.hostname(), error: 'Invalid access key' });
           return;
         }
         if (req.method === 'GET' && req.url === '/ping') {
