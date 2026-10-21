@@ -6,7 +6,6 @@ import {
   FiDatabase,
   FiDownload,
   FiFolder,
-  FiHardDrive,
   FiRefreshCw,
 } from 'react-icons/fi';
 import type {
@@ -52,7 +51,7 @@ const errorText = (error: unknown) => String((error as Error)?.message ?? error)
 /** Settings → Backup: automatic dated database copies and manual export (admin only). */
 const BackupSettings: React.FC = () => {
   const [info, setInfo] = useState<BackupInfo | null>(null);
-  const [busy, setBusy] = useState<'backup' | 'export' | null>(null);
+  const [busy, setBusy] = useState<'export' | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const isMainComputer = window.electron.network?.mode !== 'client';
 
@@ -78,29 +77,6 @@ const BackupSettings: React.FC = () => {
     }
   };
 
-  const backupNow = async () => {
-    setBusy('backup');
-    setNotice(null);
-    try {
-      const res = (await window.electron.ipcRenderer.invoke('backup-run-now')) as {
-        success: boolean;
-        error?: string;
-        file?: BackupFile;
-        info: BackupInfo;
-      };
-      setInfo(res.info);
-      setNotice(
-        res.success
-          ? { tone: 'success', text: `Backup saved: ${res.file?.name}` }
-          : { tone: 'error', text: `Backup failed: ${res.error}` }
-      );
-    } catch (error) {
-      setNotice({ tone: 'error', text: errorText(error) });
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const exportCopy = async () => {
     setBusy('export');
     setNotice(null);
@@ -111,7 +87,7 @@ const BackupSettings: React.FC = () => {
         path?: string;
         error?: string;
       };
-      if (res.success) setNotice({ tone: 'success', text: `Database exported to ${res.path}` });
+      if (res.success) setNotice({ tone: 'success', text: `Full backup of all data saved to ${res.path}` });
       else if (!res.cancelled) setNotice({ tone: 'error', text: `Export failed: ${res.error}` });
     } catch (error) {
       setNotice({ tone: 'error', text: errorText(error) });
@@ -191,39 +167,43 @@ const BackupSettings: React.FC = () => {
               : 'Automatic backups are off'}
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={exportCopy}
-            disabled={!isMainComputer || busy !== null}
-            className={secondaryBtn}
-            title={isMainComputer ? 'Save a copy anywhere, e.g. a USB drive' : 'Only on the main computer'}
-          >
-            {busy === 'export' ? (
-              <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <FiDownload className="w-3.5 h-3.5" />
-            )}
-            Export a copy…
-          </button>
-          <button
-            type="button"
-            onClick={backupNow}
-            disabled={busy !== null}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors disabled:opacity-60"
-          >
-            {busy === 'backup' ? (
-              <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <FiHardDrive className="w-3.5 h-3.5" />
-            )}
-            Back up now
-          </button>
-        </div>
         {settings.lastError && (
           <p className="w-full flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
             <FiAlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
             Last automatic backup failed: {settings.lastError}
+          </p>
+        )}
+      </div>
+
+      {/* Manual full export */}
+      <div className={`${card} px-5 py-4 flex flex-wrap items-center gap-4`}>
+        <div className="w-10 h-10 rounded-lg bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0">
+          <FiDownload className="w-5 h-5" />
+        </div>
+        <div className="flex-1 min-w-[220px]">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">Export full backup</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+            Saves all data up to now (medicines, stock, sales, purchases, payments, customers, suppliers
+            and users) as one SQLite database file (.sqlite3), wherever you choose, such as a USB drive.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={exportCopy}
+          disabled={!isMainComputer || busy !== null}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          title={isMainComputer ? undefined : 'Only on the main computer'}
+        >
+          {busy === 'export' ? (
+            <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
+          ) : (
+            <FiDownload className="w-3.5 h-3.5" />
+          )}
+          {busy === 'export' ? 'Exporting…' : 'Export full backup…'}
+        </button>
+        {!isMainComputer && (
+          <p className="w-full text-[11px] text-gray-500 dark:text-gray-400">
+            Export the full backup from the main computer.
           </p>
         )}
       </div>
@@ -344,7 +324,7 @@ const BackupSettings: React.FC = () => {
         </div>
         {info.backups.length === 0 ? (
           <p className="px-5 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-            No backups in this folder yet. Click “Back up now” to make the first one.
+            No backups in this folder yet. The first one is made on the next automatic backup.
           </p>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-700">

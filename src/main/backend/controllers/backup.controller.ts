@@ -3,6 +3,7 @@ import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import {
   BackupService,
   BackupSettings,
+  backupFileName,
   defaultBackupFolder,
 } from '../services/backup.service';
 
@@ -71,10 +72,9 @@ export class BackupController {
 
     ipcMain.handle('backup-export-copy', async () => {
       const window = BrowserWindow.getAllWindows()[0];
-      const today = new Date().toISOString().slice(0, 10);
       const options: Electron.SaveDialogOptions = {
-        title: 'Export database copy',
-        defaultPath: `pharmacy-database-${today}.sqlite3`,
+        title: 'Export full backup',
+        defaultPath: backupFileName(),
         filters: [{ name: 'SQLite Database', extensions: ['sqlite3', 'db'] }],
       };
       const result = window

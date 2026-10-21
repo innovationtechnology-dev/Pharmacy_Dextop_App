@@ -64,6 +64,9 @@ const stampOf = (d: Date) =>
     d.getMinutes()
   )}-${pad(d.getSeconds())}`;
 
+/** e.g. pharmacy-backup-2026-10-21_13-47-02.sqlite3 (used for automatic backups and exports) */
+export const backupFileName = (d: Date = new Date()) => `${FILE_PREFIX}${stampOf(d)}.sqlite3`;
+
 export class BackupService {
   private dbService = new DatabaseService();
 
@@ -141,7 +144,7 @@ export class BackupService {
   private async runBackup(): Promise<BackupResult> {
     const settings = this.getSettings();
     const now = new Date();
-    const target = path.join(settings.folder, `${FILE_PREFIX}${stampOf(now)}.sqlite3`);
+    const target = path.join(settings.folder, backupFileName(now));
     try {
       await this.writeCopy(target);
       this.prune(settings);
