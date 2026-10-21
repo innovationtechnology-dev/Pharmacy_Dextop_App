@@ -19,7 +19,8 @@ import {
     FiShoppingBag,
     FiShoppingCart,
     FiEye,
-    FiWifi
+    FiWifi,
+    FiDatabase
 } from 'react-icons/fi';
 import { getAuthUser, updateProfile, setPasswordChangeRequired } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -28,8 +29,9 @@ import { getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { useTheme } from '../../contexts/ThemeContext';
 import { colorThemes, ColorTheme } from '../../themes/colorThemes';
 import NetworkSettings from '../../components/network/NetworkSettings';
+import BackupSettings from '../../components/backup/BackupSettings';
 
-type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management' | 'module-visibility' | 'network';
+type SettingsSection = 'profile' | 'pharmacy' | 'notifications' | 'security' | 'appearance' | 'data-management' | 'module-visibility' | 'network' | 'backup';
 
 interface ProfileData {
     firstName: string;
@@ -467,13 +469,14 @@ const Settings: React.FC = () => {
         { id: 'appearance' as SettingsSection, label: 'Appearance', icon: theme === 'dark' ? FiMoon : FiSun },
         // { id: 'module-visibility' as SettingsSection, label: 'Module Visibility', icon: FiEye },
         { id: 'network' as SettingsSection, label: 'Network', icon: FiWifi },
+        { id: 'backup' as SettingsSection, label: 'Backup', icon: FiDatabase },
         { id: 'data-management' as SettingsSection, label: 'Data Management', icon: FiTrash2 },
     ].filter(section => {
         if (user?.role === 'cashier') {
             return ['profile', 'pharmacy', 'appearance', 'security'].includes(section.id);
         }
         // Only admin can access data-management and network
-        if ((section.id === 'data-management' || section.id === 'network') && user?.role !== 'admin') {
+        if ((section.id === 'data-management' || section.id === 'network' || section.id === 'backup') && user?.role !== 'admin') {
             return false;
         }
         return true;
@@ -1280,6 +1283,8 @@ const Settings: React.FC = () => {
 
             case 'network':
                 return <NetworkSettings />;
+            case 'backup':
+                return <BackupSettings />;
             case 'data-management':
                 return (
                     <div className="space-y-4 animate-fadeIn">
@@ -1671,6 +1676,11 @@ const Settings: React.FC = () => {
                 return {
                     title: 'Network',
                     subtitle: 'Main computer address, access key and role (Admin Only)',
+                };
+            case 'backup':
+                return {
+                    title: 'Backup',
+                    subtitle: 'Automatic and manual database backups (Admin Only)',
                 };
             case 'data-management':
                 return {

@@ -82,6 +82,17 @@ export class DatabaseService {
   }
 
   /**
+   * Run several statements in one sqlite3_exec call. SQLite holds the connection for the whole
+   * script, so no other request's statement (e.g. a BEGIN/COMMIT) can run in between.
+   * No parameter binding: only pass SQL built from trusted, already-validated values.
+   */
+  public async executeScript(sql: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      this.db.exec(sql, (err) => (err ? reject(err) : resolve()));
+    });
+  }
+
+  /**
    * Execute a transaction with multiple queries
    */
   public async transaction(queries: string[]): Promise<void> {

@@ -94,11 +94,11 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
   return (
     <div className="space-y-4">
       {/* Clock */}
-      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 p-5 text-white shadow-md">
+      <div className="relative overflow-hidden rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 p-5 text-white shadow-md">
         <div className="absolute -top-10 -right-10 w-32 h-32 rounded-full bg-white/10" />
         <div className="absolute -bottom-12 -left-8 w-28 h-28 rounded-full bg-white/5" />
         <div className="relative">
-          <p className="text-xs font-medium text-blue-100">
+          <p className="text-xs font-medium text-white/80">
             {getGreeting(now.getHours())}
             {userName ? `, ${userName.split(' ')[0]}` : ''}
           </p>
@@ -106,11 +106,11 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
             <span className="text-4xl font-bold tracking-tight tabular-nums">
               {timeParts[0]}
             </span>
-            <span className="mb-1 text-sm font-semibold text-blue-100">
+            <span className="mb-1 text-sm font-semibold text-white/80">
               {timeParts[1]}
             </span>
           </div>
-          <p className="mt-1 text-sm text-blue-100">
+          <p className="mt-1 text-sm text-white/80">
             {now.toLocaleDateString('en-US', {
               weekday: 'long',
               month: 'long',
@@ -118,7 +118,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
               year: 'numeric',
             })}
           </p>
-          <div className="mt-4 flex items-center justify-between text-[11px] text-blue-100">
+          <div className="mt-4 flex items-center justify-between text-[11px] text-white/80">
             <span className="flex items-center gap-1.5">
               <FiClock className="w-3 h-3" />
               Week {getWeekNumber(now)}
@@ -149,7 +149,7 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
             <button
               type="button"
               onClick={goToToday}
-              className="px-2 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded transition-colors"
+              className="px-2 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-colors"
             >
               Today
             </button>
@@ -196,9 +196,9 @@ const CalendarPanel: React.FC<CalendarPanelProps> = ({
                 onClick={() => setSelectedDate(day)}
                 className={`mx-auto w-8 h-8 flex items-center justify-center rounded-full text-xs tabular-nums transition-colors ${
                   isToday
-                    ? 'bg-blue-600 text-white font-bold shadow-sm'
+                    ? 'bg-emerald-600 text-white font-bold shadow-sm'
                     : isSelected
-                    ? 'ring-2 ring-blue-500 text-blue-700 dark:text-blue-300 font-semibold'
+                    ? 'ring-2 ring-emerald-500 text-emerald-700 dark:text-emerald-300 font-semibold'
                     : inMonth
                     ? `${
                         isWeekend

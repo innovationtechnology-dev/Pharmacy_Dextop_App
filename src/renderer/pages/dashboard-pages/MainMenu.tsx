@@ -98,6 +98,8 @@ const MainMenu: React.FC = () => {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [currentDate, setCurrentDate] = useState<string>('');
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  // Sidebar list that is open; follows the active category but can be closed by the user.
+  const [openCategory, setOpenCategory] = useState<string | null>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [showWelcomeNotification, setShowWelcomeNotification] = useState(false);
@@ -446,9 +448,24 @@ const MainMenu: React.FC = () => {
     return modules.filter((m) => !m.disabled);
   };
 
+  // Switching category (sidebar or tabs) opens its list.
+  useEffect(() => {
+    setOpenCategory(activeCategory);
+  }, [activeCategory]);
+
   const handleSidebarCategoryClick = (categoryId: string) => {
+    if (isSidebarCollapsed) {
+      toggleSidebar();
+      setActiveCategory(categoryId);
+      setOpenCategory(categoryId);
+      return;
+    }
+    if (categoryId === activeCategory) {
+      // Clicking the active category opens or closes its list.
+      setOpenCategory((open) => (open === categoryId ? null : categoryId));
+      return;
+    }
     setActiveCategory(categoryId);
-    if (isSidebarCollapsed) toggleSidebar();
   };
 
   const handleModuleClick = (module: MenuItem) => {
@@ -467,7 +484,7 @@ const MainMenu: React.FC = () => {
       className={`group relative h-full flex flex-col p-4 border rounded-xl text-left transition-all duration-200 ${
         module.disabled
           ? 'bg-gray-50 dark:bg-gray-800/50 border-gray-200 dark:border-gray-700 opacity-60 cursor-not-allowed'
-          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-400 dark:hover:border-blue-500 hover:shadow-lg hover:-translate-y-0.5'
+          : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-emerald-400 dark:hover:border-emerald-500 hover:shadow-lg hover:-translate-y-0.5'
       }`}
     >
       <div className="w-full flex items-start gap-3">
@@ -485,7 +502,7 @@ const MainMenu: React.FC = () => {
             className={`truncate text-[15px] font-semibold leading-tight ${
               module.disabled
                 ? 'text-gray-400 dark:text-gray-600'
-                : 'text-gray-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors'
+                : 'text-gray-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors'
             }`}
           >
             {module.title}
@@ -501,7 +518,7 @@ const MainMenu: React.FC = () => {
           </p>
         </div>
         {!module.disabled && (
-          <FiChevronRight className="w-4 h-4 mt-3 flex-shrink-0 text-gray-300 dark:text-gray-600 group-hover:text-blue-500 group-hover:translate-x-0.5 transition-all" />
+          <FiChevronRight className="w-4 h-4 mt-3 flex-shrink-0 text-gray-300 dark:text-gray-600 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-all" />
         )}
       </div>
     </button>
@@ -819,9 +836,8 @@ const MainMenu: React.FC = () => {
           {/* Navigation */}
           <nav className="flex-1 overflow-y-auto py-2">
             {categories.map((category) => {
-              // Only the active category's list is open, and it always is.
               const isExpanded =
-                !isSidebarCollapsed && activeCategory === category.id;
+                !isSidebarCollapsed && openCategory === category.id;
               const categoryModules = getCategoryModules(category.id);
               return (
                 <div key={category.id}>
@@ -833,7 +849,7 @@ const MainMenu: React.FC = () => {
                       isSidebarCollapsed ? 'justify-center' : 'justify-between'
                     } px-4 py-2.5 text-sm transition-colors ${
                       activeCategory === category.id
-                        ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 border-l-2 border-blue-500'
+                        ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border-l-2 border-emerald-500'
                         : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/50'
                     }`}
                   >
@@ -924,7 +940,7 @@ const MainMenu: React.FC = () => {
                     title={`${category.label} (${category.shortcut})`}
                     className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
                       activeCategory === category.id
-                        ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                        ? 'bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400'
                         : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50'
                     }`}
                   >
@@ -941,7 +957,7 @@ const MainMenu: React.FC = () => {
                     placeholder="Search modules..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-8 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
+                    className="w-full pl-9 pr-8 py-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-sm text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 dark:text-white placeholder:text-gray-400 dark:placeholder:text-gray-500"
                   />
                   {searchQuery && (
                     <button
@@ -977,7 +993,7 @@ const MainMenu: React.FC = () => {
                     <div className="absolute right-0 mt-1 w-80 bg-white dark:bg-[#1a2130] rounded-lg shadow-2xl border border-gray-200 dark:border-[#242d3d] z-50 overflow-hidden">
                       <div className="px-4 py-2.5">
                         <p className="text-[13px] font-bold text-gray-800 dark:text-white flex items-center gap-2">
-                          <FiBell className="w-3.5 h-3.5 text-emerald-500 dark:text-blue-400" />
+                          <FiBell className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />
                           Alerts & Notifications
                         </p>
                         <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 font-semibold">

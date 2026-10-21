@@ -36,7 +36,9 @@ declare module 'react-icons/fi' {
   export const FiEyeOff: any;
   export const FiFileText: any;
   export const FiFilter: any;
+  export const FiFolder: any;
   export const FiGrid: any;
+  export const FiHardDrive: any;
   export const FiHash: any;
   export const FiHelpCircle: any;
   export const FiHome: any;

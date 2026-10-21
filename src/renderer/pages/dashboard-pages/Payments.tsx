@@ -99,7 +99,14 @@ interface SupplierLedgerRow {
   paymentMethod?: string;
   reference?: string;
   notes?: string;
+  /** Shared by all PO slices of one supplier payment. */
+  batchId?: string;
 }
+
+/** Ledger display item: a single row, or one supplier payment that was split across several POs. */
+type LedgerItem =
+  | { type: 'row'; row: SupplierLedgerRow }
+  | { type: 'batch'; key: string; rows: SupplierLedgerRow[] };
 
 interface SupplierAccount {
   supplierId: number;
@@ -247,6 +254,7 @@ const Payments: React.FC = () => {
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [ledgerPage, setLedgerPage] = useState(1);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
   const LEDGER_ROWS_PER_PAGE = 20;
   
   // View mode state
@@ -688,15 +696,49 @@ const Payments: React.FC = () => {
     return rows;
   }, [supplierLedger, purchaseFilter, searchTerm]);
 
+  // Collapse PO slices of one payment into a single item, placed where its newest slice appears.
+  const ledgerItems = useMemo<LedgerItem[]>(() => {
+    const batchSizes = new Map<string, number>();
+    filteredLedger.forEach(r => {
+      if (r.kind === 'payment' && r.batchId) batchSizes.set(r.batchId, (batchSizes.get(r.batchId) || 0) + 1);
+    });
+    const items: LedgerItem[] = [];
+    const batchItems = new Map<string, { type: 'batch'; key: string; rows: SupplierLedgerRow[] }>();
+    filteredLedger.forEach(r => {
+      if (r.kind === 'payment' && r.batchId && (batchSizes.get(r.batchId) || 0) > 1) {
+        const existing = batchItems.get(r.batchId);
+        if (existing) {
+          existing.rows.push(r);
+        } else {
+          const item = { type: 'batch' as const, key: r.batchId, rows: [r] };
+          batchItems.set(r.batchId, item);
+          items.push(item);
+        }
+      } else {
+        items.push({ type: 'row', row: r });
+      }
+    });
+    return items;
+  }, [filteredLedger]);
+
   const ledgerTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredLedger.length / LEDGER_ROWS_PER_PAGE)),
-    [filteredLedger.length],
+    () => Math.max(1, Math.ceil(ledgerItems.length / LEDGER_ROWS_PER_PAGE)),
+    [ledgerItems.length],
   );
 
-  const pagedLedgerRows = useMemo(() => {
+  const pagedLedgerItems = useMemo(() => {
     const start = (ledgerPage - 1) * LEDGER_ROWS_PER_PAGE;
-    return filteredLedger.slice(start, start + LEDGER_ROWS_PER_PAGE);
-  }, [filteredLedger, ledgerPage]);
+    return ledgerItems.slice(start, start + LEDGER_ROWS_PER_PAGE);
+  }, [ledgerItems, ledgerPage]);
+
+  const toggleBatch = useCallback((key: string) => {
+    setExpandedBatches(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     setLedgerPage(1);
@@ -950,6 +992,212 @@ const Payments: React.FC = () => {
   };
 
   const hasActiveFilters = selectedSupplierId || selectedPaymentMethod || periodType !== 'all' || searchTerm;
+
+  const renderLedgerRow = (row: SupplierLedgerRow, child = false) => {
+    const key = row.kind === 'payment' && row.paymentId != null
+      ? `pay-${row.paymentId}`
+      : `pur-${row.purchaseId}-${row.eventAt}`;
+    const isPurchase = row.kind === 'purchase';
+    const purchase = isPurchase ? purchaseFromLedgerRow(row) : null;
+    const mc = row.paymentMethod ? getPaymentMethodColor(row.paymentMethod) : null;
+
+    return (
+      <div
+        key={key}
+        className={`${ledgerGridRowClass} ${child ? 'bg-green-50/40 dark:bg-green-950/10' : ''}`}
+        style={supplierLedgerGridStyle}
+      >
+        <div className={`min-w-0 text-[11px] text-gray-600 dark:text-gray-400 font-medium tabular-nums whitespace-nowrap ${child ? 'pl-6' : ''}`}>
+          {child && <span className="mr-1 text-gray-400">↳</span>}
+          {formatDateTime(row.eventAt)}
+        </div>
+        <div className="min-w-0 flex justify-center">
+          {isPurchase ? (
+            <span
+              className="inline-flex items-center rounded-md border-2 border-red-200 bg-gradient-to-br from-red-50 to-orange-50/80 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-red-700 shadow-sm ring-1 ring-red-100 dark:border-red-800/70 dark:from-red-950/40 dark:to-red-950/20 dark:text-red-300 dark:ring-red-900/40"
+              title="Purchase (adds to supplier balance)"
+            >
+              Purchase
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center rounded-md border-2 border-green-300 bg-gradient-to-br from-green-50 to-emerald-50/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-green-700 shadow-sm ring-1 ring-green-100 dark:border-green-700 dark:from-green-950/45 dark:to-emerald-950/30 dark:text-green-300 dark:ring-green-900/35"
+              title="Payment (reduces supplier balance)"
+            >
+              Payment
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 justify-center text-center font-medium text-gray-900 dark:text-gray-100 truncate text-[11px]" title={row.supplierName}>
+          {row.supplierName}
+        </div>
+        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
+          {row.debit > 0 ? (
+            <span className="text-red-600 dark:text-red-400">{formatCurrency(row.debit)}</span>
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">—</span>
+          )}
+        </div>
+        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
+          {row.credit > 0 ? (
+            <span className="text-green-600 dark:text-green-400">{formatCurrency(row.credit)}</span>
+          ) : (
+            <span className="text-gray-400 dark:text-gray-500">—</span>
+          )}
+        </div>
+        <div className="min-w-0 flex flex-col items-end justify-center gap-0 leading-tight">
+          <span className={`font-semibold tabular-nums text-[11px] ${row.balanceAfter <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+            {formatCurrency(row.balanceAfter)}
+          </span>
+          {typeof row.balanceBefore === 'number' && (
+            <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
+              Was {formatCurrency(row.balanceBefore)}
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex flex-col items-start justify-center gap-0.5 py-0.5">
+          {isPurchase ? (
+            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">PO-{row.purchaseId}</span>
+          ) : (
+            <>
+              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">PO-{row.purchaseId}</span>
+              {mc ? (
+                <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
+                  {getPaymentMethodLabel(row.paymentMethod || '')}
+                </span>
+              ) : null}
+              {row.reference ? (
+                <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-full" title={row.reference}>
+                  {row.reference}
+                </span>
+              ) : null}
+            </>
+          )}
+          {isPurchase && (row.notes || '').trim() ? (
+            <span className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-2 leading-snug" title={row.notes}>
+              {row.notes}
+            </span>
+          ) : null}
+        </div>
+        <div className="justify-center gap-0.5">
+          <div className="flex items-center justify-center gap-0.5 flex-wrap">
+            {isPurchase && purchase && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleViewPaymentHistory(purchase)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                  title="History"
+                >
+                  <FiEye className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+            {!isPurchase && row.paymentId != null && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => handleViewLedgerPaymentDetail(row)}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+                  title="View payment details"
+                >
+                  <FiEye className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeletePaymentRecord(row.paymentId!)}
+                  disabled={processing}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-red-400 hover:border-red-200 hover:bg-red-50/80 dark:hover:bg-red-950/25 disabled:opacity-40"
+                  title="Delete payment"
+                >
+                  <FiTrash2 className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /** One supplier payment split across several POs: total on top, slices underneath when expanded. */
+  const renderLedgerBatch = (item: { key: string; rows: SupplierLedgerRow[] }) => {
+    const { rows } = item;
+    const newest = rows[0];
+    const oldest = rows[rows.length - 1];
+    const total = rows.reduce((sum, r) => sum + (Number(r.credit) || 0), 0);
+    const expanded = expandedBatches.has(item.key);
+    const mc = newest.paymentMethod ? getPaymentMethodColor(newest.paymentMethod) : null;
+    const poLabels = [...rows].reverse().map(r => `PO-${r.purchaseId}`).join(', ');
+
+    return (
+      <React.Fragment key={`batch-${item.key}`}>
+        <div
+          className={`${ledgerGridRowClass} cursor-pointer ${expanded ? 'bg-green-50/60 dark:bg-green-950/20' : ''}`}
+          style={supplierLedgerGridStyle}
+          onClick={() => toggleBatch(item.key)}
+        >
+          <div className="min-w-0 text-[11px] text-gray-600 dark:text-gray-400 font-medium tabular-nums whitespace-nowrap">
+            {formatDateTime(newest.eventAt)}
+          </div>
+          <div className="min-w-0 flex flex-col items-center justify-center gap-0.5">
+            <span
+              className="inline-flex items-center rounded-md border-2 border-green-300 bg-gradient-to-br from-green-50 to-emerald-50/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-green-700 shadow-sm ring-1 ring-green-100 dark:border-green-700 dark:from-green-950/45 dark:to-emerald-950/30 dark:text-green-300 dark:ring-green-900/35"
+              title="One payment applied to several purchase orders"
+            >
+              Payment
+            </span>
+            <span className="text-[9px] font-bold text-gray-500 dark:text-gray-400">{rows.length} POs</span>
+          </div>
+          <div className="min-w-0 justify-center text-center font-medium text-gray-900 dark:text-gray-100 truncate text-[11px]" title={newest.supplierName}>
+            {newest.supplierName}
+          </div>
+          <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
+            <span className="text-gray-400 dark:text-gray-500">—</span>
+          </div>
+          <div className="min-w-0 flex flex-col items-end justify-center leading-tight">
+            <span className="font-bold tabular-nums text-[12px] text-green-600 dark:text-green-400">{formatCurrency(total)}</span>
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">Total paid</span>
+          </div>
+          <div className="min-w-0 flex flex-col items-end justify-center gap-0 leading-tight">
+            <span className={`font-semibold tabular-nums text-[11px] ${newest.balanceAfter <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
+              {formatCurrency(newest.balanceAfter)}
+            </span>
+            {typeof oldest.balanceBefore === 'number' && (
+              <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
+                Was {formatCurrency(oldest.balanceBefore)}
+              </span>
+            )}
+          </div>
+          <div className="min-w-0 flex flex-col items-start justify-center gap-0.5 py-0.5">
+            <span className="text-[10px] font-medium text-gray-600 dark:text-gray-300 truncate max-w-full" title={poLabels}>
+              {poLabels}
+            </span>
+            {mc ? (
+              <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
+                {getPaymentMethodLabel(newest.paymentMethod || '')}
+              </span>
+            ) : null}
+          </div>
+          <div className="justify-center">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleBatch(item.key);
+              }}
+              className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-gray-200 dark:border-gray-600 px-2 text-[10px] font-bold text-gray-600 dark:text-gray-300 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+              title={expanded ? 'Hide breakdown' : 'Show how this payment was split across POs'}
+            >
+              {expanded ? <FiChevronUp className="w-3.5 h-3.5" /> : <FiChevronDown className="w-3.5 h-3.5" />}
+              Split
+            </button>
+          </div>
+        </div>
+        {expanded && rows.map(r => renderLedgerRow(r, true))}
+      </React.Fragment>
+    );
+  };
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -1266,10 +1514,11 @@ const Payments: React.FC = () => {
 
       {/* Make Payments Tab */}
       {activeTab === 'payments' && (
-        <div className="overflow-y-auto space-y-3">
+        // Fills the remaining height; only the ledger rows scroll (no second, outer scrollbar).
+        <div className="flex-1 min-h-0 flex flex-col gap-3 pb-4">
 
           {/* Ledger toolbar: filters + Add Payment */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-3">
             <div className="inline-flex rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/90 dark:bg-gray-800/80 p-1 shadow-sm">
               <button
                 type="button"
@@ -1318,13 +1567,13 @@ const Payments: React.FC = () => {
             </button>
           </div>
 
-          <div className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/60 dark:bg-gray-800/40 px-3 py-2 text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
+          <div className="flex-shrink-0 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/60 dark:bg-gray-800/40 px-3 py-2 text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
             <span className="font-semibold text-gray-700 dark:text-gray-300">Newest first.</span>{' '}
             Balance = running payable after the row (see “Was” line for balance before the row). Debit / credit = this row only.
           </div>
 
           {/* Supplier ledger — grid lines (Selling / Purchasing style) */}
-          <div className="rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
             {loading ? (
               <div className="flex items-center justify-center py-14">
                 <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
@@ -1343,9 +1592,9 @@ const Payments: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-hidden">
-                <div className="w-full">
-                  <div className={ledgerGridHeaderClass} style={supplierLedgerGridStyle}>
+              <div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+                <div className="flex-1 min-h-0 flex flex-col w-full">
+                  <div className={`${ledgerGridHeaderClass} flex-shrink-0`} style={supplierLedgerGridStyle}>
                     <div>{'Date & time'}</div>
                     <div className="justify-center text-center">Type</div>
                     <div className="min-w-0 justify-center text-center">Supplier</div>
@@ -1355,134 +1604,16 @@ const Payments: React.FC = () => {
                     <div className="min-w-0 justify-center text-center">Notes</div>
                     <div className="justify-center">Act.</div>
                   </div>
-                  <div className="max-h-[58vh] overflow-y-auto">
-                  {pagedLedgerRows.map((row) => {
-                    const key = row.kind === 'payment' && row.paymentId != null
-                      ? `pay-${row.paymentId}`
-                      : `pur-${row.purchaseId}-${row.eventAt}`;
-                    const isPurchase = row.kind === 'purchase';
-                    const purchase = isPurchase ? purchaseFromLedgerRow(row) : null;
-                    const mc = row.paymentMethod ? getPaymentMethodColor(row.paymentMethod) : null;
-
-                    return (
-                      <div key={key} className={ledgerGridRowClass} style={supplierLedgerGridStyle}>
-                        <div className="min-w-0 text-[11px] text-gray-600 dark:text-gray-400 font-medium tabular-nums whitespace-nowrap">
-                          {formatDateTime(row.eventAt)}
-                        </div>
-                        <div className="min-w-0 flex justify-center">
-                          {isPurchase ? (
-                            <span
-                              className="inline-flex items-center rounded-md border-2 border-red-200 bg-gradient-to-br from-red-50 to-orange-50/80 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-red-700 shadow-sm ring-1 ring-red-100 dark:border-red-800/70 dark:from-red-950/40 dark:to-red-950/20 dark:text-red-300 dark:ring-red-900/40"
-                              title="Purchase (adds to supplier balance)"
-                            >
-                              Purchase
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center rounded-md border-2 border-green-300 bg-gradient-to-br from-green-50 to-emerald-50/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-green-700 shadow-sm ring-1 ring-green-100 dark:border-green-700 dark:from-green-950/45 dark:to-emerald-950/30 dark:text-green-300 dark:ring-green-900/35"
-                              title="Payment (reduces supplier balance)"
-                            >
-                              Payment
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0 justify-center text-center font-medium text-gray-900 dark:text-gray-100 truncate text-[11px]" title={row.supplierName}>
-                          {row.supplierName}
-                        </div>
-                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
-                          {row.debit > 0 ? (
-                            <span className="text-red-600 dark:text-red-400">{formatCurrency(row.debit)}</span>
-                          ) : (
-                            <span className="text-gray-400 dark:text-gray-500">—</span>
-                          )}
-                        </div>
-                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
-                          {row.credit > 0 ? (
-                            <span className="text-green-600 dark:text-green-400">{formatCurrency(row.credit)}</span>
-                          ) : (
-                            <span className="text-gray-400 dark:text-gray-500">—</span>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex flex-col items-end justify-center gap-0 leading-tight">
-                          <span className={`font-semibold tabular-nums text-[11px] ${row.balanceAfter <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
-                            {formatCurrency(row.balanceAfter)}
-                          </span>
-                          {typeof row.balanceBefore === 'number' && (
-                            <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
-                              Was {formatCurrency(row.balanceBefore)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex flex-col items-start justify-center gap-0.5 py-0.5">
-                          {isPurchase ? (
-                            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">PO-{row.purchaseId}</span>
-                          ) : (
-                            <>
-                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">PO-{row.purchaseId}</span>
-                              {mc ? (
-                                <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
-                                  {getPaymentMethodLabel(row.paymentMethod || '')}
-                                </span>
-                              ) : null}
-                              {row.reference ? (
-                                <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-full" title={row.reference}>
-                                  {row.reference}
-                                </span>
-                              ) : null}
-                            </>
-                          )}
-                          {isPurchase && (row.notes || '').trim() ? (
-                            <span className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-2 leading-snug" title={row.notes}>
-                              {row.notes}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="justify-center gap-0.5">
-                          <div className="flex items-center justify-center gap-0.5 flex-wrap">
-                            {isPurchase && purchase && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewPaymentHistory(purchase)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                  title="History"
-                                >
-                                  <FiEye className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                            {!isPurchase && row.paymentId != null && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewLedgerPaymentDetail(row)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                  title="View payment details"
-                                >
-                                  <FiEye className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeletePaymentRecord(row.paymentId!)}
-                                  disabled={processing}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-red-400 hover:border-red-200 hover:bg-red-50/80 dark:hover:bg-red-950/25 disabled:opacity-40"
-                                  title="Delete payment"
-                                >
-                                  <FiTrash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                  {pagedLedgerItems.map((item) =>
+                    item.type === 'row' ? renderLedgerRow(item.row) : renderLedgerBatch(item),
+                  )}
                   </div>
                   {filteredLedger.length > 0 && (
-                    <div className="border-t border-gray-200 dark:border-gray-600 px-3 py-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-600 px-3 py-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
                       <span>
                         Showing {((ledgerPage - 1) * LEDGER_ROWS_PER_PAGE) + 1} to{' '}
-                        {Math.min(ledgerPage * LEDGER_ROWS_PER_PAGE, filteredLedger.length)} of {filteredLedger.length}
+                        {Math.min(ledgerPage * LEDGER_ROWS_PER_PAGE, ledgerItems.length)} of {ledgerItems.length}
                       </span>
                       <div className="flex items-center gap-1">
                         <button

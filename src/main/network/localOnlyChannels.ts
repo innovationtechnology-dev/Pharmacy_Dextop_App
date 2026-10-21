@@ -14,6 +14,9 @@ export const MAIN_COMPUTER_ONLY_CHANNELS = new Set<string>([
   'sale-return-export-csv',
   'sale-return-export-pdf',
   'super-admin-download-database',
+  'backup-choose-folder',
+  'backup-open-folder',
+  'backup-export-copy',
   'super-admin-import-database',
 ]);
 
