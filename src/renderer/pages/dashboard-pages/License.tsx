@@ -181,6 +181,7 @@ const License: React.FC = () => {
       if (result.success) {
         await loadLicenseData();
         setShowActivationDialog(false);
+        window.dispatchEvent(new CustomEvent('license-updated'));
       }
       return result;
     } catch (error) {
@@ -357,8 +358,9 @@ const License: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    // Admins: check the saved license server up front so the generate form is ready to use
-    if ((currentUserRole === 'admin' || currentUserRole === 'super_admin') && getCloudLicenseApiBaseUrl()) {
+    // Check the license server up front so the generate form is ready to use
+    // (cashiers see the form too while the system is unlicensed)
+    if (currentUserRole && getCloudLicenseApiBaseUrl()) {
       handlePingServer();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -382,6 +384,8 @@ const License: React.FC = () => {
   // Both admin and super_admin can generate keys (fill the form + trigger generation).
   // Cashier is a pure client — they only activate their own license.
   const isAdmin = currentUserRole === 'admin' || currentUserRole === 'super_admin';
+  // Cashiers can fill the form too while the system has no active license.
+  const canGenerateKey = isAdmin || !isActive;
   // Only super_admin can see the generated key after creation.
   // Regular admin should never see the raw key — they rely on super_admin to share it.
   const canSeeGeneratedKey = currentUserRole === 'super_admin';
@@ -603,8 +607,8 @@ const License: React.FC = () => {
           </>
         )}
 
-        {/* Admin: generate license key (always shown; submit needs a reachable server) */}
-        {isAdmin ? (
+        {/* Generate license key: always for admins, and for cashiers while unlicensed (submit needs a reachable server) */}
+        {canGenerateKey ? (
           <div className={`${cardClass} flex-1 lg:min-h-0 flex flex-col overflow-hidden`}>
             <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 flex flex-col xl:flex-row xl:items-center gap-3 shrink-0">
               <div className="flex items-center gap-2 shrink-0">

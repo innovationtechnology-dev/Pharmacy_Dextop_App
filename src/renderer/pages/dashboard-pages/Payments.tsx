@@ -1049,7 +1049,7 @@ const Payments: React.FC = () => {
           alert('Error downloading: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, false]);
+      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, getStoredPharmacySettings(), false]);
     } catch (err) {
       console.error(err);
       alert('Failed to download PDF');
@@ -2717,7 +2717,7 @@ const Payments: React.FC = () => {
                           alert('Error exporting: ' + (response.error || 'Unknown error'));
                         }
                       });
-                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, showPreview]);
+                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, getStoredPharmacySettings(), showPreview]);
                     } else {
                       window.electron.ipcRenderer.once('payment-export-csv-reply', (response: any) => {
                         setExporting(false);
@@ -2728,7 +2728,7 @@ const Payments: React.FC = () => {
                           alert('Error exporting: ' + (response.error || 'Unknown error'));
                         }
                       });
-                      window.electron.ipcRenderer.sendMessage('payment-export-csv', [filters, pharmacySettings]);
+                      window.electron.ipcRenderer.sendMessage('payment-export-csv', [filters, getStoredPharmacySettings()]);
                     }
                   } catch (err) {
                     setExporting(false);

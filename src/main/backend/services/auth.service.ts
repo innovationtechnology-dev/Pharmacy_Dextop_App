@@ -33,6 +33,8 @@ export interface UpdateProfileParams {
   profilePicture?: string;
 }
 
+const CASHIER_PERMISSIONS_KEY = 'cashier_permissions';
+
 export class AuthService {
   private dbService = getDatabaseService();
 
@@ -67,6 +69,13 @@ export class AuthService {
     `;
     await this.dbService.execute(sql);
     await this.ensureProfileColumns();
+    await this.dbService.execute(
+      `CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    );
   }
 
   /**
@@ -332,6 +341,55 @@ export class AuthService {
     } catch (error) {
       console.error('Change password error:', error);
       return { success: false, error: 'Failed to change password' };
+    }
+  }
+
+  /**
+   * Modules a cashier may open, as { moduleId: allowed }. Null when the admin has never saved any.
+   */
+  public async getCashierPermissions(): Promise<Record<string, boolean> | null> {
+    const row = await this.dbService.queryOne(
+      'SELECT value FROM app_settings WHERE key = ?',
+      [CASHIER_PERMISSIONS_KEY]
+    ) as any;
+    if (!row) return null;
+    try {
+      return JSON.parse(row.value);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Save the cashier module permissions. Only an admin may change them.
+   */
+  public async setCashierPermissions(
+    adminUserId: number,
+    permissions: Record<string, boolean>
+  ): Promise<{ success: boolean; permissions?: Record<string, boolean>; error?: string }> {
+    try {
+      const admin = await this.dbService.queryOne(
+        'SELECT role FROM users WHERE id = ?',
+        [adminUserId]
+      ) as any;
+      if (!admin || (admin.role !== 'admin' && admin.role !== 'super_admin')) {
+        return { success: false, error: 'Only an admin can change permissions' };
+      }
+
+      const clean: Record<string, boolean> = {};
+      Object.entries(permissions || {}).forEach(([moduleId, allowed]) => {
+        clean[moduleId] = !!allowed;
+      });
+
+      await this.dbService.execute(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+        [CASHIER_PERMISSIONS_KEY, JSON.stringify(clean)]
+      );
+      return { success: true, permissions: clean };
+    } catch (error) {
+      console.error('Set cashier permissions error:', error);
+      return { success: false, error: 'Failed to save permissions' };
     }
   }
 }

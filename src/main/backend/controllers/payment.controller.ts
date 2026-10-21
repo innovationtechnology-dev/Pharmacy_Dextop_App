@@ -298,54 +298,133 @@ export class PaymentController {
                     }
                 });
 
+                const money = (n: number) =>
+                    `${currencySymbol}${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                const esc = (v: any) =>
+                    String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+                // Same layout as the Payments screen: one row per payment as it was made,
+                // with the purchases it was split across (oldest purchase first).
+                const groups: { at: string; supplierName: string; companyName?: string; paymentMethod: string; referenceNumber?: string; total: number; pieces: any[] }[] = [];
+                const groupsByKey = new Map<string, (typeof groups)[number]>();
+                payments.forEach((p: any) => {
+                    const key = p.batchId || `single-${p.id}`;
+                    let group = groupsByKey.get(key);
+                    if (!group) {
+                        group = {
+                            at: p.paymentDate,
+                            supplierName: p.supplierName,
+                            companyName: p.companyName,
+                            paymentMethod: p.paymentMethod,
+                            referenceNumber: p.referenceNumber,
+                            total: 0,
+                            pieces: [],
+                        };
+                        groupsByKey.set(key, group);
+                        groups.push(group);
+                    }
+                    group.total += Number(p.amount) || 0;
+                    group.pieces.push(p);
+                });
+                // Records arrive newest first; the money was applied oldest purchase first.
+                groups.forEach((g) => g.pieces.reverse());
+
+                const methodLabel = (method: string) =>
+                    method === 'cash' ? 'Cash' :
+                    method === 'bank_transfer' || method === 'bank_deposit' ? 'Bank Transfer' :
+                    method === 'check' || method === 'cheque' ? 'Cheque' :
+                    method === 'online' || method === 'card' ? 'Online' : esc(method);
+
+                // What is still unpaid on the purchases in this report (latest balance per PO)
+                const latestBalanceByPo = new Map<number, number>();
+                payments.forEach((p: any) => {
+                    if (!latestBalanceByPo.has(p.purchaseId)) {
+                        latestBalanceByPo.set(p.purchaseId, Math.max(0, Number(p.remainingAfter) || 0));
+                    }
+                });
+                const stillDue = Array.from(latestBalanceByPo.values()).reduce((sum, v) => sum + v, 0);
+                const settledCount = Array.from(latestBalanceByPo.values()).filter((v) => v <= 0.005).length;
+
+                const summaryBox = (label: string, value: string, sub: string) => `
+                    <td style="width: 25%; padding: 10px 12px; border: 1px solid #000; vertical-align: top;">
+                        <div style="font-size: 7pt; letter-spacing: 0.8px; text-transform: uppercase; color: #555;">${label}</div>
+                        <div style="font-size: 13pt; font-weight: bold; margin-top: 3px;">${value}</div>
+                        <div style="font-size: 7.5pt; color: #666; margin-top: 2px;">${sub}</div>
+                    </td>`;
+
+                const cell = 'padding: 7px 8px; font-size: 8.5pt; vertical-align: top;';
                 const tableContent = `
-                    <table>
+                    <table style="margin-bottom: 18px; border-collapse: collapse;">
+                        <tr>
+                            ${summaryBox('Total Paid', money(totalAmount), `${groups.length} payment${groups.length !== 1 ? 's' : ''} in this period`)}
+                            ${summaryBox('Purchases Covered', String(latestBalanceByPo.size), `${settledCount} fully settled`)}
+                            ${summaryBox('Balance Still Due', money(stillDue), 'on the purchases listed')}
+                            ${summaryBox('Suppliers', String(new Set(groups.map((g) => g.supplierName)).size), 'paid in this period')}
+                        </tr>
+                    </table>
+
+                    <div style="font-size: 8pt; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px;">Payment Details</div>
+                    <table style="border-collapse: collapse;">
                         <thead>
                             <tr>
-                                <th style="width: 40px;">Item</th>
-                                <th style="width: 100px;">Date</th>
-                                <th style="width: 80px;">PO #</th>
+                                <th style="width: 26px;">No.</th>
+                                <th style="width: 72px;">Date</th>
                                 <th>Supplier</th>
-                                <th style="width: 120px;">Method</th>
-                                <th style="width: 150px;">Reference</th>
-                                <th>Notes</th>
-                                <th class="text-right" style="width: 100px;">Amount</th>
+                                <th style="width: 92px;">Method / Ref.</th>
+                                <th style="width: 52px;">PO No.</th>
+                                <th class="text-right" style="width: 84px;">Applied</th>
+                                <th class="text-right" style="width: 92px;">Balance After</th>
+                                <th class="text-right" style="width: 88px;">Payment Total</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${payments.map((p: any, index: number) => {
-                                const methodClass = p.paymentMethod === 'cash' ? 'badge-success' :
-                                                  p.paymentMethod === 'bank_transfer' || p.paymentMethod === 'bank_deposit' ? 'badge-info' :
-                                                  p.paymentMethod === 'check' || p.paymentMethod === 'cheque' ? 'badge-warning' :
-                                                  p.paymentMethod === 'online' || p.paymentMethod === 'card' ? 'badge-purple' : 'badge-gray';
-                                
-                                const methodLabel = p.paymentMethod === 'cash' ? 'Cash' :
-                                                  p.paymentMethod === 'bank_transfer' || p.paymentMethod === 'bank_deposit' ? 'Bank Transfer' :
-                                                  p.paymentMethod === 'check' || p.paymentMethod === 'cheque' ? 'Check' :
-                                                  p.paymentMethod === 'online' || p.paymentMethod === 'card' ? 'Online' : p.paymentMethod;
-                                
-                                return `
-                                    <tr>
-                                        <td>${index + 1}</td>
-                                        <td>${new Date(p.paymentDate).toLocaleDateString()}</td>
-                                        <td>PO-${p.purchaseId}</td>
-                                        <td>
-                                            <div style="">${p.supplierName}</div>
-                                            ${p.companyName ? `<div style="font-size: 8pt; color: #666;">${p.companyName}</div>` : ''}
+                            ${groups.map((g, index) => {
+                                const d = new Date(g.at);
+                                const rows = g.pieces.length;
+                                const shade = index % 2 === 1 ? 'background-color: #fafafa;' : '';
+                                const notes = Array.from(new Set(g.pieces.map((piece: any) => String(piece.notes || '').trim()).filter(Boolean)));
+                                return g.pieces.map((piece: any, i: number) => {
+                                    const left = Math.max(0, Number(piece.remainingAfter) || 0);
+                                    const last = i === rows - 1;
+                                    const rowBorder = last ? 'border-bottom: 1px solid #bbb;' : 'border-bottom: 1px dotted #ddd;';
+                                    const balance = left <= 0.005
+                                        ? '<span style="color: #047857; font-weight: bold;">Settled</span>'
+                                        : `<span style="color: #b45309; font-weight: bold;">${money(left)}</span>`;
+                                    const groupCells = i === 0 ? `
+                                        <td rowspan="${rows}" style="${cell} border-bottom: 1px solid #bbb;">${index + 1}</td>
+                                        <td rowspan="${rows}" style="${cell} border-bottom: 1px solid #bbb;">
+                                            ${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                            <div style="font-size: 7.5pt; color: #666;">${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</div>
                                         </td>
-                                        <td>
-                                            <span class="badge ${methodClass}">${methodLabel}</span>
+                                        <td rowspan="${rows}" style="${cell} border-bottom: 1px solid #bbb;">
+                                            <div style="font-weight: bold;">${esc(g.supplierName)}</div>
+                                            ${g.companyName ? `<div style="font-size: 7.5pt; color: #666;">${esc(g.companyName)}</div>` : ''}
+                                            ${rows > 1 ? `<div style="font-size: 7.5pt; color: #555; margin-top: 2px;">Split over ${rows} purchases</div>` : ''}
+                                            ${notes.length ? `<div style="font-size: 7.5pt; color: #666; font-style: italic; margin-top: 2px;">${notes.map(esc).join('; ')}</div>` : ''}
                                         </td>
-                                        <td style="font-size: 8pt;">
-                                            ${p.referenceNumber || '—'}
-                                        </td>
-                                        <td>${p.notes || ''}  </td>
-                                        <td class="text-right" style="font-weight: bold;">${currencySymbol}${p.amount.toFixed(2)}</td>
-                                    </tr>
-                                `;
+                                        <td rowspan="${rows}" style="${cell} border-bottom: 1px solid #bbb;">
+                                            ${methodLabel(g.paymentMethod)}
+                                            ${g.referenceNumber ? `<div style="font-size: 7.5pt; color: #666;">Ref: ${esc(g.referenceNumber)}</div>` : ''}
+                                        </td>` : '';
+                                    const totalCell = i === 0 ? `
+                                        <td rowspan="${rows}" class="text-right" style="${cell} border-bottom: 1px solid #bbb; font-weight: bold;">${money(g.total)}</td>` : '';
+                                    return `
+                                        <tr style="${shade}">
+                                            ${groupCells}
+                                            <td style="${cell} ${rowBorder}">PO-${piece.purchaseId}</td>
+                                            <td class="text-right" style="${cell} ${rowBorder}">${money(piece.amount)}</td>
+                                            <td class="text-right" style="${cell} ${rowBorder}">${balance}</td>
+                                            ${totalCell}
+                                        </tr>
+                                    `;
+                                }).join('');
                             }).join('')}
                         </tbody>
                     </table>
+                    <div style="font-size: 7.5pt; color: #555; margin-top: 6px; line-height: 1.5;">
+                        <strong>Applied</strong> is the part of the payment that went to each purchase. <strong>Balance After</strong> is what was left to pay on that purchase straight after the payment.
+                        A payment that covers several purchases is applied to the oldest unpaid purchase first.
+                    </div>
                 `;
 
                 const methodsBreakdown = Object.entries(paymentsByMethod).map(([method, amount]: [string, any]) => {
@@ -353,7 +432,7 @@ export class PaymentController {
                                       method === 'bank_transfer' || method === 'bank_deposit' ? 'Bank Transfer' :
                                       method === 'check' || method === 'cheque' ? 'Check' :
                                       method === 'online' || method === 'card' ? 'Online' : method;
-                    return `${methodLabel}: ${currencySymbol}${amount.toFixed(2)}`;
+                    return `${methodLabel}: ${money(amount)}`;
                 }).join('<br/>');
 
                 const footer = `
@@ -385,8 +464,12 @@ export class PaymentController {
                             <div class="footer-right">
                                 <div class="totals-table">
                                     <div class="totals-row">
-                                        <span class="totals-label">Total Records:</span>
-                                        <span class="totals-value">${payments.length}</span>
+                                        <span class="totals-label">Payments:</span>
+                                        <span class="totals-value">${groups.length}</span>
+                                    </div>
+                                    <div class="totals-row">
+                                        <span class="totals-label">Purchases Covered:</span>
+                                        <span class="totals-value">${latestBalanceByPo.size}</span>
                                     </div>
                                     <div class="totals-row grand">
                                         <span class="totals-label">Total Amount:</span>

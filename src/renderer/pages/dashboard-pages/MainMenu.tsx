@@ -3,6 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
 import { logout as authLogout, getAuthUser } from '../../utils/auth';
 import {
+  canAccessModule,
+  CashierPermissions,
+  getStoredCashierPermissions,
+  PERMISSIONS_UPDATED_EVENT,
+} from '../../utils/permissions';
+import {
   FiUsers,
   FiPackage,
   FiShoppingCart,
@@ -112,6 +118,8 @@ const MainMenu: React.FC = () => {
   });
   const [panelVisibility, setPanelVisibility] =
     useState<PanelVisibilitySettings>(getStoredPanelVisibilitySettings());
+  const [cashierPermissions, setCashierPermissions] =
+    useState<CashierPermissions>(getStoredCashierPermissions());
   const menuBarRef = useRef<HTMLDivElement>(null);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -144,6 +152,22 @@ const MainMenu: React.FC = () => {
       window.removeEventListener(
         'panel-visibility-updated',
         handlePanelVisibilityUpdate
+      );
+    };
+  }, []);
+
+  // Re-render when an admin changes what cashiers may open
+  useEffect(() => {
+    const handlePermissionsUpdate = (event: any) => {
+      setCashierPermissions(event.detail);
+    };
+
+    window.addEventListener(PERMISSIONS_UPDATED_EVENT, handlePermissionsUpdate);
+
+    return () => {
+      window.removeEventListener(
+        PERMISSIONS_UPDATED_EVENT,
+        handlePermissionsUpdate
       );
     };
   }, []);
@@ -229,6 +253,8 @@ const MainMenu: React.FC = () => {
   const isCashier = currentUser?.role === 'cashier';
   const isAdmin = currentUser?.role === 'admin';
   const roleLabel = isAdmin ? 'Admin' : isCashier ? 'Cashier' : 'User';
+  const canAccess = (moduleId: string) =>
+    canAccessModule(currentUser, moduleId, cashierPermissions);
 
   const operationsModules: MenuItem[] = [
     {
@@ -241,7 +267,7 @@ const MainMenu: React.FC = () => {
       route: '/selling-panel',
       shortcut: 'Ctrl+S',
       // disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
-      disabled: isAdmin ? true : false,
+      disabled: isAdmin ? true : !canAccess('selling-panel'),
     },
     {
       id: 'medicines',
@@ -252,6 +278,7 @@ const MainMenu: React.FC = () => {
       description: 'Inventory Management',
       route: '/medicines',
       shortcut: 'Ctrl+M',
+      disabled: !canAccess('medicines'),
     },
     {
       id: 'stocks',
@@ -261,6 +288,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-emerald-500/10 to-emerald-600/10',
       description: 'Stock Monitoring',
       route: '/stocks',
+      disabled: !canAccess('stocks'),
     },
     {
       id: 'purchasing-panel',
@@ -272,7 +300,7 @@ const MainMenu: React.FC = () => {
       route: '/purchasing-panel',
       shortcut: 'Ctrl+P',
       // disabled: isAdmin ? !panelVisibility.showSellingPanel : false,
-      disabled: isAdmin ? true : false,
+      disabled: isAdmin ? true : !canAccess('purchasing-panel'),
     },
     {
       id: 'customers',
@@ -283,6 +311,7 @@ const MainMenu: React.FC = () => {
       description: 'Customer Database',
       route: '/customers',
       shortcut: 'Ctrl+C',
+      disabled: !canAccess('customers'),
     },
     {
       id: 'suppliers',
@@ -293,6 +322,7 @@ const MainMenu: React.FC = () => {
       description: 'Vendor Management',
       route: '/suppliers',
       shortcut: 'Ctrl+V',
+      disabled: !canAccess('suppliers'),
     },
     {
       id: 'sale-return',
@@ -302,6 +332,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-pink-500/10 to-pink-600/10',
       description: 'Process Returns',
       route: '/sale-return',
+      disabled: !canAccess('sale-return'),
     },
     {
       id: 'payments',
@@ -311,7 +342,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-violet-500/10 to-violet-600/10',
       description: 'Transaction Management',
       route: '/payments',
-      disabled: isCashier,
+      disabled: !canAccess('payments'),
     },
     {
       id: 'alerts',
@@ -322,7 +353,7 @@ const MainMenu: React.FC = () => {
       description: 'System Notifications',
       route: '/alerts',
       shortcut: 'Ctrl+A',
-      disabled: false,
+      disabled: !canAccess('alerts'),
     },
   ];
 
@@ -336,7 +367,7 @@ const MainMenu: React.FC = () => {
       description: 'Overview & Analytics',
       route: '/dashboard',
       shortcut: 'Ctrl+D',
-      disabled: isCashier,
+      disabled: !canAccess('dashboard'),
     },
     {
       id: 'financial-summary',
@@ -347,7 +378,7 @@ const MainMenu: React.FC = () => {
       description: 'Finance Overview',
       route: '/financial-summary',
       shortcut: 'Ctrl+F',
-      disabled: isCashier,
+      disabled: !canAccess('financial-summary'),
     },
     {
       id: 'sale-report',
@@ -358,6 +389,7 @@ const MainMenu: React.FC = () => {
       description: 'Sales Analytics',
       route: '/sales',
       shortcut: 'Ctrl+R',
+      disabled: !canAccess('sale-report'),
     },
     {
       id: 'purchase-report',
@@ -367,6 +399,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-orange-500/10 to-amber-600/10',
       description: 'Purchase Analytics',
       route: '/purchases',
+      disabled: !canAccess('purchase-report'),
     },
     {
       id: 'medicine-analytics',
@@ -376,7 +409,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-violet-500/10 to-purple-600/10',
       description: 'Drug Performance Insights',
       route: '/medicine-analytics',
-      disabled: isCashier,
+      disabled: !canAccess('medicine-analytics'),
     },
   ];
 
@@ -389,6 +422,7 @@ const MainMenu: React.FC = () => {
       gradient: 'bg-gradient-to-br from-blue-500/10 to-indigo-600/10',
       description: 'License Management',
       route: '/license',
+      disabled: !canAccess('license'),
     },
     {
       id: 'settings',
@@ -399,6 +433,7 @@ const MainMenu: React.FC = () => {
       description: 'System Configuration',
       route: '/settings',
       shortcut: 'Ctrl+,',
+      disabled: !canAccess('settings'),
     },
   ];
 
@@ -425,7 +460,7 @@ const MainMenu: React.FC = () => {
   const quickAccessModules = [
     !isAdmin ? allModules.find((m) => m.id === 'selling-panel') : null,
     allModules.find((m) => m.id === 'medicines'),
-    !isCashier ? allModules.find((m) => m.id === 'dashboard') : null,
+    allModules.find((m) => m.id === 'dashboard'),
   ]
     .filter(Boolean)
     .filter((m) =>
@@ -622,17 +657,20 @@ const MainMenu: React.FC = () => {
           label: 'Dashboard',
           shortcut: 'Ctrl+D',
           action: () => navigate('/dashboard'),
+          disabled: !canAccess('dashboard'),
         },
         {
           label: 'Settings',
           shortcut: 'Ctrl+,',
           action: () => navigate('/settings'),
+          disabled: !canAccess('settings'),
         },
         { label: '', separator: true },
         {
           label: 'Alerts',
           shortcut: 'Ctrl+A',
           action: () => navigate('/alerts'),
+          disabled: !canAccess('alerts'),
         },
       ],
     },
@@ -742,7 +780,7 @@ const MainMenu: React.FC = () => {
           <FiHome className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1" />
-        {!isAdmin && (
+        {!isAdmin && canAccess('selling-panel') && (
           <button
             type="button"
             onClick={() => navigate('/selling-panel')}
@@ -752,23 +790,27 @@ const MainMenu: React.FC = () => {
             <FiShoppingCart className="w-4 h-4 text-gray-600 dark:text-gray-300" />
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => navigate('/medicines')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Medicines (Ctrl+M)"
-        >
-          <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
-        <button
-          type="button"
-          onClick={() => navigate('/stocks')}
-          className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
-          title="Stocks"
-        >
-          <FiLayers className="w-4 h-4 text-gray-600 dark:text-gray-300" />
-        </button>
-        {!isCashier && (
+        {canAccess('medicines') && (
+          <button
+            type="button"
+            onClick={() => navigate('/medicines')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Medicines (Ctrl+M)"
+          >
+            <FiPackage className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
+        {canAccess('stocks') && (
+          <button
+            type="button"
+            onClick={() => navigate('/stocks')}
+            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+            title="Stocks"
+          >
+            <FiLayers className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+          </button>
+        )}
+        {canAccess('dashboard') && (
           <button
             type="button"
             onClick={() => navigate('/dashboard')}
@@ -787,7 +829,7 @@ const MainMenu: React.FC = () => {
           <FiRefreshCw className="w-4 h-4 text-gray-600 dark:text-gray-300" />
         </button>
         <div className="flex-1" />
-        {!isAdmin && (
+        {!isAdmin && canAccess('alerts') && (
           <button
             type="button"
             onClick={() => navigate('/alerts')}

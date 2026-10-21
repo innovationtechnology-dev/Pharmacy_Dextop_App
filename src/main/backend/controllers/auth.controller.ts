@@ -147,6 +147,29 @@ export class AuthController {
         event.reply('auth-change-password-reply', { success: false, error: 'Failed to change password' });
       }
     });
+
+    // Modules the admin has allowed cashiers to open
+    ipcMain.on('permissions-get', async (event: IpcMainEvent) => {
+      try {
+        const permissions = await this.authService.getCashierPermissions();
+        event.reply('permissions-get-reply', { success: true, permissions });
+      } catch (error) {
+        console.error('Get permissions error:', error);
+        event.reply('permissions-get-reply', { success: false, error: 'Failed to load permissions' });
+      }
+    });
+
+    ipcMain.on('permissions-update', async (event: IpcMainEvent, args: any[]) => {
+      try {
+        const adminUserId = args[0] as number;
+        const permissions = args[1] as Record<string, boolean>;
+        const result = await this.authService.setCashierPermissions(adminUserId, permissions);
+        event.reply('permissions-update-reply', result);
+      } catch (error) {
+        console.error('Update permissions error:', error);
+        event.reply('permissions-update-reply', { success: false, error: 'Failed to save permissions' });
+      }
+    });
   }
 }
 

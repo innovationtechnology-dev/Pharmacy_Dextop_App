@@ -36,9 +36,25 @@ export const getProfessionalPDFStyles = () => `
   }
   
   .container { 
-    padding: 20px 30px; 
+    padding: 20px 30px 45px; 
     position: relative;
     page-break-after: avoid;
+  }
+
+  /* Same credit line as the thermal receipt, pinned to the bottom of every page */
+  .developed-by {
+    position: fixed;
+    left: 30px;
+    right: 30px;
+    bottom: 12px;
+    padding-top: 6px;
+    border-top: 1px dashed #000;
+    font-size: 7pt;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-align: center;
+    text-transform: uppercase;
+    color: #000;
   }
   
   /* Header */
@@ -316,17 +332,13 @@ export const generatePDFHeader = (options: PDFTemplateOptions): string => {
         <div class="company-text">
           <div class="company-name-large">${settings.pharmacyName || 'PHARMACY NAME'}</div>
           <div class="company-address">
-            ${settings.address || ' '}<br/>
-            Tel: ${settings.phone || ' '}<br/>
-            Email: ${settings.email || ' '}
-            ${settings.website
-            ? `<br/>Web: ${settings.website}`
-            : ' '
-            }
-            ${settings.taxId
-            ? `<br/>Tax ID: ${settings.taxId}`
-            : ' '
-            }
+            ${[
+              settings.address,
+              settings.phone && `Tel: ${settings.phone}`,
+              settings.email && `Email: ${settings.email}`,
+              settings.website && `Web: ${settings.website}`,
+              settings.taxId && `Tax ID: ${settings.taxId}`,
+            ].filter(Boolean).join('<br/>')}
           </div>
 
         </div>
@@ -422,6 +434,7 @@ export const wrapPDFContent = (styles: string, header: string, tableContent: str
         ${tableContent}
         ${footer}
       </div>
+      <div class="developed-by">Developed by Innovation Technologies &bull; 03405939713</div>
     </body>
     </html>
   `;
