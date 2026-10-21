@@ -1428,8 +1428,9 @@ const Payments: React.FC = () => {
 
         <div className="min-w-0 space-y-1">
           {split && (
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
-              Split automatically · oldest purchase first
+            <p className="text-xs text-gray-600 dark:text-gray-300">
+              You paid <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(group.total)}</span> at once
+              {' — '}split automatically, oldest purchase first:
             </p>
           )}
           {group.pieces.map((piece) => renderPaymentPiece(piece, split && deletable))}
