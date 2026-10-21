@@ -36,95 +36,140 @@ export const getProfessionalPDFStyles = () => `
   }
   
   .container { 
-    padding: 20px 30px; 
+    padding: 20px 30px 45px; 
     position: relative;
     page-break-after: avoid;
   }
+
+  /* Same credit line as the thermal receipt, pinned to the bottom of every page */
+  .developed-by {
+    position: fixed;
+    left: 30px;
+    right: 30px;
+    bottom: 12px;
+    padding-top: 6px;
+    border-top: 1px dashed #000;
+    font-size: 7pt;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-align: center;
+    text-transform: uppercase;
+    color: #000;
+  }
   
   /* Header */
-  .header { 
-    display: flex; 
-    justify-content: space-between; 
-    margin-bottom: 30px; 
-    padding-bottom: 20px; 
-    border-bottom: 1px solid #000; 
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 24px;
+    margin-bottom: 22px;
+    padding-bottom: 16px;
+    border-bottom: 2px solid #000;
   }
-  
-  .company-info { 
+
+  .company-info {
     flex: 1;
     display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 10px;
+    align-items: center;
+    gap: 14px;
+    min-width: 0;
   }
-  
+
   .company-logo {
     flex-shrink: 0;
-  }
-  
-  .company-text {
-    flex: 1;
+    width: 78px;
+    height: 78px;
+    border: 1px solid #d4d4d4;
+    border-radius: 6px;
+    overflow: hidden;
     display: flex;
-    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
   }
-  
-  .company-name-large {
-    font-size: 12pt;
+
+  .company-logo img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+  }
+
+  .company-logo .initial {
+    font-size: 30pt;
     font-weight: bold;
-    margin-bottom: 4px;
+    color: #047857;
+  }
+
+  .company-text {
+    min-width: 0;
+  }
+
+  .company-name-large {
+    font-size: 15pt;
+    font-weight: bold;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.6px;
+    line-height: 1.2;
   }
-  
+
   .company-address {
-    font-size: 9pt;
-    line-height: 1.5;
-    color: #000;
+    margin-top: 6px;
+    font-size: 8.5pt;
+    line-height: 1.6;
+    color: #333;
   }
-  
-  .doc-info { 
-    text-align: right;
-    flex: 1;
-  }
-  
-  .doc-title-large { 
-    font-size: 14pt; 
-    font-weight: bold; 
-    color: #000; 
-    margin-bottom: 20px; 
-    letter-spacing: 0.5px;
-  }
-  
-  .doc-details {
-    text-align: left;
+
+  .company-address .label {
+    color: #777;
     display: inline-block;
+    min-width: 42px;
   }
-  
+
+  .doc-info {
+    flex-shrink: 0;
+    width: 250px;
+  }
+
+  .doc-type-title {
+    font-size: 15pt;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+    text-align: right;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+
+  .doc-details {
+    border: 1px solid #000;
+  }
+
   .detail-row {
     display: flex;
-    margin-bottom: 4px;
-    font-size: 9pt;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 5px 10px;
+    font-size: 8.5pt;
+    border-bottom: 1px solid #e5e5e5;
   }
-  
+
+  .detail-row:last-child {
+    border-bottom: none;
+  }
+
   .detail-label {
-    width: 100px;
-    font-weight: normal;
+    color: #666;
+    text-transform: uppercase;
+    font-size: 7.5pt;
+    letter-spacing: 0.6px;
+    padding-top: 1px;
   }
-  
+
   .detail-value {
-    font-weight: normal;
-    margin-left: 4px;
-  }
-  
-  .doc-type-title {
-    margin-bottom: 8px;
-    font-size: 10pt;
     font-weight: bold;
-    text-align: left;
-    letter-spacing: 0.5px;
-    color: #000;
+    text-align: right;
   }
-  
+
   /* Table */
   table { 
     width: 100%; 
@@ -282,79 +327,69 @@ export const getProfessionalPDFStyles = () => `
   .badge-gray { background-color: #f3f4f6; color: #374151; }
 `;
 
+const escapeHtml = (v: unknown): string =>
+  String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** "2026-10-01" (or any date string) -> "01 Oct 2026"; date-only strings are read as local dates. */
+const formatHeaderDate = (value: string): string => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
 export const generatePDFHeader = (options: PDFTemplateOptions): string => {
-  const { title, documentType, documentNumber, period, currency, settings } = options;
-  
+  const { documentType, documentNumber, period, currency, settings } = options;
+
   const docNum = documentNumber || `${documentType.substring(0, 3)}-${new Date().getTime().toString().slice(-6)}`;
-  const periodText = period?.from && period?.to 
-    ? `${period.from} to ${period.to}` 
-    : period?.from 
-    ? `From ${period.from}` 
-    : period?.to 
-    ? `Until ${period.to}` 
+  const periodText = period?.from && period?.to
+    ? `${formatHeaderDate(period.from)} &ndash; ${formatHeaderDate(period.to)}`
+    : period?.from
+    ? `From ${formatHeaderDate(period.from)}`
+    : period?.to
+    ? `Until ${formatHeaderDate(period.to)}`
     : 'All Time';
-  
-  // Get first letter of pharmacy name for fallback logo
+
+  const now = new Date();
+  const generatedOn = `${now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}, ${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+
+  // Logo from Settings → Pharmacy, or the first letter of the pharmacy name
   const firstLetter = (settings.pharmacyName || 'P').charAt(0).toUpperCase();
-  
-  // Determine logo to display
-  const logoHtml = settings.logoUrl 
-    ? `<img src="${settings.logoUrl}" alt="Logo" style="width: 120px; height: 120px; object-fit: contain;" />`
-    : `
-      <svg width="80" height="80" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="50" cy="50" r="45" fill="#4CAF50" opacity="0.2"/>
-        <text x="50" y="62" text-anchor="middle" font-size="40" fill="#4CAF50" font-weight="bold" font-family="Arial">${firstLetter}</text>
-      </svg>
-    `;
-  
+  const logoHtml = settings.logoUrl
+    ? `<img src="${settings.logoUrl.replace(/"/g, '&quot;')}" alt="Logo" />`
+    : `<span class="initial">${escapeHtml(firstLetter)}</span>`;
+
+  const contactLines = [
+    settings.address && escapeHtml(settings.address),
+    settings.phone && `<span class="label">Tel</span>${escapeHtml(settings.phone)}`,
+    settings.email && `<span class="label">Email</span>${escapeHtml(settings.email)}`,
+    settings.website && `<span class="label">Web</span>${escapeHtml(settings.website)}`,
+    settings.taxId && `<span class="label">Tax ID</span>${escapeHtml(settings.taxId)}`,
+  ].filter(Boolean);
+
+  const detailRow = (label: string, value: string) => `
+    <div class="detail-row">
+      <span class="detail-label">${label}</span>
+      <span class="detail-value">${value}</span>
+    </div>`;
+
   return `
     <div class="header">
       <div class="company-info">
-        <div class="company-logo">
-          ${logoHtml}
-        </div>
+        <div class="company-logo">${logoHtml}</div>
         <div class="company-text">
-          <div class="company-name-large">${settings.pharmacyName || 'PHARMACY NAME'}</div>
-          <div class="company-address">
-            ${settings.address || ' '}<br/>
-            Tel: ${settings.phone || ' '}<br/>
-            Email: ${settings.email || ' '}
-            ${settings.website
-            ? `<br/>Web: ${settings.website}`
-            : ' '
-            }
-            ${settings.taxId
-            ? `<br/>Tax ID: ${settings.taxId}`
-            : ' '
-            }
-          </div>
-
+          <div class="company-name-large">${escapeHtml(settings.pharmacyName || 'Pharmacy Name')}</div>
+          ${contactLines.length ? `<div class="company-address">${contactLines.join('<br/>')}</div>` : ''}
         </div>
       </div>
-      
+
       <div class="doc-info">
+        <div class="doc-type-title">${documentType} Report</div>
         <div class="doc-details">
-          <div class="doc-type-title">${documentType} REPORT</div>
-          <div class="detail-row">
-            <span class="detail-label">${title}</span>
-            <span class="detail-value">: ${docNum}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">DATE</span>
-            <span class="detail-value">: ${new Date().toLocaleDateString()}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">PERIOD</span>
-            <span class="detail-value">: ${periodText}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">CURRENCY</span>
-            <span class="detail-value">: ${currency || 'PKR'}</span>
-          </div>
-          <div class="detail-row">
-            <span class="detail-label">PAGE</span>
-            <span class="detail-value">: 1 of 1</span>
-          </div>
+          ${detailRow('Report No.', escapeHtml(docNum))}
+          ${detailRow('Period', periodText)}
+          ${detailRow('Generated', generatedOn)}
+          ${detailRow('Currency', escapeHtml(currency || 'PKR'))}
         </div>
       </div>
     </div>
@@ -422,6 +457,7 @@ export const wrapPDFContent = (styles: string, header: string, tableContent: str
         ${tableContent}
         ${footer}
       </div>
+      <div class="developed-by">Developed by Innovation Technologies &bull; 03405939713</div>
     </body>
     </html>
   `;

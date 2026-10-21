@@ -42,6 +42,7 @@ import { ConfirmDialog } from '../../components/common/ConfirmDialog';
 import {
   looksLikeBarcodeInput,
   normalizeScannedBarcode,
+  formatBarcodeForDisplay,
 } from '../../../common/barcodeLookup';
 
 // Toggle this flag to switch between in-app preview and real printing.
@@ -342,6 +343,11 @@ const SellingPanel: React.FC = () => {
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const globalBarcodeBufferRef = useRef<string>('');
   const globalBarcodeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastKeyMsRef = useRef<number>(0);
+  const savedScanTargetRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const scanConfirmedRef = useRef<boolean>(false);
+  const lastBarcodeCharTimeRef = useRef<number>(0);
+  const barcodeIsAtScanSpeedRef = useRef<boolean>(false);
   const dropdownItemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const searchRequestSeqRef = useRef(0);
   const returnsRequestSeqRef = useRef(0);
@@ -401,10 +407,25 @@ const SellingPanel: React.FC = () => {
       const totalAvailable = medicine.totalAvailablePills ?? 0;
       if (totalAvailable > 0) {
         error(
-          `Stock for "${medicine.name}" is expired, so it can't be sold.`
+          <div>
+            <div className="font-semibold mb-1">Stock Expired</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li><strong>{medicine.name}</strong> has stock but it is all expired</li>
+              <li>Expired stock cannot be sold</li>
+              <li>Remove expired batches or mark medicine as inactive</li>
+            </ul>
+          </div>
         );
       } else {
-        error(`No stock available for "${medicine.name}".`);
+        error(
+          <div>
+            <div className="font-semibold mb-1">Out of Stock</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li><strong>{medicine.name}</strong> has no available stock</li>
+              <li>Add stock via the <strong>Purchases</strong> section</li>
+            </ul>
+          </div>
+        );
       }
       return;
     }
@@ -422,20 +443,52 @@ const SellingPanel: React.FC = () => {
       const d = daysLeft !== null
         ? (daysLeft <= 0 ? 'today' : `${daysLeft} day${daysLeft === 1 ? '' : 's'}`)
         : 'soon';
-      let msg: string;
       if (daysLeft !== null && daysLeft <= 5) {
-        msg = `Urgent: "${medicine.name}" expires in ${d}. Sell this stock immediately — oldest batch is being used first.`;
+        warning(
+          <div>
+            <div className="font-semibold mb-1">⚠ Urgent — Near Expiry</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li><strong>{medicine.name}</strong> expires in <strong>{d}</strong></li>
+              <li>Sell this stock immediately</li>
+              <li>Oldest batch is being used first (FEFO)</li>
+            </ul>
+          </div>
+        );
       } else if (daysLeft !== null && daysLeft <= 15) {
-        msg = `"${medicine.name}" expires in ${d}. Please sell this stock soon — near-expiry batch is being prioritized.`;
+        warning(
+          <div>
+            <div className="font-semibold mb-1">Near Expiry Notice</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li><strong>{medicine.name}</strong> expires in <strong>{d}</strong></li>
+              <li>Please sell this stock soon</li>
+              <li>Near-expiry batch is being prioritized</li>
+            </ul>
+          </div>
+        );
       } else {
-        msg = `"${medicine.name}" expires in ${d}. Near-expiry stock will be sold first automatically.`;
+        warning(
+          <div>
+            <div className="font-semibold mb-1">Expiry Notice</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li><strong>{medicine.name}</strong> expires in <strong>{d}</strong></li>
+              <li>Near-expiry stock will be sold first automatically</li>
+            </ul>
+          </div>
+        );
       }
-      warning(msg);
     }
 
     let quantity = quantityParam ?? defaultSaleQuantity(medicine);
     if (available < quantity) {
-      warning(`Only ${available} pills available for sale!`);
+      warning(
+        <div>
+          <div className="font-semibold mb-1">Low Stock</div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            <li>Only <strong>{available}</strong> pills available for sale</li>
+            <li>Quantity adjusted automatically</li>
+          </ul>
+        </div>
+      );
       quantity = available;
     }
 
@@ -447,7 +500,15 @@ const SellingPanel: React.FC = () => {
       if (existingItem) {
         const newQuantity = existingItem.pills + quantity;
         if (newQuantity > available) {
-          warning(`Only ${available} pills available for sale!`);
+          warning(
+            <div>
+              <div className="font-semibold mb-1">Low Stock</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>Only <strong>{available}</strong> pills available for sale</li>
+                <li>Cannot add more than available stock</li>
+              </ul>
+            </div>
+          );
           return prevCart;
         }
         const updatedItem: CartItem = recalculateSaleItem({
@@ -558,7 +619,15 @@ const SellingPanel: React.FC = () => {
         };
 
         if (!response?.success) {
-          error(response?.error || 'Error looking up barcode. Please try again.');
+          error(
+            <div>
+              <div className="font-semibold mb-1">Barcode Lookup Failed</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>{response?.error || 'Could not search the barcode'}</li>
+                <li>Please try scanning again</li>
+              </ul>
+            </div>
+          );
           setBarcodeInput('');
           return;
         }
@@ -575,14 +644,29 @@ const SellingPanel: React.FC = () => {
             setTimeout(() => {
               setIsScanning(false);
               setBarcodeScanMode(false);
-              searchInputRef.current?.focus();
             }, 1000);
           } else {
             const hasExpiredStock = (medicine.totalAvailablePills ?? 0) > 0;
             warning(
               hasExpiredStock
-                ? `Medicine "${medicine.name}" cannot be sold — all available stock has expired.`
-                : `Medicine "${medicine.name}" is out of stock.`
+                ? (
+                  <div>
+                    <div className="font-semibold mb-1">Stock Expired</div>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs">
+                      <li><strong>{medicine.name}</strong> has stock but it is all expired</li>
+                      <li>Expired stock cannot be sold</li>
+                      <li>Remove expired batches or mark medicine as inactive</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="font-semibold mb-1">Out of Stock</div>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs">
+                      <li><strong>{medicine.name}</strong> has no available stock</li>
+                      <li>Add stock via the <strong>Purchases</strong> section</li>
+                    </ul>
+                  </div>
+                )
             );
             setBarcodeInput('');
             setSearchTerm('');
@@ -590,7 +674,16 @@ const SellingPanel: React.FC = () => {
             setHighlightedIndex(-1);
           }
         } else {
-          error(`Medicine with barcode "${normalized}" not found!`);
+          error(
+            <div>
+              <div className="font-semibold mb-1">Medicine Not Found</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>Barcode: <span className="font-mono">{formatBarcodeForDisplay(normalized)}</span></li>
+                <li>This medicine is not registered in the system</li>
+                <li>Go to <strong>Medicines</strong> and add it first</li>
+              </ul>
+            </div>
+          );
           setBarcodeInput('');
           setSearchTerm('');
           setShowSearchResults(false);
@@ -598,7 +691,15 @@ const SellingPanel: React.FC = () => {
         }
       } catch (err) {
         console.error('Error scanning barcode:', err);
-        error('Error looking up barcode. Please try again.');
+        error(
+          <div>
+            <div className="font-semibold mb-1">Barcode Lookup Failed</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>An unexpected error occurred while scanning</li>
+              <li>Please try again</li>
+            </ul>
+          </div>
+        );
         setBarcodeInput('');
       }
     },
@@ -621,7 +722,15 @@ const SellingPanel: React.FC = () => {
               nextValue = Math.max(0, parseInt(value, 10) || 0);
               const available = item.medicine.sellablePills ?? Infinity;
               if (nextValue > available) {
-                warning(`Only ${available} pills available for sale!`);
+                warning(
+                  <div>
+                    <div className="font-semibold mb-1">Low Stock</div>
+                    <ul className="list-disc list-inside space-y-0.5 text-xs">
+                      <li>Only <strong>{available}</strong> pills available for sale</li>
+                      <li>Cannot exceed available stock</li>
+                    </ul>
+                  </div>
+                );
                 return item;
               }
             }
@@ -926,14 +1035,12 @@ const SellingPanel: React.FC = () => {
   // Handle barcode scanning - Most scanners send data quickly, so we use a debounce
   // Only activate when barcode scan mode is enabled
   useEffect(() => {
-    if (barcodeScanMode && barcodeInput.length > 0) {
-      // Clear existing timeout
+    // Only auto-trigger when characters are arriving at scanner speed (<80ms gap).
+    // Manual typing is slow — for that, Enter key is the trigger (see onKeyDown below).
+    if (barcodeScanMode && barcodeInput.length > 0 && barcodeIsAtScanSpeedRef.current) {
       if (barcodeTimeoutRef.current) {
         clearTimeout(barcodeTimeoutRef.current);
       }
-
-      // Set new timeout - if no input for 200ms, treat as complete barcode
-      // Barcode scanners typically send data very quickly, so this timeout catches the end
       barcodeTimeoutRef.current = setTimeout(() => {
         if (barcodeInput.trim().length > 0) {
           handleBarcodeScan(barcodeInput);
@@ -960,27 +1067,48 @@ const SellingPanel: React.FC = () => {
     return () => window.removeEventListener('keydown', onF2, true);
   }, []);
 
-  // Global barcode scanner: capture phase so keys are not lost when focus is outside Product (F2).
-  // `data-wedge-typing` marks areas where normal keyboard typing must reach inputs (customer, cart, etc.).
+  // Global barcode scanner: intercepts ALL keypresses (capture phase) so scanner input always
+  // routes to the medicine search bar regardless of which field is currently focused.
+  //
+  // Two-phase detection:
+  //   Phase 1 — first char intercepted, 50 ms window started.
+  //     If a second char arrives within 50 ms → scanner confirmed, switch to 200 ms scan-end timer.
+  //     If 50 ms passes with no second char → human typing, release char back to the focused field.
+  //   Phase 2 — scanner confirmed, buffer accumulates until 200 ms silence, then flushed to search bar.
   useEffect(() => {
     const SCAN_END_MS = BARCODE_SCAN_TIMEOUT_MS;
+    const SCANNER_SPEED_MS = 50;
 
-    const isWedgeTypingField = (el: EventTarget | null) =>
-      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+    const resetScanState = () => {
+      globalBarcodeBufferRef.current = '';
+      savedScanTargetRef.current = null;
+      scanConfirmedRef.current = false;
+    };
+
+    const releaseBufferToField = () => {
+      const chars = globalBarcodeBufferRef.current;
+      const el = savedScanTargetRef.current;
+      resetScanState();
+      if (!chars || !el || !document.body.contains(el)) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const proto = Object.getPrototypeOf(el) as typeof HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(el, el.value.slice(0, start) + chars + el.value.slice(end));
+        // number/date inputs don't support setSelectionRange — skip it for those types
+        const supportsSelection = /^(text|search|url|tel|password)$/.test(el.type);
+        if (supportsSelection) {
+          el.setSelectionRange(start + chars.length, start + chars.length);
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
 
     const flushGlobalBarcode = (raw: string) => {
       const normalized = normalizeScannedBarcode(raw);
-      if (!normalized || normalized.length < BARCODE_MIN_LENGTH) {
-        globalBarcodeBufferRef.current = '';
-        return;
-      }
-      globalBarcodeBufferRef.current = '';
-      setSearchTerm(normalized);
-      setShowSearchResults(true);
-      setHighlightedIndex(-1);
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-      });
+      resetScanState();
+      if (!normalized || normalized.length < BARCODE_MIN_LENGTH) return;
       void handleBarcodeScan(normalized);
     };
 
@@ -988,56 +1116,70 @@ const SellingPanel: React.FC = () => {
       if (barcodeScanMode) return;
 
       const target = event.target as HTMLElement | null;
-      if (target?.id === 'product-search' || target?.id === 'barcode-input') {
-        return;
+      if (target?.id === 'product-search' || target?.id === 'barcode-input') return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Always update timing before any early return so next keypress measures correctly.
+      const now = Date.now();
+      const timeSinceLast = now - lastKeyMsRef.current;
+      if (event.key.length === 1 || event.key === 'Enter') {
+        lastKeyMsRef.current = now;
       }
 
-      if (isWedgeTypingField(target)) {
-        return;
-      }
-
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
+      const isScannerSpeed = timeSinceLast < SCANNER_SPEED_MS;
+      const hasBuffer = globalBarcodeBufferRef.current.length > 0;
 
       const tag = target?.tagName?.toLowerCase();
       const isEditable =
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        target?.isContentEditable;
-
-      // Don't intercept typing in editable fields
-      if (isEditable) {
-        return;
-      }
+        tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
 
       if (event.key === 'Enter') {
-        if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
+        if (!hasBuffer) return; // nothing buffered, let Enter go to field
+        if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+        if (scanConfirmedRef.current && globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
           flushGlobalBarcode(globalBarcodeBufferRef.current);
           event.preventDefault();
           event.stopPropagation();
         } else {
-          globalBarcodeBufferRef.current = '';
+          releaseBufferToField();
         }
         return;
       }
 
-      // Only capture single printable characters (not special keys)
       if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         event.stopPropagation();
-        globalBarcodeBufferRef.current += event.key;
-        if (globalBarcodeTimerRef.current) {
-          clearTimeout(globalBarcodeTimerRef.current);
+
+        // Confirm scanner if second+ char arrives at scanner speed
+        if (isScannerSpeed && hasBuffer && !scanConfirmedRef.current) {
+          scanConfirmedRef.current = true;
         }
-        globalBarcodeTimerRef.current = setTimeout(() => {
-          if (globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
-            flushGlobalBarcode(globalBarcodeBufferRef.current);
-          } else {
-            globalBarcodeBufferRef.current = '';
-          }
-        }, SCAN_END_MS);
+
+        if (!hasBuffer && isEditable) {
+          // Phase 1: first char from an editable field — save the target so we can release back to it
+          savedScanTargetRef.current =
+            target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target : null;
+        }
+
+        globalBarcodeBufferRef.current += event.key;
+
+        if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+
+        if (!scanConfirmedRef.current && isEditable) {
+          // Phase 1 timer: if no second char within 50 ms, release back to the focused field
+          globalBarcodeTimerRef.current = setTimeout(() => {
+            releaseBufferToField();
+          }, SCANNER_SPEED_MS);
+        } else {
+          // Phase 2 timer: scanner confirmed (or non-editable area), wait for scan end
+          globalBarcodeTimerRef.current = setTimeout(() => {
+            if (scanConfirmedRef.current && globalBarcodeBufferRef.current.length >= BARCODE_MIN_LENGTH) {
+              flushGlobalBarcode(globalBarcodeBufferRef.current);
+            } else {
+              releaseBufferToField();
+            }
+          }, SCAN_END_MS);
+        }
       }
     };
 
@@ -1045,10 +1187,11 @@ const SellingPanel: React.FC = () => {
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
-      if (globalBarcodeTimerRef.current) {
-        clearTimeout(globalBarcodeTimerRef.current);
-      }
+      if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
       globalBarcodeBufferRef.current = '';
+      savedScanTargetRef.current = null;
+      scanConfirmedRef.current = false;
+      lastKeyMsRef.current = 0;
     };
   }, [handleBarcodeScan, barcodeScanMode]);
 
@@ -1206,7 +1349,15 @@ const SellingPanel: React.FC = () => {
             const newQuantity = item.pills + change;
             if (newQuantity <= 0) return null;
             if (newQuantity > available) {
-              warning(`Only ${available} pills available in stock!`);
+              warning(
+                <div>
+                  <div className="font-semibold mb-1">Low Stock</div>
+                  <ul className="list-disc list-inside space-y-0.5 text-xs">
+                    <li>Only <strong>{available}</strong> pills available in stock</li>
+                    <li>Cannot exceed available stock</li>
+                  </ul>
+                </div>
+              );
               return item;
             }
             const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, newQuantity) : 0;
@@ -1234,7 +1385,15 @@ const SellingPanel: React.FC = () => {
           const available = item.medicine.sellablePills ?? Infinity;
           const clampedQty = finalQuantity > available ? available : finalQuantity;
           if (finalQuantity > available) {
-            warning(`Only ${available} pills available in stock!`);
+            warning(
+              <div>
+                <div className="font-semibold mb-1">Low Stock</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>Only <strong>{available}</strong> pills available in stock</li>
+                  <li>Quantity clamped to available stock</li>
+                </ul>
+              </div>
+            );
           }
           const blended = item.fefoBatches ? computeBlendedPrice(item.fefoBatches, clampedQty) : 0;
           const breakdown = item.fefoBatches ? computeBatchBreakdown(item.fefoBatches, clampedQty) : undefined;
@@ -2369,8 +2528,18 @@ const SellingPanel: React.FC = () => {
                   value={barcodeInput}
                   onChange={(e) => setBarcodeInput(e.target.value)}
                   onKeyDown={(e) => {
+                    if (e.key.length === 1) {
+                      const now = Date.now();
+                      barcodeIsAtScanSpeedRef.current = (now - lastBarcodeCharTimeRef.current) < 80;
+                      lastBarcodeCharTimeRef.current = now;
+                    }
                     if (e.key === 'Enter') {
                       e.preventDefault();
+                      // Cancel the scanner auto-trigger to avoid double-fire
+                      if (barcodeTimeoutRef.current) {
+                        clearTimeout(barcodeTimeoutRef.current);
+                        barcodeTimeoutRef.current = null;
+                      }
                       if (barcodeInput.trim()) {
                         handleBarcodeScan(barcodeInput);
                       }
@@ -2949,7 +3118,15 @@ const SellingPanel: React.FC = () => {
                                   if (numVal >= 1) {
                                     const maxAvail = item.medicine.sellablePills;
                                     if (typeof maxAvail === 'number' && numVal > maxAvail) {
-                                      warning(`Only ${maxAvail} pills available for sale!`);
+                                      warning(
+                                        <div>
+                                          <div className="font-semibold mb-1">Low Stock</div>
+                                          <ul className="list-disc list-inside space-y-0.5 text-xs">
+                                            <li>Only <strong>{maxAvail}</strong> pills available for sale</li>
+                                            <li>Quantity adjusted to maximum</li>
+                                          </ul>
+                                        </div>
+                                      );
                                       setCartItemQuantity(id, maxAvail);
                                     } else {
                                       setCartItemQuantity(id, numVal);
@@ -2976,7 +3153,15 @@ const SellingPanel: React.FC = () => {
                                 }
                                 const maxAvail = line.medicine.sellablePills;
                                 if (typeof maxAvail === 'number' && val > maxAvail) {
-                                  warning(`Only ${maxAvail} pills available for sale!`);
+                                  warning(
+                                    <div>
+                                      <div className="font-semibold mb-1">Low Stock</div>
+                                      <ul className="list-disc list-inside space-y-0.5 text-xs">
+                                        <li>Only <strong>{maxAvail}</strong> pills available for sale</li>
+                                        <li>Quantity adjusted to maximum</li>
+                                      </ul>
+                                    </div>
+                                  );
                                   val = maxAvail;
                                 }
                                 setCartItemQuantity(id, val);

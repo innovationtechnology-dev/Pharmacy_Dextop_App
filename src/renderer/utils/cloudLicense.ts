@@ -5,12 +5,19 @@ export type CloudLicenseServerStatus =
   | { state: 'error'; message: string };
 
 const STORAGE_KEY = 'cloudLicenseApiBaseUrl';
-const DEFAULT_BASE_URL = 'http://localhost:3000';
+const DEFAULT_BASE_URL = 'https://pharmacy-dextop-app.vercel.app';
+
+// Addresses saved before the server was deployed; replaced with the deployed one.
+const isLocalDevUrl = (url: string) =>
+  /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/i.test(url.trim());
 
 export const getCloudLicenseApiBaseUrl = (): string => {
   if (typeof window === 'undefined') return DEFAULT_BASE_URL;
   const stored = window.localStorage.getItem(STORAGE_KEY);
-  return stored && stored.trim().length > 0 ? stored : DEFAULT_BASE_URL;
+  if (!stored || stored.trim().length === 0 || isLocalDevUrl(stored)) {
+    return DEFAULT_BASE_URL;
+  }
+  return stored;
 };
 
 export const setCloudLicenseApiBaseUrl = (url: string): void => {

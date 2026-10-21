@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FiCalendar,
   FiTrendingUp,
@@ -11,6 +12,7 @@ import {
   FiRefreshCw,
   FiUsers,
   FiShoppingBag,
+  FiBarChart2,
 } from 'react-icons/fi';
 import {
   XAxis,
@@ -67,6 +69,7 @@ type FinancialData = {
 
 const FinancialSummary = () => {
   const { setHeader } = useDashboardHeader();
+  const navigate = useNavigate();
   const [pharmacySettings] = useState<PharmacySettings>(() => getStoredPharmacySettings());
   const today = useMemo(() => {
     const d = new Date();

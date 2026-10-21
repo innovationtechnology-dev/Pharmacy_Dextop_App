@@ -9,12 +9,20 @@
  * `./src/main.js` using webpack. This gives us some performance wins.
  */
 import path from 'path';
-import { app, BrowserWindow, shell, session, screen } from 'electron';
+import { app, BrowserWindow, dialog, Notification, shell, session, screen } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
 import { getBackend } from './backend';
+import { installIpcRegistry } from './network/ipcRegistry';
+import { ensureServerIdentity, loadNetworkConfig } from './network/networkConfig';
+import { registerNetworkIpc } from './network/networkIpc';
+import { startRpcServer, stopRpcServer } from './network/rpcServer';
+import { setPairingListener } from './network/pairing';
+
+// Must run before any controller registers its IPC handlers.
+installIpcRegistry();
 
 // Suppress SSL certificate errors in development mode (must be called before app ready)
 if (process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD === 'true') {
@@ -65,6 +73,42 @@ if (isDebug) {
 
 // Initialize backend
 const backend = getBackend();
+let backendReady = false;
+
+/**
+ * Main-computer startup: open the database, then expose the controllers on the LAN.
+ * Safe to call more than once.
+ */
+const startAsServer = async () => {
+  if (!backendReady) {
+    await backend.initialize();
+    backendReady = true;
+  }
+  // Also upgrades older main computers to their own id and a 128-bit key.
+  await startRpcServer(ensureServerIdentity());
+};
+
+/** Plain-language reason the main computer could not start sharing. */
+const describeServerStartError = (error: unknown): string => {
+  const e = error as NodeJS.ErrnoException;
+  if (e?.code === 'EADDRINUSE') {
+    return `Another program is already using network port ${loadNetworkConfig().port}, so other computers cannot connect to this one. Close that program (or another copy of this app) and restart.`;
+  }
+  return `The main computer could not start: ${e?.message ?? String(error)}`;
+};
+
+// Two copies would fight over the database and the network port; focus the running one instead.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
 
 const installExtensions = async () => {
   try {
@@ -176,20 +220,66 @@ const createWindow = async () => {
  */
 
 app.on('window-all-closed', async () => {
-  // Respect the OSX convention of having the application in memory even
-  // after all windows have been closed
+  // Respect the OSX convention of having the application in memory even after all windows have
+  // been closed — and keep serving the other computers while it is.
+  if (process.platform === 'darwin') return;
+  stopRpcServer();
   await backend.cleanup();
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
 
 app
   .whenReady()
   .then(async () => {
-    // Initialize backend before creating window
-    await backend.initialize();
-    createWindow();
+    if (!hasSingleInstanceLock) return;
+    registerNetworkIpc({
+      startAsServer,
+      reloadWindow: () => mainWindow?.webContents.reload(),
+      sendToWindow: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+    });
+
+    // Main computer: another computer asked for access — show the prompt and get attention.
+    // At most one notification per computer per 2 minutes, however often it asks.
+    const notifiedAt = new Map<string, number>();
+    setPairingListener((pending) => {
+      mainWindow?.webContents.send('network-pair-requests', pending);
+      const now = Date.now();
+      const fresh = pending.filter((r) => now - (notifiedAt.get(r.address) ?? 0) > 2 * 60_000);
+      fresh.forEach((r) => notifiedAt.set(r.address, now));
+      if (!fresh.length || !mainWindow) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.flashFrame(true);
+      if (Notification.isSupported()) {
+        const n = new Notification({
+          title: 'Computer wants to connect',
+          body: `${fresh[0].deviceName} (${fresh[0].address}) is asking for access. Open the app to allow or deny.`,
+        });
+        n.on('click', () => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
+        n.show();
+      }
+    });
+
+    // Only the main computer owns the database. Additional computers (role
+    // 'client') and fresh installs (role 'unset') do not open it.
+    let serverStartError: unknown = null;
+    if (loadNetworkConfig().role === 'server') {
+      try {
+        await startAsServer();
+      } catch (error) {
+        console.error('Main computer failed to start:', error);
+        serverStartError = error;
+      }
+    }
+    await createWindow();
+    if (serverStartError) {
+      // Still open the window so the problem is visible instead of a silent background process.
+      mainWindow?.once('ready-to-show', () => {
+        dialog.showErrorBox('Pharmacy — network problem', describeServerStartError(serverStartError));
+      });
+    }
     app.on('activate', () => {
       // On macOS it's common to re-create a window in the app when the
       // dock icon is clicked and there are no other windows open.

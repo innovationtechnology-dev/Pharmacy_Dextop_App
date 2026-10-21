@@ -18,7 +18,7 @@ import {
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import { ConfirmDialog } from '../../components/common/ConfirmDialog';
-import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
+import { extractGtin, normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -106,6 +106,122 @@ const mapBackendMedicine = (record: BackendMedicine): Medicine => {
   };
 };
 
+interface MedicineRowProps {
+  medicine: Medicine;
+  index: number;
+  isEditing: boolean;
+  currencySymbol: string;
+  onEdit: (medicine: Medicine) => void;
+  onStatusChange: (id: number, status: MedicineStatus) => void;
+  onDeleteRequest: (confirm: { id: number; name: string }) => void;
+}
+
+const MedicineRow = React.memo(function MedicineRow({
+  medicine,
+  index,
+  isEditing,
+  currencySymbol,
+  onEdit,
+  onStatusChange,
+  onDeleteRequest,
+}: MedicineRowProps) {
+  return (
+    <div
+      onClick={() => onEdit(medicine)}
+      className={`grid grid-cols-12 gap-2 px-4 py-3 cursor-pointer transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30 ${
+        isEditing
+          ? 'bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-900/20 dark:to-transparent ring-2 ring-emerald-500/30'
+          : 'hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent'
+      }`}
+    >
+      <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
+        {index + 1}
+      </div>
+      <div className="col-span-4">
+        <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
+          {medicine.name}
+        </div>
+        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+          Avg: {medicine.averageSellablePricePerPill
+            ? `${currencySymbol}${medicine.averageSellablePricePerPill.toFixed(2)}`
+            : '—'}
+        </div>
+      </div>
+      <div className="col-span-2">
+        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
+          {medicine.barcode || '—'}
+        </div>
+        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
+          {formatNumericId(medicine.id)}
+        </div>
+      </div>
+      <div className="col-span-1 text-center">
+        <span className="inline-flex items-center justify-center px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
+          {medicine.pillQuantity}
+        </span>
+      </div>
+      <div className="col-span-3 text-center">
+        <select
+          data-wedge-typing="true"
+          value={medicine.status}
+          onChange={(e) => {
+            e.stopPropagation();
+            onStatusChange(medicine.id, e.target.value as MedicineStatus);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          className={`w-full px-2 py-1 rounded-full text-xs font-medium border border-transparent focus:ring-2 focus:ring-emerald-500 cursor-pointer ${
+            medicine.status === 'active'
+              ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300'
+              : medicine.status === 'inactive'
+              ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300'
+              : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
+          }`}
+        >
+          {STATUS_LIBRARY.map((status) => (
+            <option key={`${medicine.id}-${status}`} value={status}>{status}</option>
+          ))}
+        </select>
+      </div>
+      <div className="col-span-1 flex items-center justify-center gap-1">
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onEdit(medicine); }}
+          className="p-1.5 rounded transition-colors text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
+          title="Edit"
+        >
+          <FiEdit2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (medicine.id) {
+              if (medicine.hasTransactionHistory) {
+                alert('Cannot delete: This medicine appears in purchase, sale, or return records. You can mark it as inactive instead.');
+                return;
+              }
+              onDeleteRequest({ id: medicine.id, name: medicine.name });
+            }
+          }}
+          disabled={medicine.hasTransactionHistory}
+          className={`p-1.5 rounded transition-colors ${
+            medicine.hasTransactionHistory
+              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
+              : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'
+          }`}
+          title={
+            medicine.hasTransactionHistory
+              ? 'Cannot delete: Medicine has transaction history'
+              : 'Delete'
+          }
+        >
+          <FiTrash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export default function MedicinesPage() {
   const { expiringAlerts, alertThresholdDays } = useDashboardHeader();
   const [medicines, setMedicines] = useState<Medicine[]>([]);
@@ -132,12 +248,14 @@ export default function MedicinesPage() {
   } | null>(null);
   const barcodeLookupRequestId = useRef(0);
   const globalBarcodeBufferRef = useRef('');
-  const globalBarcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null
-  );
+  const globalBarcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True when the barcode was set by a hardware scanner (full string at once), not typed char-by-char.
+  const barcodeFromScannerRef = useRef(false);
 
-  // Get currency symbol
-  const getCurrencySymbol = () => getSymbol(pharmacySettings.currency || 'USD');
+  const currencySymbol = useMemo(
+    () => getSymbol(pharmacySettings.currency || 'USD'),
+    [pharmacySettings.currency]
+  );
   const loadMedicines = useCallback(() => {
     if (!window?.electron) {
       setLoadError('Electron bridge unavailable. Please restart the app.');
@@ -319,7 +437,9 @@ export default function MedicinesPage() {
         searchWords.every(word =>
           medicine.name.toLowerCase().includes(word) ||
           formatNumericId(medicine.id).toLowerCase().includes(word) ||
-          medicine.barcode?.toLowerCase().includes(word)
+          medicine.barcode?.toLowerCase().includes(word) ||
+          // GTIN: a scan from a newer batch shares only the GTIN with the stored barcode
+          (extractGtin(medicine.barcode)?.includes(word) ?? false)
         );
 
       const matchesStatus =
@@ -412,7 +532,7 @@ export default function MedicinesPage() {
     }
 
     const MIN_LEN = 4;
-    const SCAN_END_MS = 200;
+    const SCAN_END_MS = 80;
 
     const isWedgeTypingField = (el: EventTarget | null) =>
       el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
@@ -424,10 +544,31 @@ export default function MedicinesPage() {
         return;
       }
       globalBarcodeBufferRef.current = '';
-      setNewMedicine((prev) => ({ ...prev, barcode: normalized }));
-      requestAnimationFrame(() => {
-        barcodeInputRef.current?.focus();
-      });
+
+      void (async () => {
+        if (window?.electron) {
+          try {
+            const response = (await window.electron.ipcRenderer.invoke(
+              'medicine-get-by-barcode',
+              normalized
+            )) as IpcResponse<BackendMedicine>;
+            if (response?.success && response?.data?.id) {
+              // Medicine exists — show it in the search list, don't populate the add form.
+              // Search by GTIN: the full scan includes batch/expiry/price that differ per batch.
+              setSearchTerm(extractGtin(raw) ?? normalized);
+              return;
+            }
+          } catch {
+            // fall through to add form
+          }
+        }
+        // Medicine doesn't exist — put barcode in the add form barcode field only
+        barcodeFromScannerRef.current = true;
+        setNewMedicine((prev) => ({ ...prev, barcode: normalized }));
+        requestAnimationFrame(() => {
+          barcodeInputRef.current?.focus();
+        });
+      })();
     };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -496,6 +637,110 @@ export default function MedicinesPage() {
     };
   }, [lockNameAndBarcode]);
 
+  // When the scanner fires while a non-barcode form field (name, pills, etc.) has focus,
+  // the global handler skips it and chars land in the wrong field.
+  // This effect detects rapid burst + Enter in those fields, restores their original value,
+  // then routes to the same barcode lookup logic.
+  useEffect(() => {
+    if (lockNameAndBarcode) return;
+
+    const SCAN_END_MS = 80;
+    const MIN_LEN = 4;
+    const WATCHED = new Set([
+      'medicine-name',
+      'medicine-pill-quantity',
+      'medicine-manufacturer',
+      'medicine-brand-name',
+      'medicine-min-stock',
+    ]);
+
+    let buf = '';
+    let scanTimer: ReturnType<typeof setTimeout> | null = null;
+    let capturedId = '';
+    let capturedValueBefore = '';
+
+    const reset = () => {
+      buf = '';
+      if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+      capturedId = '';
+      capturedValueBefore = '';
+    };
+
+    const handleKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLInputElement;
+      if (!WATCHED.has(target.id)) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      if (event.key === 'Enter') {
+        if (buf.length >= MIN_LEN && scanTimer !== null) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+          const scanned = buf;
+          const fieldId = capturedId;
+          const prevValue = capturedValueBefore;
+          reset();
+
+          // Restore the form field to the value it had before the scan started
+          const el = document.getElementById(fieldId) as HTMLInputElement | null;
+          if (el) {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype,
+              'value'
+            )?.set;
+            nativeSetter?.call(el, prevValue);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+          }
+
+          const normalized = normalizeScannedBarcode(scanned);
+          if (!normalized || normalized.length < MIN_LEN) return;
+
+          void (async () => {
+            if (window?.electron) {
+              try {
+                const res = (await window.electron.ipcRenderer.invoke(
+                  'medicine-get-by-barcode',
+                  normalized
+                )) as IpcResponse<BackendMedicine>;
+                if (res?.success && res?.data?.id) {
+                  setSearchTerm(extractGtin(scanned) ?? normalized);
+                  return;
+                }
+              } catch {
+                // fall through to add form
+              }
+            }
+            setNewMedicine((prev) => ({ ...prev, barcode: normalized }));
+            requestAnimationFrame(() => {
+              barcodeInputRef.current?.focus();
+              barcodeInputRef.current?.select();
+            });
+          })();
+        } else {
+          reset();
+        }
+        return;
+      }
+
+      if (event.key.length === 1) {
+        if (buf === '') {
+          capturedId = target.id;
+          // keydown fires before char insertion — value here is still pre-char
+          capturedValueBefore = target.value;
+        }
+        buf += event.key;
+        if (scanTimer) clearTimeout(scanTimer);
+        scanTimer = setTimeout(reset, SCAN_END_MS);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeydown, true);
+    return () => {
+      window.removeEventListener('keydown', handleKeydown, true);
+      if (scanTimer) clearTimeout(scanTimer);
+    };
+  }, [lockNameAndBarcode]);
+
   // Live duplicate check: scanners send long GS1-style strings; backend resolves like selling/purchasing.
   useEffect(() => {
     if (lockNameAndBarcode) {
@@ -509,6 +754,11 @@ export default function MedicinesPage() {
       barcodeLookupRequestId.current += 1;
       return;
     }
+
+    // Scanner input arrives as a complete string — no need to wait for more keystrokes.
+    // Manual typing uses 400ms to avoid firing IPC on every character.
+    const debounceMs = barcodeFromScannerRef.current ? 50 : 400;
+    barcodeFromScannerRef.current = false;
 
     const timer = window.setTimeout(() => {
       void (async () => {
@@ -553,7 +803,7 @@ export default function MedicinesPage() {
           setBarcodeDuplicate(null);
         }
       })();
-    }, 400);
+    }, debounceMs);
 
     return () => window.clearTimeout(timer);
   }, [newMedicine.barcode, editingMedicineId, lockNameAndBarcode]);
@@ -771,6 +1021,30 @@ export default function MedicinesPage() {
                   value={newMedicine.barcode}
                   onChange={(e) => handleNewMedicineChange('barcode', e.target.value)}
                   disabled={lockNameAndBarcode}
+                  onKeyDown={async (e) => {
+                    if (e.key !== 'Enter' || editingMedicineId) return;
+                    const normalized = normalizeScannedBarcode(newMedicine.barcode);
+                    if (!normalized || normalized.length < 4) return;
+                    e.preventDefault();
+                    if (window?.electron) {
+                      try {
+                        const response = (await window.electron.ipcRenderer.invoke(
+                          'medicine-get-by-barcode',
+                          normalized
+                        )) as IpcResponse<BackendMedicine>;
+                        if (response?.success && response?.data?.id) {
+                          // Medicine exists — search for it, clear barcode field
+                          setNewMedicine((prev) => ({ ...prev, barcode: '' }));
+                          setSearchTerm(normalized);
+                          return;
+                        }
+                      } catch {
+                        // fall through
+                      }
+                    }
+                    // Medicine doesn't exist — keep focus on barcode field; select-all so next scan replaces it
+                    barcodeInputRef.current?.select();
+                  }}
                   className={`w-full px-4 py-3 text-sm border rounded-md focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none transition-all ${
                     lockNameAndBarcode
                       ? 'bg-gray-100 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 cursor-not-allowed'
@@ -1050,99 +1324,16 @@ export default function MedicinesPage() {
 
                   {/* Medicines Rows */}
                   {filteredMedicines.map((medicine, index) => (
-                    <div
+                    <MedicineRow
                       key={medicine.id}
-                      onClick={() => handleEdit(medicine)}
-                      className={`grid grid-cols-12 gap-2 px-4 py-3 cursor-pointer transition-all items-center text-xs border-b border-gray-100/50 dark:border-gray-700/30 ${editingMedicineId === medicine.id
-                        ? 'bg-gradient-to-r from-emerald-50/50 to-transparent dark:from-emerald-900/20 dark:to-transparent ring-2 ring-emerald-500/30'
-                        : 'hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent'
-                        }`}
-                    >
-                      <div className="col-span-1 text-gray-600 dark:text-gray-400 text-[11px] font-medium">
-                        {index + 1}
-                      </div>
-                      <div className="col-span-4">
-                        <div className="font-semibold text-gray-900 dark:text-white truncate text-[11px]">
-                          {medicine.name}
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                          Avg: {medicine.averageSellablePricePerPill ? `${getCurrencySymbol()}${medicine.averageSellablePricePerPill.toFixed(2)}` : '—'}
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <div className="text-[11px] text-gray-900 dark:text-white truncate font-semibold">
-                          {medicine.barcode || '—'}
-                        </div>
-                        <div className="text-[10px] text-gray-500 dark:text-gray-500 truncate">
-                          {formatNumericId(medicine.id)}
-                        </div>
-                      </div>
-                      <div className="col-span-1 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
-                          {medicine.pillQuantity}
-                        </span>
-                      </div>
-                      <div className="col-span-3 text-center">
-                        <select
-                          data-wedge-typing="true"
-                          value={medicine.status}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            handleStatusChange(medicine.id, e.target.value as MedicineStatus);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className={`w-full px-2 py-1 rounded-full text-xs font-medium border border-transparent focus:ring-2 focus:ring-emerald-500 cursor-pointer ${medicine.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300' :
-                            medicine.status === 'inactive' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300' :
-                              'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'
-                            }`}
-                        >
-                          {STATUS_LIBRARY.map((status) => (
-                            <option key={`${medicine.id}-${status}`} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="col-span-1 flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEdit(medicine);
-                            }}
-                          className="p-1.5 rounded transition-colors text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/30"
-                          title="Edit"
-                        >
-                          <FiEdit2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (medicine.id) {
-                              if (medicine.hasTransactionHistory) {
-                                alert(
-                                  'Cannot delete: This medicine appears in purchase, sale, or return records. You can mark it as inactive instead.'
-                                );
-                                return;
-                              }
-                              setDeleteConfirm({ id: medicine.id, name: medicine.name });
-                            }
-                          }}
-                          disabled={medicine.hasTransactionHistory}
-                          className={`p-1.5 rounded transition-colors ${
-                            medicine.hasTransactionHistory
-                              ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed opacity-50'
-                              : 'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30'
-                          }`}
-                          title={
-                            medicine.hasTransactionHistory
-                              ? 'Cannot delete: Medicine has transaction history'
-                              : 'Delete'
-                          }
-                        >
-                          <FiTrash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
+                      medicine={medicine}
+                      index={index}
+                      isEditing={editingMedicineId === medicine.id}
+                      currencySymbol={currencySymbol}
+                      onEdit={handleEdit}
+                      onStatusChange={handleStatusChange}
+                      onDeleteRequest={setDeleteConfirm}
+                    />
                   ))}
                 </div>
               )}

@@ -8,8 +8,10 @@ declare module 'react-icons' {
 }
 
 declare module 'react-icons/fi' {
+  export const FiActivity: any;
   export const FiAlertCircle: any;
   export const FiAlertTriangle: any;
+  export const FiArchive: any;
   export const FiArrowLeft: any;
   export const FiBarChart2: any;
   export const FiBell: any;
@@ -23,6 +25,7 @@ declare module 'react-icons/fi' {
   export const FiChevronRight: any;
   export const FiChevronUp: any;
   export const FiClock: any;
+  export const FiCopy: any;
   export const FiCreditCard: any;
   export const FiDatabase: any;
   export const FiDollarSign: any;
@@ -33,47 +36,60 @@ declare module 'react-icons/fi' {
   export const FiEyeOff: any;
   export const FiFileText: any;
   export const FiFilter: any;
+  export const FiFolder: any;
+  export const FiGrid: any;
+  export const FiHardDrive: any;
+  export const FiHash: any;
   export const FiHelpCircle: any;
   export const FiHome: any;
+  export const FiInbox: any;
   export const FiInfo: any;
   export const FiKey: any;
   export const FiLayers: any;
+  export const FiList: any;
   export const FiLock: any;
   export const FiLogOut: any;
   export const FiMail: any;
   export const FiMapPin: any;
-  export const FiMaximize2: any;
   export const FiMaximize: any;
+  export const FiMaximize2: any;
   export const FiMenu: any;
-  export const FiMinimize2: any;
+  export const FiMessageCircle: any;
   export const FiMinimize: any;
+  export const FiMinimize2: any;
   export const FiMinus: any;
+  export const FiMonitor: any;
   export const FiMoon: any;
   export const FiPackage: any;
+  export const FiPercent: any;
   export const FiPhone: any;
   export const FiPieChart: any;
   export const FiPlus: any;
+  export const FiPower: any;
   export const FiPrinter: any;
   export const FiRefreshCw: any;
   export const FiRotateCcw: any;
   export const FiSave: any;
   export const FiSearch: any;
+  export const FiSend: any;
   export const FiSettings: any;
   export const FiShield: any;
   export const FiShoppingBag: any;
   export const FiShoppingCart: any;
   export const FiSun: any;
+  export const FiTag: any;
   export const FiTool: any;
   export const FiTrash2: any;
   export const FiTrendingDown: any;
   export const FiTrendingUp: any;
+  export const FiTruck: any;
   export const FiUpload: any;
   export const FiUser: any;
   export const FiUsers: any;
+  export const FiWifi: any;
+  export const FiWifiOff: any;
   export const FiX: any;
   export const FiXCircle: any;
-  export const FiTruck: any;
-  export const FiMessageCircle: any;
 }
 
 declare module 'react-icons/fa' {

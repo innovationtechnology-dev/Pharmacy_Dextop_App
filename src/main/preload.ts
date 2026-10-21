@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron';
+import { MAIN_COMPUTER_ONLY_CHANNELS, MAIN_COMPUTER_ONLY_MESSAGE } from './network/localOnlyChannels';
 
 export type Channels =
   | 'ipc-example'
@@ -6,10 +7,10 @@ export type Channels =
   | 'auth-login-reply' | 'auth-signup-reply' | 'auth-verify-token-reply' | 'auth-get-user-reply'
   | 'medicine-get-all' | 'medicine-get-by-barcode' | 'medicine-get-by-id' | 'medicine-search' | 'medicine-get-expiring'
   | 'medicine-create' | 'medicine-update' | 'medicine-delete'
-  | 'medicine-seed-sample'
+  | 'medicine-seed-sample' | 'medicine-get-financial-details'
   | 'medicine-get-all-reply' | 'medicine-get-by-barcode-reply' | 'medicine-get-by-id-reply' | 'medicine-search-reply' | 'medicine-get-expiring-reply'
   | 'medicine-create-reply' | 'medicine-update-reply' | 'medicine-delete-reply'
-  | 'medicine-seed-sample-reply'
+  | 'medicine-seed-sample-reply' | 'medicine-get-financial-details-reply'
   | 'sale-create' | 'sale-get-all' | 'sale-update'
   | 'sale-create-reply' | 'sale-get-all-reply' | 'sale-update-reply'
   | 'financial-get-monthly' | 'financial-get-monthly-reply'
@@ -47,26 +48,116 @@ export type Channels =
   | 'get-table-counts' | 'get-table-counts-reply'
   | (string & {});
 
-contextBridge.exposeInMainWorld('electron', {
-  ipcRenderer: {
-    sendMessage(channel: Channels, args: unknown[]) {
-      ipcRenderer.send(channel, args);
-    },
-    on(channel: Channels, func: (...args: unknown[]) => void) {
-      const subscription = (_event: IpcRendererEvent, ...args: unknown[]) =>
-        func(...args);
-      ipcRenderer.on(channel, subscription);
+const networkMode: string = ipcRenderer.sendSync('network-get-mode');
+const isClient = networkMode === 'client';
 
+type Listener = (...args: unknown[]) => void;
+const clientListeners = new Map<string, Set<{ fn: Listener; once: boolean }>>();
+
+const emitLocal = (channel: string, payload: unknown) => {
+  const set = clientListeners.get(channel);
+  if (!set) return;
+  [...set].forEach((entry) => {
+    if (entry.once) set.delete(entry);
+    entry.fn(payload);
+  });
+};
+
+const addLocal = (channel: string, fn: Listener, once: boolean) => {
+  const set = clientListeners.get(channel) ?? new Set();
+  const entry = { fn, once };
+  set.add(entry);
+  clientListeners.set(channel, set);
+  return () => {
+    set.delete(entry);
+  };
+};
+
+/** Every "main computer unreachable" failure uses this exact message (the renderer filters on it). */
+const UNREACHABLE_MESSAGE = 'Cannot reach the main computer';
+
+const isLocalChannel = (channel: string) =>
+  channel.startsWith('network-') || channel === 'ipc-example';
+
+// Event.detail does not survive the context-isolation boundary, so expose a callback API instead.
+const connectionListeners = new Set<(ok: boolean) => void>();
+const notifyConnection = (ok: boolean) =>
+  connectionListeners.forEach((fn) => fn(ok));
+
+// Pushed by the main process connection monitor (client mode): online flag + reason when down.
+const statusListeners = new Set<(status: unknown) => void>();
+ipcRenderer.on('network-status', (_event, status: { online: boolean }) => {
+  notifyConnection(status.online);
+  statusListeners.forEach((fn) => fn(status));
+});
+
+const bridge = {
+  sendMessage(channel: Channels, args: unknown[]) {
+    if (!isClient || isLocalChannel(channel)) {
+      ipcRenderer.send(channel, args);
+      return;
+    }
+    if (MAIN_COMPUTER_ONLY_CHANNELS.has(channel)) {
+      // Save/Open dialogs would appear on the main computer's screen — refuse up front.
+      setTimeout(() => emitLocal(`${channel}-reply`, { success: false, error: MAIN_COMPUTER_ONLY_MESSAGE }), 0);
+      return;
+    }
+    ipcRenderer.invoke('network-rpc', 'send', channel, args).then((res) => {
+      notifyConnection(!res?.unreachable);
+      if (res?.ok) {
+        emitLocal(res.replyChannel, res.payload);
+      } else {
+        emitLocal(`${channel}-reply`, {
+          success: false,
+          error: res?.unreachable ? UNREACHABLE_MESSAGE : res?.error || UNREACHABLE_MESSAGE,
+        });
+      }
+    });
+  },
+  on(channel: Channels, func: Listener) {
+    if (isClient && !isLocalChannel(channel)) return addLocal(channel, func, false);
+    const subscription = (_event: IpcRendererEvent, ...args: unknown[]) => func(...args);
+    ipcRenderer.on(channel, subscription);
+    return () => {
+      ipcRenderer.removeListener(channel, subscription);
+    };
+  },
+  once(channel: Channels, func: Listener) {
+    if (isClient && !isLocalChannel(channel)) {
+      addLocal(channel, func, true);
+      return;
+    }
+    ipcRenderer.once(channel, (_event, ...args) => func(...args));
+  },
+  /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
+  async invoke(channel: Channels, ...args: unknown[]) {
+    if (!isClient || isLocalChannel(channel)) {
+      return ipcRenderer.invoke(channel, ...args);
+    }
+    const res = await ipcRenderer.invoke('network-rpc', 'invoke', channel, args);
+    notifyConnection(!res?.unreachable);
+    if (!res?.ok) {
+      throw new Error(res?.unreachable ? UNREACHABLE_MESSAGE : res?.error || UNREACHABLE_MESSAGE);
+    }
+    return res.payload;
+  },
+};
+
+contextBridge.exposeInMainWorld('electron', {
+  ipcRenderer: bridge,
+  network: {
+    mode: networkMode,
+    onConnection(fn: (ok: boolean) => void) {
+      connectionListeners.add(fn);
       return () => {
-        ipcRenderer.removeListener(channel, subscription);
+        connectionListeners.delete(fn);
       };
     },
-    once(channel: Channels, func: (...args: unknown[]) => void) {
-      ipcRenderer.once(channel, (_event, ...args) => func(...args));
-    },
-    /** Prefer for request/response (e.g. barcode lookup) — avoids stacked `once` bugs on rapid scans. */
-    invoke(channel: Channels, ...args: unknown[]) {
-      return ipcRenderer.invoke(channel, ...args);
+    onStatus(fn: (status: unknown) => void) {
+      statusListeners.add(fn);
+      return () => {
+        statusListeners.delete(fn);
+      };
     },
   },
 });

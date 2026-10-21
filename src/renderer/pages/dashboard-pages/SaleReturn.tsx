@@ -3,12 +3,37 @@ import { useDebouncedSearch } from '../../hooks/useDebounce';
 import { getSaleReturnsFlatRowsByRange, FlatSaleReturnRow, exportSaleReturnsPdf, exportSaleReturnsCsv } from '../../utils/sale-return';
 import { getAuthUser } from '../../utils/auth';
 import { useDashboardHeader } from './useDashboardHeader';
-import { FiCalendar, FiSearch, FiRefreshCw, FiEye, FiX, FiPhone, FiUser, FiFileText } from 'react-icons/fi';
-import { FaArrowDown, FaUndo, FaShoppingCart, FaList, FaPercent, FaFileAlt, FaFilePdf, FaFileExcel, FaArrowLeft } from 'react-icons/fa';
-import ReportDetailModal from '../../components/common/DetailModal';
+import {
+  FiArrowLeft,
+  FiDownload,
+  FiFileText,
+  FiList,
+  FiPackage,
+  FiPercent,
+  FiRefreshCw,
+  FiRotateCcw,
+} from 'react-icons/fi';
 import PDFPreviewModal from '../../components/common/PDFPreviewModal';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
-import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
+import { getCurrencySymbol as getSymbol } from '../../../common/currency';
+import {
+  DetailField,
+  ExpandButton,
+  ExportDialog,
+  KpiCard,
+  KpiGrid,
+  Pagination,
+  PeriodFilter,
+  Pill,
+  ReportCard,
+  SearchInput,
+  SummaryLine,
+  TableStatus,
+  ToolbarButton,
+  formatDisplayDate,
+  formatDisplayTime,
+  formatMoney,
+} from '../../components/reports/ReportUI';
 
 
 export default function SaleReturn() {
@@ -87,29 +112,10 @@ export default function SaleReturn() {
     }
   }, [fromDate, toDate]);
 
-  const handleTodayFilter = () => {
-    setFromDate(today);
-    setToDate(today);
-    fetchReport(today, today);
-  };
-
-  const handleMonthFilter = () => {
-    const now = new Date();
-    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-    const mm = String(firstDay.getMonth() + 1).padStart(2, '0');
-    const dd = String(firstDay.getDate()).padStart(2, '0');
-    const fDate = `${firstDay.getFullYear()}-${mm}-${dd}`;
-    setFromDate(fDate);
-    setToDate(today);
-    fetchReport(fDate, today);
-  };
-
-  const handleYearFilter = () => {
-    const now = new Date();
-    const fDate = `${now.getFullYear()}-01-01`;
-    setFromDate(fDate);
-    setToDate(today);
-    fetchReport(fDate, today);
+  const handlePreset = (from: string, to: string) => {
+    setFromDate(from);
+    setToDate(to);
+    fetchReport(from, to);
   };
 
   // Initial fetch
@@ -243,565 +249,339 @@ export default function SaleReturn() {
   const totalTax = useMemo(() => filteredRows.reduce((sum, row) => sum + (row.taxAmount || 0), 0), [filteredRows]);
   const totalDiscount = useMemo(() => filteredRows.reduce((sum, row) => sum + (row.discountAmount || 0), 0), [filteredRows]);
 
+  const symbol = getCurrencySymbol();
+  const ROW_GRID =
+    'grid grid-cols-[40px_minmax(150px,1.1fr)_minmax(0,2.4fr)_minmax(0,1.4fr)_80px_minmax(120px,0.9fr)] gap-4 items-center';
+
   return (
-    <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
-
-      {/* Stats Header - Single Row Design matching Medicines Page */}
-      <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3">
-
-        {/* Total Returned */}
+    <div className="flex flex-col gap-3 h-auto md:h-[calc(100vh-80px)] w-full px-4 pb-4 overflow-visible md:overflow-hidden bg-gray-50 dark:bg-gray-900">
+      {/* Toolbar: period + actions */}
+      <ReportCard className="flex-shrink-0 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <PeriodFilter
+          fromDate={fromDate}
+          toDate={toDate}
+          onFromChange={setFromDate}
+          onToChange={setToDate}
+          onPreset={handlePreset}
+          onApply={() => fetchReport()}
+          loading={loading}
+          minFromDate={isCashier ? minFromDate : undefined}
+          hiddenPresets={isCashier ? ['year'] : []}
+        />
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-500 shadow-sm">
-            <FaUndo className="w-3.5 h-3.5 text-orange-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Returned
-            </span>
-            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
+          {isCashier && (
+            <ToolbarButton
+              variant="accent"
+              icon={<FiArrowLeft className="w-4 h-4" />}
+              label="Back to Selling"
+              onClick={() => {
+                window.location.hash = '#/selling-panel';
+              }}
+            />
+          )}
+          <ToolbarButton
+            icon={<FiRefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />}
+            title="Refresh"
+            onClick={() => fetchReport()}
+          />
+          {!isCashier && (
+            <ToolbarButton
+              variant="primary"
+              icon={<FiDownload className="w-4 h-4" />}
+              label="Export"
+              onClick={() => setShowExportDialog(true)}
+            />
+          )}
         </div>
+      </ReportCard>
 
-        {/* Items Returned */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-            <FaShoppingCart className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Items Returned
-            </span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {totalItemsReturned.toLocaleString()}
-            </span>
-          </div>
-        </div>
+      {/* KPIs */}
+      <div className="flex-shrink-0">
+        <KpiGrid>
+          <KpiCard
+            primary
+            tone="rose"
+            icon={<FiRotateCcw className="w-4 h-4" />}
+            label="Total refunded"
+            value={formatMoney(symbol, totalReturned)}
+            hint="Value returned to customers"
+          />
+          <KpiCard
+            tone="blue"
+            icon={<FiPackage className="w-4 h-4" />}
+            label="Units returned"
+            value={totalItemsReturned.toLocaleString()}
+          />
+          <KpiCard
+            tone="violet"
+            icon={<FiList className="w-4 h-4" />}
+            label="Returns"
+            value={filteredRows.length.toLocaleString()}
+            hint={
+              filteredRows.length > 0
+                ? `Avg ${formatMoney(symbol, totalReturned / filteredRows.length)}`
+                : undefined
+            }
+          />
+          <KpiCard
+            tone="orange"
+            icon={<FiFileText className="w-4 h-4" />}
+            label="Tax reversed"
+            value={formatMoney(symbol, totalTax)}
+          />
+          <KpiCard
+            tone="slate"
+            icon={<FiPercent className="w-4 h-4" />}
+            label="Discount adjusted"
+            value={formatMoney(symbol, totalDiscount)}
+          />
+        </KpiGrid>
+      </div>
 
-        {/* Returns Count */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-purple-50 dark:bg-purple-900/20 px-2.5 py-1.5 rounded-md border border-purple-200 dark:border-purple-600/50 shadow-sm">
-            <FaList className="w-3.5 h-3.5 text-purple-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Returns
-            </span>
-            <span className="text-xs font-bold text-purple-600 dark:text-purple-400 ml-1">
+      {/* Returns table */}
+      <ReportCard className="flex-1 min-h-0 flex flex-col overflow-visible md:overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-bold text-gray-900 dark:text-white">Sale returns</h2>
+            <span className="px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-[11px] font-semibold text-gray-600 dark:text-gray-300 tabular-nums">
               {filteredRows.length}
             </span>
           </div>
+          <SearchInput
+            value={immediateSearchTerm}
+            onChange={handleSearchChange}
+            onClear={() => setSearchQuery('')}
+            placeholder="Search medicine, customer, sale # or reason…"
+          />
         </div>
 
-        {/* Tax */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-yellow-50 dark:bg-yellow-900/20 px-2.5 py-1.5 rounded-md border border-yellow-200 dark:border-yellow-600/50 shadow-sm">
-            <FaFileAlt className="w-3.5 h-3.5 text-yellow-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Tax
-            </span>
-            <span className="text-xs font-bold text-yellow-600 dark:text-yellow-400 ml-1">
-              {getCurrencySymbol()}{totalTax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
-
-        {/* Discount */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 bg-pink-50 dark:bg-pink-900/20 px-2.5 py-1.5 rounded-md border border-pink-200 dark:border-pink-600/50 shadow-sm">
-            <FaPercent className="w-3.5 h-3.5 text-pink-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">
-              Discount
-            </span>
-            <span className="text-xs font-bold text-pink-600 dark:text-pink-400 ml-1">
-              {getCurrencySymbol()}{totalDiscount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          {/* Back to Selling Button */}
-          {isCashier && (
-            <button
-              onClick={() => window.location.hash = '#/selling-panel'}
-              className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 border border-orange-600 text-white text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-            >
-              <FaArrowLeft className="w-3.5 h-3.5" />
-              Back to Selling
-            </button>
-          )}
-
-          {/* Refresh Button */}
-          <button
-            onClick={() => fetchReport()}
-            className="px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
+        <div className="flex-1 overflow-visible md:overflow-auto">
+          <div
+            className={`${ROW_GRID} sticky top-0 z-10 px-4 py-2.5 bg-gray-50/95 dark:bg-gray-800/95 backdrop-blur border-b border-gray-100 dark:border-gray-700 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400`}
           >
-            <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      </div>
+            <span />
+            <span>Return</span>
+            <span>Items</span>
+            <span>Customer</span>
+            <span className="text-center">Qty</span>
+            <span className="text-right">Refund</span>
+          </div>
 
-      {/* Main Content: Vertical Layout */}
-      <div className="flex flex-col gap-3 flex-1 overflow-hidden min-h-0">
+          <TableStatus
+            loading={loading}
+            error={error}
+            empty={pagedRows.length === 0}
+            loadingText="Loading sale returns…"
+            emptyTitle="No returns in this period"
+            emptyHint={
+              searchQuery
+                ? 'No return matches your search. Try another word or clear the search.'
+                : 'Pick another date range above.'
+            }
+          />
 
-        {/* Top: Date Range Filter (Styled like Medicine Form) */}
-        <div className="flex-shrink-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md">
-            {/* Header */}
-            <div className="px-4 py-2 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-blue-200/50 dark:border-blue-800/30">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-gradient-to-br from-orange-500 to-orange-600">
-                  <FiCalendar className="w-4 h-4 text-white" />
-                </div>
-                <h3 className="text-xs font-bold text-gray-900 dark:text-white uppercase tracking-wide">
-                  Report Criteria
-                </h3>
-              </div>
-            </div>
-
-            {/* Content */}
-            <div className="p-3 flex flex-col sm:flex-row gap-3 items-end">
-              <div className="w-full sm:w-auto">
-                <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
-                  From Date
-                </label>
-                <input
-                  type="date"
-                  value={fromDate}
-                  min={isCashier ? minFromDate : undefined}
-                  max={today}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
-                />
-              </div>
-              <div className="w-full sm:w-auto">
-                <label className="block text-[10px] font-bold mb-1 uppercase tracking-wide text-gray-600 dark:text-gray-400">
-                  To Date
-                </label>
-                <input
-                  type="date"
-                  value={toDate}
-                  max={today}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="w-full sm:w-40 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
-                />
-              </div>
-              <div className="flex-1 flex gap-2 sm:justify-end">
-                <button
-                  onClick={() => handleTodayFilter()}
-                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
-                    fromDate === today && toDate === today
-                      ? 'bg-orange-600 text-white border-orange-600'
-                      : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+          {!loading &&
+            !error &&
+            pagedRows.map((row) => {
+              const open = selectedReturn?.saleReturnId === row.saleReturnId;
+              const toggle = () => setSelectedReturn(open ? null : row);
+              const items = row.children || [];
+              return (
+                <div
+                  key={row.saleReturnId}
+                  className={`border-b border-gray-100 dark:border-gray-700/60 ${
+                    open ? 'bg-rose-50/40 dark:bg-rose-900/10' : ''
                   }`}
                 >
-                  Today
-                </button>
-                <button
-                  onClick={() => handleMonthFilter()}
-                  className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
-                    fromDate === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01` && toDate === today
-                      ? 'bg-orange-600 text-white border-orange-600'
-                      : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
-                  }`}
-                >
-                  Month
-                </button>
-                {!isCashier && (
-                  <button
-                    onClick={() => handleYearFilter()}
-                    className={`px-3 py-1.5 text-xs font-bold uppercase border rounded transition-colors shadow-sm ${
-                      fromDate === `${new Date().getFullYear()}-01-01` && toDate === today
-                        ? 'bg-orange-600 text-white border-orange-600'
-                        : 'bg-white dark:bg-gray-700 text-orange-600 dark:text-orange-400 border-orange-200 dark:border-orange-800 hover:bg-orange-50 dark:hover:bg-orange-900/30'
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={toggle}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                      }
+                    }}
+                    className={`${ROW_GRID} px-4 py-3 cursor-pointer transition-colors ${
+                      open ? '' : 'hover:bg-gray-50 dark:hover:bg-gray-700/30'
                     }`}
                   >
-                    Year
-                  </button>
-                )}
-                <div className="w-px h-8 bg-gray-200 dark:bg-gray-700 mx-1 hidden sm:block"></div>
-                <button
-                  onClick={() => fetchReport()}
-                  disabled={loading}
-                  className="flex-1 sm:flex-none px-4 py-1.5 bg-orange-600 text-white rounded hover:bg-orange-700 shadow-sm hover:shadow-md font-semibold text-xs uppercase tracking-wide disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {loading ? <FiRefreshCw className="animate-spin" /> : <FiSearch />}
-                  Fetch Reports
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Bottom: Returns Table */}
-        <div className="flex-1 flex flex-col overflow-visible md:overflow-hidden min-h-0">
-          <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md flex-1 flex flex-col overflow-visible md:overflow-hidden">
-
-            {/* Table Header / Actions */}
-            <div className="px-4 py-3 bg-gradient-to-r from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-800/10 border-b border-blue-200/50 dark:border-blue-800/30 flex-shrink-0">
-              <div className="flex flex-col sm:flex-row items-center gap-3 justify-between">
-                <div className="flex items-center gap-2 w-full sm:w-auto flex-1">
-                  <label className="text-[11px] font-bold text-gray-600 dark:text-gray-400 uppercase tracking-wide whitespace-nowrap hidden sm:block">
-                    Search Returns
-                  </label>
-                  <div className="flex-1 relative max-w-md">
-                    <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 dark:text-gray-500">
-                      <FiSearch className="w-3.5 h-3.5" />
-                    </div>
-                    <input
-                      type="text"
-                      value={immediateSearchTerm}
-                      onChange={handleSearchChange}
-                      placeholder="Search by medicine, customer, sale ID, or reason..."
-                      className="w-full pl-10 pr-3 py-1.5 text-xs font-medium border border-gray-300 dark:border-gray-600 dark:bg-gray-700/50 dark:text-white rounded-md focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500 outline-none transition-all bg-white"
-                    />
-                  </div>
-                </div>
-                {/* Download Button */}
-                {!isCashier && (
-                  <button
-                    onClick={() => setShowExportDialog(true)}
-                    className="w-full sm:w-auto px-3 py-1.5 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 border border-orange-500 dark:border-orange-500 rounded hover:bg-orange-100 dark:hover:bg-orange-900/40 font-semibold text-xs uppercase tracking-wide flex items-center justify-center gap-2 transition-colors"
-                  >
-                    <FaArrowDown className="w-3.5 h-3.5" />
-                    Download
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Table Header Row */}
-            <div className="grid grid-cols-12 gap-3 px-3 py-2 bg-gray-50/50 dark:bg-gray-700/30 border-b border-gray-100 dark:border-gray-700 text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-              <div className="col-span-2">Date / IDs</div>
-              <div className="col-span-3">Medicine</div>
-              <div className="col-span-2">Customer</div>
-              <div className="col-span-1 text-right">Price</div>
-              <div className="col-span-1 text-center">Qty</div>
-              <div className="col-span-2 text-right">Total</div>
-              <div className="col-span-1 text-center">Actions</div>
-            </div>
-
-            {/* Table Body */}
-            <div className="flex-1 overflow-visible md:overflow-y-auto">
-              {loading ? (
-                <div className="flex flex-col items-center justify-center h-full text-gray-500 dark:text-gray-400">
-                  <FiRefreshCw className="w-8 h-8 animate-spin mb-2 text-orange-500" />
-                  <p className="text-xs">Loading sale return data...</p>
-                </div>
-              ) : error ? (
-                <div className="flex items-center justify-center h-full text-red-500 dark:text-red-400 text-sm">
-                  {error}
-                </div>
-              ) : pagedRows.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-500 dark:text-gray-400 text-sm">
-                  No sale returns found for the selected range.
-                </div>
-              ) : (
-                (selectedReturn ? pagedRows.filter(r => r.saleReturnId === selectedReturn.saleReturnId) : pagedRows).map((row) => (
-                  <React.Fragment key={row.saleReturnId}>
-                    <div 
-                      className={`grid grid-cols-12 gap-3 px-3 py-2 text-[10px] items-center border-b transition-all duration-200 ${selectedReturn?.saleReturnId === row.saleReturnId ? 'border-orange-200 dark:border-orange-900/50 bg-orange-50/30 dark:bg-orange-900/10' : 'border-gray-50 dark:border-gray-800 hover:bg-orange-50/20 dark:hover:bg-orange-900/5'}`}
-                    >
-                      <div className="col-span-2 font-semibold text-gray-900 dark:text-white">
-                        <div>
-                          <div className="text-[11px] text-gray-500 dark:text-gray-400 font-bold">Return #{row.saleReturnId}</div>
-                          <div className="text-[10px] text-gray-400 dark:text-gray-500">Sale #{row.saleId}</div>
-                          <div className="text-[9px] mt-1 text-gray-500">{new Date(row.createdAt).toLocaleDateString()}</div>
-                        </div>
-                      </div>
-                      <div className="col-span-3">
-                        <div className="font-medium text-gray-900 dark:text-white whitespace-pre-wrap leading-tight" title={row.displayMedicineName}>{row.displayMedicineName}</div>
-                        {row.reason && (
-                          <div className="text-[9px] text-gray-400 dark:text-gray-500 italic truncate" title={row.reason}>
-                            {row.reason}
-                          </div>
-                        )}
-                      </div>
-                      <div className="col-span-2 text-gray-600 dark:text-gray-300 truncate" title={row.customerName || 'Walk-in'}>
-                        {row.customerName || 'Walk-in'}
-                      </div>
-                      <div className="col-span-1 text-right text-gray-600 dark:text-gray-300">
-                        {row.isGrouped ? (
-                          <span className="text-gray-400 italic">Multiple</span>
-                        ) : (
-                          <>{getCurrencySymbol()}{row.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</>
-                        )}
-                      </div>
-                      <div className="col-span-1 text-center">
-                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 font-semibold">
-                          {row.pills}
+                    <ExpandButton open={open} onClick={toggle} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                        #{row.saleReturnId}
+                        <span className="ml-1.5 text-[11px] font-medium text-gray-400">
+                          from sale #{row.saleId}
                         </span>
-                      </div>
-                      <div className="col-span-2 text-right">
-                        <div className="font-bold text-orange-600 dark:text-orange-400 whitespace-nowrap">{getCurrencySymbol()}{row.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                      </div>
-                      <div className="col-span-1 text-center">
-                        <button
-                          onClick={() => {
-                            if (selectedReturn?.saleReturnId === row.saleReturnId) {
-                               setSelectedReturn(null);
-                            } else {
-                               setSelectedReturn(row);
-                            }
-                          }}
-                          className={`px-2.5 py-1 text-[10px] font-bold uppercase rounded shadow-sm transition-colors ${selectedReturn?.saleReturnId === row.saleReturnId ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800' : 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-200 dark:border-blue-800'}`}
-                          title={selectedReturn?.saleReturnId === row.saleReturnId ? "Close Details" : "View Details"}
-                        >
-                          {selectedReturn?.saleReturnId === row.saleReturnId ? "Close" : "View"}
-                        </button>
+                      </p>
+                      <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                        {formatDisplayDate(row.createdAt)} · {formatDisplayTime(row.createdAt)}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p
+                        className="text-sm text-gray-800 dark:text-gray-200 truncate"
+                        title={row.itemDetails.join(', ')}
+                      >
+                        {row.itemDetails.join(', ')}
+                      </p>
+                      <p
+                        className="text-[11px] text-gray-500 dark:text-gray-400 truncate"
+                        title={row.reason || undefined}
+                      >
+                        {row.reason
+                          ? row.reason
+                          : row.isGrouped
+                          ? `${items.length} items`
+                          : `${formatMoney(symbol, row.unitPrice)} each`}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-800 dark:text-gray-200 truncate">
+                        {row.customerName || 'Walk-in customer'}
+                      </p>
+                      {row.customerPhone && (
+                        <p className="text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                          {row.customerPhone}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex justify-center">
+                      <span className="min-w-[2rem] text-center px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-700 text-xs font-semibold text-gray-700 dark:text-gray-200 tabular-nums">
+                        {row.pills}
+                      </span>
+                    </div>
+                    <p className="text-right text-sm font-bold text-rose-600 dark:text-rose-400 tabular-nums whitespace-nowrap">
+                      {formatMoney(symbol, row.total)}
+                    </p>
+                  </div>
+
+                  {open && (
+                    <div className="px-4 pb-4 pl-[72px]">
+                      <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+                          <DetailField label="Customer">
+                            {row.customerName || 'Walk-in customer'}
+                          </DetailField>
+                          <DetailField label="Contact">{row.customerPhone || '—'}</DetailField>
+                          <DetailField label="Original sale">
+                            <Pill tone="rose">Sale #{row.saleId}</Pill>
+                          </DetailField>
+                          <DetailField label="Reason">
+                            <span title={row.reason || undefined}>{row.reason || '—'}</span>
+                          </DetailField>
+                        </div>
+
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-gray-50 dark:bg-gray-900/40 text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                              <th className="px-4 py-2 text-left font-semibold w-10">#</th>
+                              <th className="px-4 py-2 text-left font-semibold">Medicine</th>
+                              <th className="px-4 py-2 text-center font-semibold">Qty</th>
+                              <th className="px-4 py-2 text-right font-semibold">Unit price</th>
+                              <th className="px-4 py-2 text-right font-semibold">Discount</th>
+                              <th className="px-4 py-2 text-right font-semibold">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 dark:divide-gray-700/60">
+                            {items.map((item: any, idx: number) => (
+                              // eslint-disable-next-line react/no-array-index-key
+                              <tr key={idx}>
+                                <td className="px-4 py-2.5 text-gray-400 tabular-nums">{idx + 1}</td>
+                                <td className="px-4 py-2.5">
+                                  <p className="font-medium text-gray-900 dark:text-white">
+                                    {item.medicineName}
+                                  </p>
+                                  <p className="text-[10px] text-gray-400">ID #{item.medicineId}</p>
+                                </td>
+                                <td className="px-4 py-2.5 text-center tabular-nums text-gray-700 dark:text-gray-300">
+                                  {item.pills}
+                                </td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-300">
+                                  {formatMoney(symbol, item.unitPrice)}
+                                </td>
+                                <td className="px-4 py-2.5 text-right tabular-nums text-rose-600 dark:text-rose-400">
+                                  {item.discountAmount > 0
+                                    ? `−${formatMoney(symbol, item.discountAmount)}`
+                                    : '—'}
+                                </td>
+                                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-900 dark:text-white">
+                                  {formatMoney(symbol, item.total)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+
+                        <div className="flex justify-end px-4 py-3 bg-gray-50/70 dark:bg-gray-900/30 border-t border-gray-100 dark:border-gray-700">
+                          <div className="w-full max-w-xs space-y-1.5">
+                            <SummaryLine
+                              label="Gross value"
+                              value={formatMoney(symbol, row.subtotal || 0)}
+                            />
+                            <SummaryLine
+                              label="Discount adjustment"
+                              tone="negative"
+                              value={`−${formatMoney(symbol, row.discountAmount || 0)}`}
+                            />
+                            <SummaryLine
+                              label="Tax reversal"
+                              value={formatMoney(symbol, row.taxAmount || 0)}
+                            />
+                            <SummaryLine
+                              label="Refund amount"
+                              tone="total"
+                              value={formatMoney(symbol, row.total || 0)}
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
-
-                    {/* Inline Details expansion */}
-                    {selectedReturn?.saleReturnId === row.saleReturnId && (
-                      <div className="border-b border-gray-100 dark:border-gray-800 animate-in slide-in-from-top-1 fade-in duration-200 bg-gray-50/50 dark:bg-gray-800/30 shadow-inner w-full flex flex-col">
-                        
-                        {/* Inline header info */}
-                        <div className="grid grid-cols-12 gap-3 px-8 py-3 bg-white dark:bg-gray-900/50 border-b border-gray-100 dark:border-gray-800">
-                           <div className="col-span-3">
-                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Customer</span>
-                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerName || 'Walk-in Customer'}</span>
-                           </div>
-                           <div className="col-span-3">
-                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Return Info</span>
-                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{new Date(row.createdAt).toLocaleDateString()}</span>
-                              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 bg-orange-100 dark:bg-orange-900/40 border border-orange-300 dark:border-orange-700 rounded text-[8px] font-bold text-orange-700 dark:text-orange-400 whitespace-nowrap">
-                                REF #{row.saleId}
-                              </span>
-                           </div>
-                           <div className="col-span-3">
-                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Contact</span>
-                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-200">{row.customerPhone || 'N/A'}</span>
-                           </div>
-                           {row.reason && (
-                           <div className="col-span-3">
-                              <span className="text-[10px] text-gray-400 font-bold block mb-0.5 uppercase tracking-wide">Reason</span>
-                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-400 italic line-clamp-2" title={row.reason}>{row.reason}</span>
-                           </div>
-                           )}
-                        </div>
-
-                        {/* Inline Table Header */}
-                        <div className="grid grid-cols-12 gap-3 px-8 py-2 bg-gray-100/50 dark:bg-gray-800 text-[9px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-widest border-y border-gray-200 dark:border-gray-700">
-                          <div className="col-span-1 text-center font-bold">#</div>
-                          <div className="col-span-5 font-bold">Medicine Product</div>
-                          <div className="col-span-2 text-center font-bold">Qty</div>
-                          <div className="col-span-2 text-right font-bold">Price / Disc.</div>
-                          <div className="col-span-2 text-right font-bold">Subtotal</div>
-                        </div>
-
-                        {/* Inline Table Body */}
-                        <div className="divide-y divide-gray-100 dark:divide-gray-800 bg-white dark:bg-gray-900/40">
-                           {row.children?.map((item: any, idx: number) => (
-                             <div key={idx} className="grid grid-cols-12 gap-3 px-8 py-3 items-center hover:bg-gray-50/80 dark:hover:bg-gray-800/30 transition-all">
-                                <div className="col-span-1 text-center text-[10px] text-gray-400">
-                                   {(idx + 1).toString().padStart(2, '0')}
-                                </div>
-                                <div className="col-span-5">
-                                   <div className="text-[11px] font-semibold text-gray-800 dark:text-gray-200">{item.medicineName}</div>
-                                   <div className="text-[9px] text-gray-500">ID: #{item.medicineId}</div>
-                                </div>
-                                <div className="col-span-2 text-center text-[11px] font-medium text-gray-600 dark:text-gray-400">
-                                   {item.pills}
-                                </div>
-                                <div className="col-span-2 text-right">
-                                   <div className="text-[11px] font-medium text-gray-700 dark:text-gray-300">
-                                      {getCurrencySymbol()}{item.unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                   </div>
-                                   {item.discountAmount > 0 && (
-                                     <div className="text-[9px] text-red-500">
-                                        -{getCurrencySymbol()}{item.discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                     </div>
-                                   )}
-                                </div>
-                                <div className="col-span-2 text-right text-[11px] font-bold text-gray-900 dark:text-white">
-                                   {getCurrencySymbol()}{item.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                             </div>
-                           ))}
-                        </div>
-
-                        {/* Inline Footer */}
-                        <div className="px-8 py-3 bg-orange-50/80 dark:bg-orange-900/10 border-b border-orange-100/50 dark:border-orange-900/30 flex flex-wrap justify-between gap-6 text-[10px] text-orange-800 dark:text-orange-400 tracking-wide">
-                            <div className="flex flex-wrap gap-6 items-center">
-                              <div><span className="font-bold opacity-70 uppercase mr-1">Gross Value:</span> {getCurrencySymbol()}{(row.subtotal || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              <div><span className="font-bold opacity-70 uppercase mr-1">Adjustment:</span> {getCurrencySymbol()}{(row.discountAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                              <div><span className="font-bold opacity-70 uppercase mr-1">Tax Reversal:</span> {getCurrencySymbol()}{(row.taxAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                            </div>
-                            <div className="flex items-center gap-4 ml-auto">
-                              <div className="text-xs"><span className="font-bold opacity-70 uppercase mr-1">Refund Amount:</span> <span className="font-black">{getCurrencySymbol()}{(row.total || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span></div>
-                            </div>
-                        </div>
-                      </div>
-                    )}
-                  </React.Fragment>
-                ))
-              )}
-            </div>
-
-            {/* Totals Footer Row */}
-            {!loading && !error && filteredRows.length > 0 && (
-              <div className="grid grid-cols-12 gap-3 px-3 py-2.5 bg-gray-100 dark:bg-gray-700/50 border-t-2 border-gray-200 dark:border-gray-600 text-[11px] font-bold uppercase tracking-wide">
-                <div className="col-span-10 text-right text-gray-600 dark:text-gray-300 pr-4">Grand Total</div>
-                <div className="col-span-2 text-right text-orange-700 dark:text-orange-400">
-                  {getCurrencySymbol()}{totalReturned.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  )}
                 </div>
-              </div>
-            )}
-
-            {/* Pagination Footer */}
-            {!loading && !error && totalPages > 1 && (
-              <div className="px-4 py-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex items-center justify-between">
-                <span className="text-[10px] text-gray-500 dark:text-gray-400">
-                  Page {page} of {totalPages}
-                </span>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    className="px-2 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-[10px] hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                    className="px-2 py-1 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-[10px] hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-
-          </div>
+              );
+            })}
         </div>
-      </div>
 
-      {/* Detail Modal removed in favor of Inline expansion */}
-
-      {/* Export Dialog */}
-      {showExportDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
-            <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Export Sale Return Report</h3>
-                <button
-                  onClick={() => setShowExportDialog(false)}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <FiX className="w-5 h-5 text-gray-500" />
-                </button>
-              </div>
-            </div>
-
-            <div className="p-6 space-y-4">
-              {/* Export Format */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Export Format</label>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setExportFormat('pdf')}
-                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
-                      exportFormat === 'pdf'
-                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
-                    }`}
-                  >
-                    PDF
-                  </button>
-                  <button
-                    onClick={() => setExportFormat('csv')}
-                    className={`flex-1 px-4 py-2.5 rounded-lg border-2 text-sm font-medium transition-all ${
-                      exportFormat === 'csv'
-                        ? 'border-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
-                        : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
-                    }`}
-                  >
-                    CSV
-                  </button>
-                </div>
-                {exportFormat === 'pdf' && (
-                  <div className="mt-3">
-                    <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300">
-                      <input
-                        type="checkbox"
-                        checked={showPreview}
-                        onChange={(e) => setShowPreview(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      <span>Preview before Export PDF</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-
-              {/* Date Range */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Date Range
-                </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">From Date</label>
-                    <input
-                      type="date"
-                      value={exportFromDate}
-                      onChange={(e) => setExportFromDate(e.target.value)}
-                      placeholder={fromDate}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-600 dark:text-gray-400 mb-1">To Date</label>
-                    <input
-                      type="date"
-                      value={exportToDate}
-                      onChange={(e) => setExportToDate(e.target.value)}
-                      placeholder={toDate}
-                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700 text-sm"
-                    />
-                  </div>
-                </div>
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                  Leave empty to export all records
-                </p>
-              </div>
-            </div>
-
-            <div className="p-6 border-t border-gray-200 dark:border-gray-700 flex gap-3">
-              <button
-                onClick={() => setShowExportDialog(false)}
-                className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  if (exportFormat === 'pdf') {
-                    handleDownloadPdf();
-                  } else {
-                    handleDownloadCsv();
-                  }
-                }}
-                disabled={exporting}
-                className="flex-1 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium flex items-center justify-center gap-2"
-              >
-                {exporting ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Exporting...
-                  </>
-                ) : (
-                  <>
-                    <FaArrowDown className="w-4 h-4" />
-                    Export {exportFormat.toUpperCase()}
-                  </>
-                )}
-              </button>
-            </div>
+        {!loading && !error && filteredRows.length > 0 && (
+          <div className="flex-shrink-0 flex items-center justify-between gap-4 px-4 py-3 bg-gray-50 dark:bg-gray-900/40 border-t border-gray-200 dark:border-gray-700">
+            <span className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+              Total refunded · {totalItemsReturned.toLocaleString()} units
+            </span>
+            <span className="text-base font-bold text-rose-600 dark:text-rose-400 tabular-nums">
+              {formatMoney(symbol, totalReturned)}
+            </span>
           </div>
-        </div>
-      )}
+        )}
+        {!loading && !error && (
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={filteredRows.length}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            itemLabel="returns"
+          />
+        )}
+      </ReportCard>
 
-      {/* PDF Preview Modal */}
+      <ExportDialog
+        open={showExportDialog}
+        title="Export sale returns"
+        onClose={() => setShowExportDialog(false)}
+        format={exportFormat}
+        onFormatChange={setExportFormat}
+        preview={showPreview}
+        onPreviewChange={setShowPreview}
+        fromDate={exportFromDate}
+        toDate={exportToDate}
+        onFromChange={setExportFromDate}
+        onToChange={setExportToDate}
+        exporting={exporting}
+        onExport={() => (exportFormat === 'pdf' ? handleDownloadPdf() : handleDownloadCsv())}
+      />
+
       <PDFPreviewModal
         isOpen={!!pdfHtmlContent}
         htmlContent={pdfHtmlContent}
@@ -812,4 +592,3 @@ export default function SaleReturn() {
     </div>
   );
 }
-

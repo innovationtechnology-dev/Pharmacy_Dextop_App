@@ -8,14 +8,15 @@ import {
   FiAlertCircle,
   FiRefreshCw,
   FiFilter,
-  FiEye,
   FiBox,
-  FiAlertTriangle
+  FiAlertTriangle,
+  FiX,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 import MedicineInventoryDetails from '../../components/medicines/MedicineInventoryDetails';
+import { normalizeScannedBarcode } from '../../../common/barcodeLookup';
 
 interface MedicineStock {
   id: number;
@@ -36,6 +37,13 @@ const Stocks: React.FC = () => {
   const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
   const [selectedMedicineForDetails, setSelectedMedicineForDetails] = useState<{ id: number; name: string } | null>(null);
   const [pharmacySettings] = useState<PharmacySettings>(getStoredPharmacySettings());
+
+  // Barcode scanner state
+  const [scanNotFound, setScanNotFound] = useState<string | null>(null);
+  const [scanLookupLoading, setScanLookupLoading] = useState(false);
+  const globalBarcodeBufferRef = useRef('');
+  const globalBarcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanNotFoundTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { setHeader } = useDashboardHeader();
   const currencySymbol = getSymbol(pharmacySettings.currency || 'USD');
@@ -64,6 +72,87 @@ const Stocks: React.FC = () => {
   useEffect(() => {
     loadStocks();
   }, [loadStocks]);
+
+  // Global wedge scanner → barcode lookup
+  useEffect(() => {
+    const MIN_LEN = 4;
+    const SCAN_END_MS = 80;
+
+    const flushGlobalBarcode = (raw: string) => {
+      const normalized = normalizeScannedBarcode(raw);
+      if (!normalized || normalized.length < MIN_LEN) {
+        globalBarcodeBufferRef.current = '';
+        return;
+      }
+      globalBarcodeBufferRef.current = '';
+      if (!window?.electron) return;
+
+      setScanLookupLoading(true);
+      if (scanNotFoundTimerRef.current) clearTimeout(scanNotFoundTimerRef.current);
+      setScanNotFound(null);
+
+      void window.electron.ipcRenderer.invoke('medicine-get-by-barcode', normalized)
+        .then((res: any) => {
+          setScanLookupLoading(false);
+          if (res?.success && res.data?.id) {
+            // Clear filters so the row is visible, then expand it inline (same as View button)
+            setSearchTerm('');
+            setStatusFilter('all');
+            setSelectedMedicineForDetails({ id: res.data.id, name: res.data.name ?? 'Unknown' });
+          } else {
+            setScanNotFound(normalized);
+            scanNotFoundTimerRef.current = setTimeout(() => setScanNotFound(null), 5000);
+          }
+        })
+        .catch(() => {
+          setScanLookupLoading(false);
+          setScanNotFound(normalized);
+          scanNotFoundTimerRef.current = setTimeout(() => setScanNotFound(null), 5000);
+        });
+    };
+
+    const handleGlobalKeydown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable =
+        tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
+      if (isEditable) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      if (event.key === 'Enter') {
+        if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+          flushGlobalBarcode(globalBarcodeBufferRef.current);
+          event.preventDefault();
+          event.stopPropagation();
+        } else {
+          globalBarcodeBufferRef.current = '';
+        }
+        return;
+      }
+
+      if (event.key.length === 1) {
+        event.preventDefault();
+        event.stopPropagation();
+        globalBarcodeBufferRef.current += event.key;
+        if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+        globalBarcodeTimerRef.current = setTimeout(() => {
+          if (globalBarcodeBufferRef.current.length >= MIN_LEN) {
+            flushGlobalBarcode(globalBarcodeBufferRef.current);
+          } else {
+            globalBarcodeBufferRef.current = '';
+          }
+        }, SCAN_END_MS);
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeydown, true);
+    return () => {
+      window.removeEventListener('keydown', handleGlobalKeydown, true);
+      if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+      if (scanNotFoundTimerRef.current) clearTimeout(scanNotFoundTimerRef.current);
+      globalBarcodeBufferRef.current = '';
+    };
+  }, []);
 
   const filteredStocks = useMemo(() => {
     const normalizedTerm = searchTerm.trim().toLowerCase();
@@ -305,7 +394,42 @@ const Stocks: React.FC = () => {
         </div>
       </div>
 
-      {/* Background modales removed in favor of Inline expansion */}
+      {/* Scan loading indicator */}
+      {scanLookupLoading && (
+        <div className="fixed top-4 right-4 z-50">
+          <div className="bg-blue-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-[240px]">
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin flex-shrink-0" />
+            <span className="text-sm font-medium">Looking up barcode…</span>
+          </div>
+        </div>
+      )}
+
+      {/* Scan not-found toast */}
+      {scanNotFound && (
+        <div className="fixed top-4 right-4 z-50 animate-slideInRight">
+          <div className="bg-amber-500 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-3 min-w-[320px] max-w-sm">
+            <FiAlertCircle className="w-5 h-5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm">Medicine Not Found</p>
+              <p className="text-xs text-amber-100 mt-0.5 truncate">
+                No medicine matches barcode:{' '}
+                <span className="font-mono font-semibold">{scanNotFound}</span>
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                if (scanNotFoundTimerRef.current) clearTimeout(scanNotFoundTimerRef.current);
+                setScanNotFound(null);
+              }}
+              className="p-1 hover:bg-amber-600 rounded transition-colors flex-shrink-0"
+            >
+              <FiX className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

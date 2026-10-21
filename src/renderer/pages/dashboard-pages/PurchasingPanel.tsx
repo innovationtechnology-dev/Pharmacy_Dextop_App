@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft, FiUsers } from 'react-icons/fi';
+import { FiPackage, FiSearch, FiX, FiMinus, FiRefreshCw, FiMaximize2, FiClock, FiCalendar, FiChevronRight, FiAlertCircle, FiCreditCard, FiFileText, FiChevronDown, FiTrash2, FiChevronLeft, FiUsers, FiCheck } from 'react-icons/fi';
 import { FaPlus, FaTrashAlt, FaDollarSign, FaCheck, FaPercent, FaList, FaEdit, FaEye } from 'react-icons/fa';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDashboardHeader } from './useDashboardHeader';
@@ -12,6 +12,8 @@ import { getAuthUser } from '../../utils/auth';
 import {
   looksLikeBarcodeInput,
   normalizeScannedBarcode,
+  formatBarcodeForDisplay,
+  parseGs1,
 } from '../../../common/barcodeLookup';
 
 type MedicineStatus = 'active' | 'inactive' | 'discontinued';
@@ -197,17 +199,22 @@ const PurchasingPanel: React.FC = () => {
   const [loadingSuppliers, setLoadingSuppliers] = useState(false);
   const [selectedSupplierId, setSelectedSupplierId] = useState<number | null>(null);
   const [cart, setCart] = useState<PurchaseItem[]>([]);
+  // Latest cart for callbacks that must not re-subscribe on every cart change (barcode scan).
+  const cartRef = useRef<PurchaseItem[]>(cart);
+  cartRef.current = cart;
   /** Draft discount while typing */
   const [discountInputDraft, setDiscountInputDraft] = useState<Record<number, string>>({});
   /** Draft tax while typing */
   const [taxInputDraft, setTaxInputDraft] = useState<Record<number, string>>({});
   /** Draft sell price per unit while typing */
   const [sellPriceInputDraft, setSellPriceInputDraft] = useState<Record<number, string>>({});
+  const [sellPriceErrors, setSellPriceErrors] = useState<Record<number, string>>({});
   const [isSearching, setIsSearching] = useState(false);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [showAddMedicineModal, setShowAddMedicineModal] = useState(false);
   const [barcodeScanMode, setBarcodeScanMode] = useState(false);
   const [barcodeInput, setBarcodeInput] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showValidationError, setShowValidationError] = useState(false);
@@ -376,8 +383,13 @@ const PurchasingPanel: React.FC = () => {
   }, []);
 
   const barcodeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastBarcodeCharTimeRef = useRef<number>(0);
+  const barcodeIsAtScanSpeedRef = useRef<boolean>(false);
   const globalBarcodeBufferRef = useRef<string>('');
   const globalBarcodeTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastKeyMsRef = useRef<number>(0);
+  const savedScanTargetRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const scanConfirmedRef = useRef<boolean>(false);
   /** Latest full medicine list for merging inventory/pricing into cart lines */
   const medicinesRef = useRef<Medicine[]>([]);
 
@@ -543,11 +555,16 @@ const PurchasingPanel: React.FC = () => {
     }
   }, []);
 
-  const addToCart = useCallback(async (medicine: Medicine) => {
+  /** `scanned` carries batch/expiry read from a GS1 DataMatrix scan, when available. */
+  const addToCart = useCallback(async (
+    medicine: Medicine,
+    scanned?: { batchNumber?: string; expiryDate?: string }
+  ) => {
     const mergedMedicine = mergeMedicineWithCatalog(medicine);
 
     // Generate auto batch number
-    const autoBatchNumber = await generateAutoBatchNumber(medicine.id, medicine.name);
+    const autoBatchNumber =
+      scanned?.batchNumber || (await generateAutoBatchNumber(medicine.id, medicine.name));
 
     setCart((prevCart) => {
       const existingItem = prevCart.find((item) => item.medicine.id === medicine.id);
@@ -556,6 +573,7 @@ const PurchasingPanel: React.FC = () => {
         const updatedItem = recalculatePurchaseItem({
           ...existingItem,
           packetQuantity: existingItem.packetQuantity + 1,
+          expiryDate: existingItem.expiryDate || scanned?.expiryDate || '',
           medicine: mergeMedicineWithCatalog(existingItem.medicine),
         });
         return prevCart.map((item) =>
@@ -575,7 +593,7 @@ const PurchasingPanel: React.FC = () => {
         pricePerPill: 0,
         discount: 0,
         tax: 0,
-        expiryDate: '',
+        expiryDate: scanned?.expiryDate || '',
         batchNumber: autoBatchNumber,
         lineSubtotal: 0,
         lineTotal: 0,
@@ -609,27 +627,90 @@ const PurchasingPanel: React.FC = () => {
         };
 
         if (!response?.success) {
-          error(response?.error || 'Error looking up barcode. Please try again.');
+          error(
+            <div>
+              <div className="font-semibold mb-1">Barcode Lookup Failed</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>{response?.error || 'Could not search the barcode'}</li>
+                <li>Please try scanning again</li>
+              </ul>
+            </div>
+          );
           setBarcodeInput('');
           return;
         }
 
         if (response.data) {
           const medicine = response.data as Medicine;
-          addToCart(medicine);
-          setBarcodeScanMode(false);
+          // GS1 DataMatrix also carries expiry and batch. Batch is only trusted when the scan
+          // kept its GS separators — otherwise it may have swallowed the serial number.
+          const gs1 = parseGs1(code);
+          const scannedExpiry = gs1?.expiry;
+          const scannedBatch = gs1?.variableFieldsReliable ? gs1.batch : undefined;
+
+          // One cart line per medicine: a pack from a *different* batch/expiry must not be
+          // merged into it, or it would be stocked under the wrong expiry.
+          const existing = cartRef.current.find((item) => item.medicine.id === medicine.id);
+          const expiryDiffers = !!(scannedExpiry && existing?.expiryDate && existing.expiryDate !== scannedExpiry);
+          const batchDiffers = !!(scannedBatch && existing?.batchNumber && existing.batchNumber !== scannedBatch);
+          if (existing && (expiryDiffers || batchDiffers)) {
+            warning(
+              <div>
+                <div className="font-semibold mb-1">Different batch scanned — not added</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>
+                    {medicine.name} is already in this purchase
+                    {existing.batchNumber ? ` (batch ${existing.batchNumber}` : ' ('}
+                    {existing.expiryDate ? `, expiry ${existing.expiryDate})` : ')'}
+                  </li>
+                  <li>
+                    This pack is
+                    {scannedBatch ? ` batch ${scannedBatch}` : ''}
+                    {scannedExpiry ? ` expiring ${scannedExpiry}` : ''}
+                  </li>
+                  <li>Save this purchase first, then add the other batch as a new purchase</li>
+                </ul>
+              </div>
+            );
+            setBarcodeInput('');
+            return;
+          }
+
+          addToCart(medicine, { expiryDate: scannedExpiry, batchNumber: scannedBatch });
+          setIsScanning(true);
           setBarcodeInput('');
+          setTimeout(() => {
+            setIsScanning(false);
+            setBarcodeScanMode(false);
+          }, 1000);
         } else {
-          error(`Medicine with barcode "${normalized}" not found!`);
+          error(
+            <div>
+              <div className="font-semibold mb-1">Medicine Not Found</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>Barcode: <span className="font-mono">{formatBarcodeForDisplay(normalized)}</span></li>
+                <li>This medicine is not registered in the system</li>
+                <li>Go to <strong>Medicines</strong> and add it first</li>
+              </ul>
+            </div>
+          );
           setBarcodeInput('');
         }
       } catch (err) {
         console.error('Error scanning barcode:', err);
-        error('Error looking up barcode. Please try again.');
+        error(
+          <div>
+            <div className="font-semibold mb-1">Barcode Lookup Failed</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>An unexpected error occurred while scanning</li>
+              <li>Please try again</li>
+            </ul>
+          </div>
+        );
         setBarcodeInput('');
       }
     },
-    [addToCart, error]
+    [addToCart, error, warning]
   );
 
   // Debounce search to prevent firing on every keystroke
@@ -755,7 +836,15 @@ const PurchasingPanel: React.FC = () => {
 
     const selectedSupplier = suppliers.find((s) => s.id === selectedSupplierId);
     if (!selectedSupplier) {
-      error('Selected supplier not found!');
+      error(
+        <div>
+          <div className="font-semibold mb-1">Supplier Not Found</div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            <li>The selected supplier no longer exists</li>
+            <li>Please select a valid supplier from the list</li>
+          </ul>
+        </div>
+      );
       return;
     }
 
@@ -763,7 +852,15 @@ const PurchasingPanel: React.FC = () => {
 
     try {
       if (cart.some((item) => !item.expiryDate)) {
-        warning('Please set an expiry date for every medicine in the purchase.');
+        warning(
+          <div>
+            <div className="font-semibold mb-1">Expiry Date Required</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>One or more medicines have no expiry date set</li>
+              <li>Please set an expiry date for every item</li>
+            </ul>
+          </div>
+        );
         setProcessing(false);
         return;
       }
@@ -771,7 +868,13 @@ const PurchasingPanel: React.FC = () => {
       for (const item of cart) {
         if (!isExpiryValid(item.expiryDate)) {
           warning(
-            `"${item.medicine.name}" must have a valid future expiry date (today or later).`
+            <div>
+              <div className="font-semibold mb-1">Invalid Expiry Date</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li><strong>{item.medicine.name}</strong> has an invalid expiry date</li>
+                <li>Must be today or a future date</li>
+              </ul>
+            </div>
           );
           setProcessing(false);
           return;
@@ -785,7 +888,15 @@ const PurchasingPanel: React.FC = () => {
 
       // Validate payment amount
       if (paymentAmount < 0) {
-        error('Payment amount cannot be negative');
+        error(
+          <div>
+            <div className="font-semibold mb-1">Invalid Payment Amount</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>Payment amount cannot be negative</li>
+              <li>Enter 0 or a positive amount</li>
+            </ul>
+          </div>
+        );
         setProcessing(false);
         return;
       }
@@ -793,7 +904,14 @@ const PurchasingPanel: React.FC = () => {
       // payments stay the same — use “Record refund” to post money returned to the supplier.
       if (!editingPurchaseId && paymentAmount > total) {
         error(
-          `Payment amount (${paymentAmount.toFixed(2)}) cannot be greater than grand total (${total.toFixed(2)})`
+          <div>
+            <div className="font-semibold mb-1">Payment Exceeds Total</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>Entered: <strong>{paymentAmount.toFixed(2)}</strong></li>
+              <li>Grand total: <strong>{total.toFixed(2)}</strong></li>
+              <li>Payment cannot exceed the order total</li>
+            </ul>
+          </div>
         );
         setProcessing(false);
         return;
@@ -835,6 +953,7 @@ const PurchasingPanel: React.FC = () => {
           if (response.success) {
             setShowSuccess(true);
             setCart([]);
+            setSellPriceErrors({});
             setSelectedSupplierId(null);
             setNotes('');
             setPaymentAmount(0);
@@ -855,7 +974,15 @@ const PurchasingPanel: React.FC = () => {
               setShowSuccess(false);
             }, 2000);
           } else {
-            error('Error updating purchase: ' + (response.error || 'Unknown error'));
+            error(
+              <div>
+                <div className="font-semibold mb-1">Purchase Update Failed</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>{response.error || 'Unknown error'}</li>
+                  <li>Please check your entries and try again</li>
+                </ul>
+              </div>
+            );
           }
         });
 
@@ -867,6 +994,7 @@ const PurchasingPanel: React.FC = () => {
           if (response.success) {
             setShowSuccess(true);
             setCart([]);
+            setSellPriceErrors({});
             setSelectedSupplierId(null);
             setNotes('');
             setPaymentAmount(0);
@@ -886,7 +1014,15 @@ const PurchasingPanel: React.FC = () => {
               setShowSuccess(false);
             }, 2000);
           } else {
-            error('Error processing purchase: ' + (response.error || 'Unknown error'));
+            error(
+              <div>
+                <div className="font-semibold mb-1">Purchase Failed</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>{response.error || 'Unknown error'}</li>
+                  <li>Please check your entries and try again</li>
+                </ul>
+              </div>
+            );
           }
         });
 
@@ -895,12 +1031,21 @@ const PurchasingPanel: React.FC = () => {
     } catch (err) {
       console.error('Error processing purchase:', err);
       setProcessing(false);
-      error('Error processing purchase. Please try again.');
+      error(
+        <div>
+          <div className="font-semibold mb-1">Purchase Failed</div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            <li>An unexpected error occurred</li>
+            <li>Please try again</li>
+          </ul>
+        </div>
+      );
     }
   };
 
   const clearForm = useCallback(() => {
     setCart([]);
+    setSellPriceErrors({});
     setSelectedSupplierId(null);
     setNotes('');
     setPaymentAmount(0);
@@ -1092,18 +1237,35 @@ const PurchasingPanel: React.FC = () => {
           setCart(cartItems);
           setEditingPurchaseId(purchaseId);
         } else {
-          error('Failed to load purchase: ' + (response.error || 'Unknown error'));
+          error(
+            <div>
+              <div className="font-semibold mb-1">Failed to Load Purchase</div>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                <li>{response.error || 'Unknown error'}</li>
+                <li>Please try opening the purchase again</li>
+              </ul>
+            </div>
+          );
         }
       });
       window.electron.ipcRenderer.sendMessage('purchase-get-by-id', [purchaseId]);
     } catch (err) {
-      error('Error loading purchase. Please try again.');
+      error(
+        <div>
+          <div className="font-semibold mb-1">Failed to Load Purchase</div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            <li>An unexpected error occurred</li>
+            <li>Please try again</li>
+          </ul>
+        </div>
+      );
     }
   }, [error]);
 
   const cancelEdit = useCallback(() => {
     setEditingPurchaseId(null);
     setCart([]);
+    setSellPriceErrors({});
     setSelectedSupplierId(null);
     setNotes('');
     setPaymentAmount(0);
@@ -1123,13 +1285,29 @@ const PurchasingPanel: React.FC = () => {
             refreshLowStockAlerts();
             success('Purchase and related payments removed from the database.');
           } else {
-            error('Error deleting purchase: ' + (response.error || 'Unknown error'));
+            error(
+              <div>
+                <div className="font-semibold mb-1">Delete Failed</div>
+                <ul className="list-disc list-inside space-y-0.5 text-xs">
+                  <li>{response.error || 'Unknown error'}</li>
+                  <li>The purchase could not be removed</li>
+                </ul>
+              </div>
+            );
           }
         });
         window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
       } catch (err) {
         setDeleteConfirm(null);
-        error('Error deleting purchase. Please try again.');
+        error(
+          <div>
+            <div className="font-semibold mb-1">Delete Failed</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>An unexpected error occurred</li>
+              <li>Please try again</li>
+            </ul>
+          </div>
+        );
       }
     },
     [cancelEdit, loadPastPurchases]
@@ -1269,7 +1447,15 @@ const PurchasingPanel: React.FC = () => {
     if (!editingPurchaseId || overpaymentAmount <= 0.005) return;
     const amt = Math.round(refundAmountInput * 100) / 100;
     if (amt <= 0 || amt > overpaymentAmount + 0.01) {
-      error('Enter a refund amount greater than zero and not more than the overpaid amount.');
+      error(
+        <div>
+          <div className="font-semibold mb-1">Invalid Refund Amount</div>
+          <ul className="list-disc list-inside space-y-0.5 text-xs">
+            <li>Amount must be greater than zero</li>
+            <li>Cannot exceed the overpaid balance of <strong>{overpaymentAmount.toFixed(2)}</strong></li>
+          </ul>
+        </div>
+      );
       return;
     }
     const pid = editingPurchaseId;
@@ -1286,7 +1472,15 @@ const PurchasingPanel: React.FC = () => {
         });
         window.electron.ipcRenderer.sendMessage('purchase-get-by-id', [pid]);
       } else {
-        error(String(response.error || 'Failed to record refund'));
+        error(
+          <div>
+            <div className="font-semibold mb-1">Refund Failed</div>
+            <ul className="list-disc list-inside space-y-0.5 text-xs">
+              <li>{String(response.error || 'Unknown error')}</li>
+              <li>The refund could not be recorded</li>
+            </ul>
+          </div>
+        );
       }
     });
     window.electron.ipcRenderer.sendMessage('purchase-record-supplier-refund', [
@@ -1322,7 +1516,9 @@ const PurchasingPanel: React.FC = () => {
   }, [barcodeScanMode]);
 
   useEffect(() => {
-    if (barcodeScanMode && barcodeInput.length > 0) {
+    // Only auto-trigger when characters are arriving at scanner speed (<80ms gap).
+    // Manual typing is slow — for that, Enter key is the trigger (see onKeyDown below).
+    if (barcodeScanMode && barcodeInput.length > 0 && barcodeIsAtScanSpeedRef.current) {
       if (barcodeTimeoutRef.current) {
         clearTimeout(barcodeTimeoutRef.current);
       }
@@ -1351,26 +1547,51 @@ const PurchasingPanel: React.FC = () => {
     return () => window.removeEventListener('keydown', onF2, true);
   }, []);
 
+  // Global barcode scanner: intercepts ALL keypresses (capture phase) so scanner input always
+  // routes to the medicine search bar regardless of which field is currently focused.
+  //
+  // Two-phase detection:
+  //   Phase 1 — first char intercepted, 50 ms window started.
+  //     If a second char arrives within 50 ms → scanner confirmed, switch to 200 ms scan-end timer.
+  //     If 50 ms passes with no second char → human typing, release char back to the focused field.
+  //   Phase 2 — scanner confirmed, buffer accumulates until 200 ms silence, then flushed to search bar.
   useEffect(() => {
     const MIN_BARCODE_LENGTH = 4;
     const SCAN_END_MS = 200;
+    const SCANNER_SPEED_MS = 50;
 
-    const isWedgeTypingField = (el: EventTarget | null) =>
-      el instanceof Element && el.closest('[data-wedge-typing="true"]') != null;
+    const resetScanState = () => {
+      globalBarcodeBufferRef.current = '';
+      savedScanTargetRef.current = null;
+      scanConfirmedRef.current = false;
+    };
+
+    const releaseBufferToField = () => {
+      const chars = globalBarcodeBufferRef.current;
+      const el = savedScanTargetRef.current;
+      resetScanState();
+      if (!chars || !el || !document.body.contains(el)) return;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const proto = Object.getPrototypeOf(el) as typeof HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(el, el.value.slice(0, start) + chars + el.value.slice(end));
+        // number/date inputs don't support setSelectionRange — skip it for those types
+        const supportsSelection = /^(text|search|url|tel|password)$/.test(el.type);
+        if (supportsSelection) {
+          el.setSelectionRange(start + chars.length, start + chars.length);
+        }
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    };
 
     const flushGlobalBarcode = (raw: string) => {
       const normalized = normalizeScannedBarcode(raw);
-      if (!normalized || normalized.length < MIN_BARCODE_LENGTH) {
-        globalBarcodeBufferRef.current = '';
-        return;
-      }
-      globalBarcodeBufferRef.current = '';
-      setSearchTerm(normalized);
-      setShowSearchResults(true);
-      requestAnimationFrame(() => {
-        searchInputRef.current?.focus();
-      });
-      void handleBarcodeScan(normalized);
+      resetScanState();
+      if (!normalized || normalized.length < MIN_BARCODE_LENGTH) return;
+      // Pass the raw buffer: it may contain GS separators that delimit batch/serial.
+      void handleBarcodeScan(raw);
     };
 
     const handleGlobalKeydown = (event: KeyboardEvent) => {
@@ -1384,52 +1605,84 @@ const PurchasingPanel: React.FC = () => {
         return;
       }
 
-      if (isWedgeTypingField(target)) {
+      // Keyboard-wedge scanners send the GS1 group separator (GS, ASCII 29) as Ctrl+].
+      if (
+        event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        (event.key === ']' || event.code === 'BracketRight') &&
+        globalBarcodeBufferRef.current.length > 0
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        globalBarcodeBufferRef.current += '\x1d';
+        lastKeyMsRef.current = Date.now();
         return;
       }
 
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      // Always update timing before any early return so next keypress measures correctly.
+      const now = Date.now();
+      const timeSinceLast = now - lastKeyMsRef.current;
+      if (event.key.length === 1 || event.key === 'Enter') {
+        lastKeyMsRef.current = now;
       }
+
+      const isScannerSpeed = timeSinceLast < SCANNER_SPEED_MS;
+      const hasBuffer = globalBarcodeBufferRef.current.length > 0;
 
       const tag = target?.tagName?.toLowerCase();
       const isEditable =
-        tag === 'input' ||
-        tag === 'textarea' ||
-        tag === 'select' ||
-        target?.isContentEditable;
-
-      // Don't intercept typing in editable fields
-      if (isEditable) {
-        return;
-      }
+        tag === 'input' || tag === 'textarea' || tag === 'select' || target?.isContentEditable;
 
       if (event.key === 'Enter') {
-        if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
+        if (!hasBuffer) return; // nothing buffered, let Enter go to field
+        if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+        if (scanConfirmedRef.current && globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
           flushGlobalBarcode(globalBarcodeBufferRef.current);
           event.preventDefault();
           event.stopPropagation();
         } else {
-          globalBarcodeBufferRef.current = '';
+          releaseBufferToField();
         }
         return;
       }
 
-      // Only capture single printable characters (not special keys)
       if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
         event.preventDefault();
         event.stopPropagation();
-        globalBarcodeBufferRef.current += event.key;
-        if (globalBarcodeTimerRef.current) {
-          clearTimeout(globalBarcodeTimerRef.current);
+
+        // Confirm scanner if second+ char arrives at scanner speed
+        if (isScannerSpeed && hasBuffer && !scanConfirmedRef.current) {
+          scanConfirmedRef.current = true;
         }
-        globalBarcodeTimerRef.current = setTimeout(() => {
-          if (globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
-            flushGlobalBarcode(globalBarcodeBufferRef.current);
-          } else {
-            globalBarcodeBufferRef.current = '';
-          }
-        }, SCAN_END_MS);
+
+        if (!hasBuffer && isEditable) {
+          // Phase 1: first char from an editable field — save target to release back if not a scan
+          savedScanTargetRef.current =
+            target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement ? target : null;
+        }
+
+        globalBarcodeBufferRef.current += event.key;
+
+        if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
+
+        if (!scanConfirmedRef.current && isEditable) {
+          // Phase 1 timer: if no second char within 50 ms, release back to the focused field
+          globalBarcodeTimerRef.current = setTimeout(() => {
+            releaseBufferToField();
+          }, SCANNER_SPEED_MS);
+        } else {
+          // Phase 2 timer: scanner confirmed (or non-editable area), wait for scan end
+          globalBarcodeTimerRef.current = setTimeout(() => {
+            if (scanConfirmedRef.current && globalBarcodeBufferRef.current.length >= MIN_BARCODE_LENGTH) {
+              flushGlobalBarcode(globalBarcodeBufferRef.current);
+            } else {
+              releaseBufferToField();
+            }
+          }, SCAN_END_MS);
+        }
       }
     };
 
@@ -1437,10 +1690,11 @@ const PurchasingPanel: React.FC = () => {
 
     return () => {
       window.removeEventListener('keydown', handleGlobalKeydown, true);
-      if (globalBarcodeTimerRef.current) {
-        clearTimeout(globalBarcodeTimerRef.current);
-      }
+      if (globalBarcodeTimerRef.current) clearTimeout(globalBarcodeTimerRef.current);
       globalBarcodeBufferRef.current = '';
+      savedScanTargetRef.current = null;
+      scanConfirmedRef.current = false;
+      lastKeyMsRef.current = 0;
     };
   }, [barcodeScanMode, handleBarcodeScan]);
 
@@ -1472,7 +1726,7 @@ const PurchasingPanel: React.FC = () => {
       {showAddMedicineModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col">
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700 dark:border-gray-700">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Add Medicine to Purchase</h2>
                 <button
@@ -1481,9 +1735,9 @@ const PurchasingPanel: React.FC = () => {
                     setSearchTerm('');
                     setShowSearchResults(false);
                   }}
-                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700 rounded-lg transition-colors"
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 dark:bg-gray-700 rounded-lg transition-colors"
                 >
-                  <FiX className="w-6 h-6 text-gray-600 dark:text-gray-400 dark:text-gray-500" />
+                  <FiX className="w-6 h-6 text-gray-600 dark:text-gray-400" />
                 </button>
               </div>
             </div>
@@ -1513,17 +1767,17 @@ const PurchasingPanel: React.FC = () => {
                   {medicines.map((medicine) => (
                     <div
                       key={medicine.id}
-                      className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700/50 cursor-pointer transition-colors"
+                      className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-700/50 cursor-pointer transition-colors"
                       onClick={() => addToCart(medicine)}
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <h3 className="font-semibold text-gray-900 dark:text-white">{medicine.name}</h3>
                           {medicine.barcode && (
-                            <p className="text-sm text-gray-500 dark:text-gray-400 dark:text-gray-500">Barcode: {medicine.barcode}</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Barcode: {medicine.barcode}</p>
                           )}
                           <div className="flex items-center gap-4 mt-2">
-                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 dark:text-gray-500">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
                               Pills / Packet: {medicine.pillQuantity}
                             </span>
                             <span className="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300">
@@ -1547,13 +1801,13 @@ const PurchasingPanel: React.FC = () => {
                 </div>
               )}
               {showSearchResults && searchTerm && !isSearching && medicines.length === 0 && (
-                <div className="p-8 text-center text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="p-8 text-center text-gray-500 dark:text-gray-400">
                   <FiPackage className="w-16 h-16 mx-auto mb-3 text-gray-300 dark:text-gray-500" />
                   <p>No medicines found matching "{searchTerm}"</p>
                 </div>
               )}
               {!searchTerm && (
-                <div className="p-8 text-center text-gray-500 dark:text-gray-400 dark:text-gray-500">
+                <div className="p-8 text-center text-gray-500 dark:text-gray-400">
                   <FiSearch className="w-16 h-16 mx-auto mb-3 text-gray-300 dark:text-gray-500" />
                   <p className="mb-2">Start typing to search for medicines</p>
                   <p className="text-xs text-gray-400 dark:text-gray-500">
@@ -1570,51 +1824,73 @@ const PurchasingPanel: React.FC = () => {
       {barcodeScanMode && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="p-6 border-b border-gray-200 dark:border-gray-700 dark:border-gray-700 flex items-center justify-between">
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Scan Barcode</h2>
-              <button
-                onClick={() => {
-                  setBarcodeScanMode(false);
-                  setBarcodeInput('');
-                }}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700 rounded-lg transition-colors"
-              >
-                <FiX className="w-6 h-6 text-gray-600 dark:text-gray-400 dark:text-gray-500" />
-              </button>
-            </div>
-            <div className="p-6 space-y-3">
-              <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-500">
-                Scan or type a medicine barcode. If it exists in your catalogue it will be added to the purchase cart automatically so you can restock it.
-              </p>
-              <input
-                id="purchasing-barcode-scan-input"
-                ref={barcodeInputRef}
-                type="text"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    e.preventDefault();
-                    handleBarcodeScan(barcodeInput);
-                  }
-                }}
-                placeholder="Scan or type barcode..."
-                className="w-full px-4 py-3 text-lg border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-              />
-              <div className="flex justify-end gap-2 pt-2">
+            <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                  Barcode Scanner
+                </h2>
                 <button
-                  onClick={() => setBarcodeScanMode(false)}
-                  className="px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 dark:text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700/50"
+                  type="button"
+                  onClick={() => {
+                    setBarcodeScanMode(false);
+                    setBarcodeInput('');
+                    setIsScanning(false);
+                  }}
+                  className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
                 >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleBarcodeScan(barcodeInput)}
-                  className="px-4 py-2 rounded-lg bg-blue-600 dark:bg-blue-500 text-white font-semibold hover:bg-blue-700 dark:hover:bg-blue-600"
-                >
-                  Search
+                  <FiX className="w-6 h-6 text-gray-600 dark:text-gray-300" />
                 </button>
               </div>
+            </div>
+            <div className="p-6">
+              <div className="mb-4">
+                <label
+                  htmlFor="purchasing-barcode-scan-input"
+                  className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+                >
+                  Scan or Type Barcode
+                </label>
+                <input
+                  id="purchasing-barcode-scan-input"
+                  ref={barcodeInputRef}
+                  type="text"
+                  value={barcodeInput}
+                  onChange={(e) => setBarcodeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key.length === 1) {
+                      const now = Date.now();
+                      barcodeIsAtScanSpeedRef.current = (now - lastBarcodeCharTimeRef.current) < 80;
+                      lastBarcodeCharTimeRef.current = now;
+                    }
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      if (barcodeTimeoutRef.current) {
+                        clearTimeout(barcodeTimeoutRef.current);
+                        barcodeTimeoutRef.current = null;
+                      }
+                      if (barcodeInput.trim()) {
+                        handleBarcodeScan(barcodeInput);
+                      }
+                    }
+                  }}
+                  placeholder="Scan barcode or type barcode number..."
+                  className="w-full px-4 py-3 text-lg border-2 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  // eslint-disable-next-line jsx-a11y/no-autofocus
+                  autoFocus
+                />
+                {isScanning && (
+                  <div className="mt-2 p-2 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg">
+                    <p className="text-sm text-green-700 dark:text-green-300 font-medium flex items-center gap-2">
+                      <FiCheck className="w-4 h-4" />
+                      Medicine added to cart successfully!
+                    </p>
+                  </div>
+                )}
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Connect your barcode scanner and scan the medicine barcode. The
+                medicine will be automatically added to the cart.
+              </p>
             </div>
           </div>
         </div>
@@ -2287,32 +2563,24 @@ const PurchasingPanel: React.FC = () => {
                           <div className="flex h-full min-h-0 flex-col items-center justify-center gap-0.5">
                             <input
                               type="text"
-                              inputMode="decimal"
+                              inputMode="numeric"
                               autoComplete="off"
                               aria-label="Selling price per unit"
                               title="Enter the price you will charge the customer per unit for this batch"
                               value={
                                 sellPriceInputDraft[item.medicine.id] ??
-                                (item.sellingPricePerPill === 0 ? '' : String(item.sellingPricePerPill))
+                                (item.sellingPricePerPill === 0 ? '' : String(Math.round(item.sellingPricePerPill)))
                               }
                               onFocus={(e) => e.target.select()}
                               onChange={(e) => {
                                 if (isCashier && editingPurchaseId !== null && !isWithin24Hours(selectedPurchase?.createdAt)) return;
-                                const v = e.target.value;
+                                // Only allow digits — strip everything else including dots
+                                const v = e.target.value.replace(/[^0-9]/g, '');
                                 const id = item.medicine.id;
                                 setSellPriceInputDraft((prev) => ({ ...prev, [id]: v }));
-                                const numVal = parseFloat(v);
+                                const numVal = parseInt(v, 10);
                                 if (!Number.isNaN(numVal) && numVal >= 0) {
-                                  // Get cost per unit for validation
-                                  const pricing = getPricingInsights(item);
-                                  const adjustedPrice = Math.max(numVal, pricing.buyPerPill);
-
-                                  // Show notification if price was auto-adjusted
-                                  if (numVal < pricing.buyPerPill && pricing.buyPerPill > 0) {
-                                    warning(`Sell price auto-adjusted from ${formatCurrency(numVal)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
-                                  }
-
-                                  updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
+                                  updateCartItemField(id, 'sellingPricePerPill', numVal);
                                 } else if (v === '') {
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
                                 }
@@ -2320,30 +2588,38 @@ const PurchasingPanel: React.FC = () => {
                               onBlur={() => {
                                 const id = item.medicine.id;
                                 const draft = sellPriceInputDraft[id];
-                                setSellPriceInputDraft((prev) => {
-                                  const next = { ...prev };
-                                  delete next[id];
-                                  return next;
-                                });
+                                setSellPriceInputDraft((prev) => { const n = { ...prev }; delete n[id]; return n; });
                                 if (draft === undefined) return;
-                                const val = parseFloat(draft.trim());
+                                const val = parseInt(draft.trim(), 10);
                                 if (!Number.isNaN(val) && val >= 0) {
-                                  // Get cost per unit for validation
                                   const pricing = getPricingInsights(item);
-                                  const adjustedPrice = Math.max(val, pricing.buyPerPill);
-
-                                  // Show notification if price was auto-adjusted
-                                  if (val < pricing.buyPerPill && pricing.buyPerPill > 0) {
-                                    warning(`Sell price auto-adjusted from ${formatCurrency(val)} to ${formatCurrency(pricing.buyPerPill)} (minimum cost price)`);
+                                  const minPrice = Math.ceil(pricing.buyPerPill);
+                                  if (pricing.buyPerPill > 0 && val < minPrice) {
+                                    setSellPriceErrors((prev) => ({ ...prev, [id]: `Min: ${minPrice}` }));
+                                    error(
+                                      <div>
+                                        <div className="font-semibold mb-1">Sell Price Too Low</div>
+                                        <ul className="list-disc list-inside space-y-0.5 text-xs">
+                                          <li>Entered: <strong>{formatCurrency(val)}</strong></li>
+                                          <li>Please ensure the selling price is greater than the cost price.</li>
+                                        </ul>
+                                      </div>
+                                    );
+                                  } else {
+                                    setSellPriceErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
                                   }
-
-                                  updateCartItemField(id, 'sellingPricePerPill', adjustedPrice);
+                                  updateCartItemField(id, 'sellingPricePerPill', val);
                                 } else {
+                                  setSellPriceErrors((prev) => { const n = { ...prev }; delete n[id]; return n; });
                                   updateCartItemField(id, 'sellingPricePerPill', 0);
                                 }
                               }}
-                              className="w-full h-8 text-center text-[11px] font-bold bg-white dark:bg-gray-900 border-2 border-gray-100 dark:border-gray-700 rounded-lg focus:border-purple-500 outline-none transition-all dark:text-white shadow-sm"
-                              placeholder="0.00"
+                              className={`w-full h-8 text-center text-[11px] font-bold bg-white dark:bg-gray-900 border-2 rounded-lg outline-none transition-all dark:text-white shadow-sm ${
+                                sellPriceErrors[item.medicine.id]
+                                  ? 'border-red-500 dark:border-red-500 focus:border-red-500'
+                                  : 'border-gray-100 dark:border-gray-700 focus:border-purple-500'
+                              }`}
+                              placeholder="0"
                             />
                           </div>
 
@@ -2823,11 +3099,11 @@ const PurchasingPanel: React.FC = () => {
         viewPurchase && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-              <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
+              <div className="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Purchase Details - PO-{viewPurchase.id}</h3>
                 <button
                   onClick={() => setViewPurchase(null)}
-                  className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:text-gray-400 dark:text-gray-500"
+                  className="text-gray-400 dark:text-gray-400 hover:text-gray-600"
                 >
                   <FiX className="w-5 h-5" />
                 </button>
@@ -2835,11 +3111,11 @@ const PurchasingPanel: React.FC = () => {
               <div className="p-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">Supplier</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Supplier</p>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">{viewPurchase.supplierName}</p>
                   </div>
                   <div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500">Date</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">Date</p>
                     <p className="text-sm font-semibold text-gray-900 dark:text-white">{formatDate(viewPurchase.createdAt)}</p>
                   </div>
                 </div>
@@ -2863,12 +3139,12 @@ const PurchasingPanel: React.FC = () => {
                           {viewPurchase.items.map((item: any, idx: number) => (
                             <tr key={idx}>
                               <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">{item.medicineName}</td>
-                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400 dark:text-gray-500">{item.packetQuantity}</td>
-                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400 dark:text-gray-500">{item.pillsPerPacket}</td>
-                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400 dark:text-gray-500">{item.totalPills?.toLocaleString()}</td>
-                              <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300 dark:text-gray-500">{formatCurrency(item.pricePerPacket)}</td>
+                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{item.packetQuantity}</td>
+                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{item.pillsPerPacket}</td>
+                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{item.totalPills?.toLocaleString()}</td>
+                              <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(item.pricePerPacket)}</td>
                               <td className="px-3 py-2 text-right font-semibold text-gray-900 dark:text-white">{formatCurrency(item.lineTotal)}</td>
-                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400 dark:text-gray-500">{formatDate(item.expiryDate)}</td>
+                              <td className="px-3 py-2 text-center text-gray-600 dark:text-gray-400">{formatDate(item.expiryDate)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -2878,15 +3154,15 @@ const PurchasingPanel: React.FC = () => {
                 )}
                 <div className="border-t pt-4 space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Subtotal:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Subtotal:</span>
                     <span className="font-medium text-gray-900 dark:text-white">{formatCurrency(viewPurchase.subtotal || 0)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Discount Total:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Discount Total:</span>
                     <span className="font-medium text-orange-600 dark:text-orange-400">{formatCurrency(viewPurchase.discountTotal || 0)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Tax Total:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Tax Total:</span>
                     <span className="font-medium text-blue-600 dark:text-blue-400">{formatCurrency(viewPurchase.taxTotal || 0)}</span>
                   </div>
                   <div className="flex justify-between text-base font-bold border-t pt-2">
@@ -2894,18 +3170,18 @@ const PurchasingPanel: React.FC = () => {
                     <span className="text-emerald-600 dark:text-emerald-400">{formatCurrency(viewPurchase.grandTotal)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Payment Amount:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Payment Amount:</span>
                     <span className="font-medium text-emerald-600 dark:text-emerald-400">{formatCurrency(viewPurchase.paymentAmount || 0)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600 dark:text-gray-400 dark:text-gray-500">Remaining Balance:</span>
+                    <span className="text-gray-600 dark:text-gray-400">Remaining Balance:</span>
                     <span className="font-medium text-red-600 dark:text-red-400">{formatCurrency(Math.max(0, (viewPurchase.grandTotal || 0) - (viewPurchase.paymentAmount || 0)))}</span>
                   </div>
                 </div>
                 {viewPurchase.notes && (
                   <div className="border-t pt-4">
-                    <p className="text-xs text-gray-500 dark:text-gray-400 dark:text-gray-500 mb-1">Notes:</p>
-                    <p className="text-sm text-gray-700 dark:text-gray-300 dark:text-gray-500">{viewPurchase.notes}</p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">Notes:</p>
+                    <p className="text-sm text-gray-700 dark:text-gray-300">{viewPurchase.notes}</p>
                   </div>
                 )}
               </div>
@@ -2920,7 +3196,7 @@ const PurchasingPanel: React.FC = () => {
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 dark:text-gray-500 mb-6">
+              <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
                 {deleteConfirm.restoreOnCancel
                   ? `All lines were removed from screen for PO-${deleteConfirm.purchaseId}.`
                   : `Delete PO-${deleteConfirm.purchaseId} permanently?`}
@@ -2940,7 +3216,7 @@ const PurchasingPanel: React.FC = () => {
                       void loadPurchaseForEdit(pendingDelete.purchaseId);
                     }
                   }}
-                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 dark:text-gray-500 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:hover:bg-gray-600 dark:bg-gray-700/50 transition-colors font-medium"
+                  className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 dark:bg-gray-700/50 transition-colors font-medium"
                 >
                   Cancel
                 </button>

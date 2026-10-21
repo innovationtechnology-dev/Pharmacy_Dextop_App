@@ -1,7 +1,7 @@
 import { ipcMain, IpcMainEvent } from 'electron';
 import { SaleReturnService, SaleReturn } from '../services/sale-return.service';
-import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
-import { web } from 'webpack';
+import { getCurrencySymbol } from '../../../common/currency';
+import { getMedicineService } from '../services/medicine.service';
 
 export class SaleReturnController {
   private saleReturnService: SaleReturnService;
@@ -27,6 +27,8 @@ export class SaleReturnController {
       try {
         const saleReturn = args[0] as SaleReturn;
         const saleReturnId = await this.saleReturnService.createSaleReturn(saleReturn);
+        // Stock levels restored — next scan must re-read quantities from DB.
+        getMedicineService().invalidateBarcodeCache();
         event.reply('sale-return-create-reply', { success: true, data: { id: saleReturnId } });
       } catch (error) {
         console.error('Create sale return error:', error);

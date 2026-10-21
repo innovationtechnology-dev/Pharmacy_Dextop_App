@@ -17,6 +17,12 @@ import {
 } from 'react-icons/fi';
 import { getAuthUser, getAuthToken, logout as authLogout } from '../utils/auth';
 import {
+  canAccessModule,
+  fetchCashierPermissions,
+  getModuleForPath,
+  PERMISSIONS_UPDATED_EVENT,
+} from '../utils/permissions';
+import {
   DashboardHeaderConfig,
   DashboardHeaderContextValue,
   ExpiringAlert,
@@ -78,6 +84,7 @@ const Dashboard_Layout: React.FC = () => {
     '/alerts': 'Alerts Center',
     '/payments': 'Payments',
     '/financial-summary': 'Financial Summary',
+    '/medicine-analytics': 'Medicine Analytics',
     '/stocks': 'Inventory Stocks',
     '/license': 'License Management',
     '/settings': 'Settings',
@@ -120,10 +127,10 @@ const Dashboard_Layout: React.FC = () => {
     setToken(authToken);
 
     // Route Guarding
-    const cashierProhibitedRoutes = ['/dashboard', '/payments', '/financial-summary'];
     const panelVisibility = getStoredPanelVisibilitySettings();
-    
-    if (authUser.role === 'cashier' && cashierProhibitedRoutes.some(route => location.pathname.startsWith(route))) {
+    const routeModule = getModuleForPath(location.pathname);
+
+    if (routeModule && !canAccessModule(authUser, routeModule.id)) {
       navigate('/main-menu');
     } else if (authUser.role === 'admin') {
       // For admin users, check if they're trying to access a disabled panel
@@ -134,6 +141,25 @@ const Dashboard_Layout: React.FC = () => {
       }
     }
   }, [navigate, location.pathname]);
+
+  // Load the module permissions an admin has set, and leave a page once it is no longer allowed
+  useEffect(() => {
+    fetchCashierPermissions();
+  }, []);
+
+  useEffect(() => {
+    const handlePermissionsUpdate = () => {
+      const routeModule = getModuleForPath(location.pathname);
+      if (routeModule && !canAccessModule(getAuthUser(), routeModule.id)) {
+        navigate('/main-menu');
+      }
+    };
+
+    window.addEventListener(PERMISSIONS_UPDATED_EVENT, handlePermissionsUpdate);
+    return () => {
+      window.removeEventListener(PERMISSIONS_UPDATED_EVENT, handlePermissionsUpdate);
+    };
+  }, [location.pathname, navigate]);
 
   // Listen for profile updates
   useEffect(() => {
@@ -301,6 +327,7 @@ const Dashboard_Layout: React.FC = () => {
             location.pathname.includes('/purchases') ||
             location.pathname.includes('/sale-return') ||
             location.pathname.includes('/financial-summary') ||
+            location.pathname.includes('/medicine-analytics') ||
             location.pathname.includes('/stocks') ||
             location.pathname.includes('/alerts') ||
             location.pathname.includes('/dashboard')
@@ -327,6 +354,7 @@ const Dashboard_Layout: React.FC = () => {
                 location.pathname.includes('/alerts') ||
                 location.pathname.includes('/sale-return') ||
                 location.pathname.includes('/financial-summary') ||
+                location.pathname.includes('/medicine-analytics') ||
                 location.pathname.includes('/stocks') ||
                 location.pathname.includes('/dashboard')
                 ? 'p-0 flex-1 flex flex-col min-h-0 overflow-hidden h-full'
@@ -352,6 +380,7 @@ const Dashboard_Layout: React.FC = () => {
                   location.pathname.includes('/alerts') ||
                   location.pathname.includes('/sale-return') ||
                   location.pathname.includes('/financial-summary') ||
+                  location.pathname.includes('/medicine-analytics') ||
                   location.pathname.includes('/stocks') ||
                   location.pathname.includes('/dashboard')
 
@@ -377,6 +406,7 @@ const Dashboard_Layout: React.FC = () => {
                     !location.pathname.includes('/payment') &&
                     !location.pathname.includes('/alerts') &&
                     !location.pathname.includes('/financial-summary') &&
+                    !location.pathname.includes('/medicine-analytics') &&
                     !location.pathname.includes('/sale-return') &&
                     !location.pathname.includes('/stocks') &&
                     !location.pathname.includes('/dashboard') &&
@@ -532,6 +562,19 @@ const Dashboard_Layout: React.FC = () => {
                     </div>
                   )}
 
+                  {/* Compact header for medicine analytics */}
+                  {location.pathname.includes('/medicine-analytics') && (
+                    <div className="ml-3 flex-1">
+                      <PageHeader
+                        title={pageTitle || 'Medicine Analytics'}
+                        subtitle={customHeader?.subtitle}
+                        actions={customHeader?.actions}
+                        backTo="/main-menu"
+                        compact
+                      />
+                    </div>
+                  )}
+
                   {/* Compact header for alerts */}
                   {location.pathname.includes('/alerts') && (
                     <div className="ml-3 flex-1">
@@ -584,6 +627,7 @@ const Dashboard_Layout: React.FC = () => {
                       location.pathname.includes('/alerts') ||
                       location.pathname.includes('/sale-return') ||
                       location.pathname.includes('/financial-summary') ||
+                      location.pathname.includes('/medicine-analytics') ||
                       location.pathname.includes('/stocks') ||
                       location.pathname.includes('/dashboard')
                       ? 'gap-2'
@@ -621,6 +665,7 @@ const Dashboard_Layout: React.FC = () => {
                           location.pathname.includes('/alerts') ||
                           location.pathname.includes('/sale-return') ||
                           location.pathname.includes('/financial-summary') ||
+                          location.pathname.includes('/medicine-analytics') ||
                           location.pathname.includes('/stocks') ||
                           location.pathname.includes('/dashboard')
                           ? 'p-2.5 rounded-lg'
@@ -778,6 +823,7 @@ const Dashboard_Layout: React.FC = () => {
                               location.pathname.includes('/alerts') ||
                               location.pathname.includes('/sale-return') ||
                               location.pathname.includes('/financial-summary') ||
+                              location.pathname.includes('/medicine-analytics') ||
                               location.pathname.includes('/purchases') ||
                               location.pathname.includes('/dashboard')
                               ? 'w-7 h-7 rounded-full'
@@ -797,6 +843,7 @@ const Dashboard_Layout: React.FC = () => {
                           !location.pathname.includes('/payment') &&
                           !location.pathname.includes('/alerts') &&
                           !location.pathname.includes('/financial-summary') &&
+                          !location.pathname.includes('/medicine-analytics') &&
                           !location.pathname.includes('/sale-return') &&
                           !location.pathname.includes('/purchases') &&
                           !location.pathname.includes('/dashboard') && (

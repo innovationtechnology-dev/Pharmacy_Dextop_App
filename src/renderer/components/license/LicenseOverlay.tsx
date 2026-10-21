@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { FiAlertTriangle, FiX, FiCheckCircle } from 'react-icons/fi';
-import { useNavigate } from 'react-router-dom';
+import { FiAlertTriangle, FiX, FiCheckCircle, FiRefreshCw } from 'react-icons/fi';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getAuthUser, logout, User as AuthUser } from '../../utils/auth';
 import { getLicenseStatus, activateLicense, LicenseStatus } from '../../utils/license';
 import LicenseActivationDialog from './LicenseActivationDialog';
@@ -12,12 +12,14 @@ interface LicenseOverlayProps {
 
 const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(getAuthUser());
   const [licenseStatus, setLicenseStatus] = useState<LicenseStatus | null>(null);
   const [showActivationDialog, setShowActivationDialog] = useState(false);
   const [showAlert, setShowAlert] = useState(false);
   const [showSuccessAlert, setShowSuccessAlert] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [rechecking, setRechecking] = useState(false);
 
   const checkLicenseStatus = useCallback(async () => {
     try {
@@ -53,7 +55,12 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
   useEffect(() => {
     checkLicenseStatus();
     const interval = setInterval(checkLicenseStatus, 60000);
-    return () => clearInterval(interval);
+    // The License page activated a key: unlock straight away
+    window.addEventListener('license-updated', checkLicenseStatus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('license-updated', checkLicenseStatus);
+    };
   }, [checkLicenseStatus]);
 
   useEffect(() => {
@@ -87,13 +94,27 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
     }
   };
 
+  // A cashier waiting on an admin who activates on this or another computer
+  const handleCheckAgain = async () => {
+    setRechecking(true);
+    try {
+      await checkLicenseStatus();
+    } finally {
+      setRechecking(false);
+    }
+  };
+
   const [adminDismissed, setAdminDismissed] = useState(false);
   const isCashier = currentUser?.role === 'cashier';
   const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
   const { isExpired, daysUntilExpiry, isExpiringSoon } = licenseStatus || {};
 
+  // Everyone may use the License page while unlicensed, to generate and activate a key
+  const onLicensePage = location.pathname.startsWith('/license');
+  const blockContent = isCashier && isExpired && !onLicensePage;
+
   // Don't show modal if admin dismissed it for this session
-  const shouldShowExpiredModal = isExpired && (!isAdmin || !adminDismissed);
+  const shouldShowExpiredModal = isExpired && !onLicensePage && (!isAdmin || !adminDismissed);
 
   return (
     <>
@@ -108,22 +129,55 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
 
               <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">License Required</h2>
               <p className="text-sm text-gray-500 dark:text-gray-400 mb-8 leading-relaxed">
-                The software license has expired. Please provide a valid activation key to continue using pharmacy services.
+                {isAdmin
+                  ? 'The software license has expired. Please provide a valid activation key to continue using pharmacy services.'
+                  : 'The software license has expired. Open the License page to request a new license key, or ask your admin to renew it and press Check Again.'}
               </p>
 
               <div className="flex flex-col gap-3">
+                {isAdmin ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminDismissed(true);
+                      navigate('/license');
+                    }}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors shadow-sm"
+                  >
+                    Open License Page
+                  </button>
+                ) : (
+                  <>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/license')}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors shadow-sm"
+                  >
+                    Open License Page
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCheckAgain}
+                    disabled={rechecking}
+                    className="w-full py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg transition-colors shadow-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                  >
+                    <FiRefreshCw className={`w-4 h-4 ${rechecking ? 'animate-spin' : ''}`} />
+                    {rechecking ? 'Checking...' : 'Check Again'}
+                  </button>
+                  </>
+                )}
                 <button
                   type="button"
                   onClick={() => setShowActivationDialog(true)}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors shadow-sm"
+                  className="w-full py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg transition-colors shadow-sm"
                 >
-                  Activate License
+                  {isAdmin ? 'Enter License Key' : 'I Have a License Key'}
                 </button>
                 {isAdmin ? (
                   <button
                     type="button"
                     onClick={() => setAdminDismissed(true)}
-                    className="w-full py-3 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold rounded-lg transition-colors shadow-sm"
+                    className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
                   >
                     Continue as Admin
                   </button>
@@ -136,7 +190,7 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
                     }}
                     className="w-full py-3 text-sm font-bold text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
                   >
-                    Return to Login
+                    Log in as Admin
                   </button>
                 )}
               </div>
@@ -148,8 +202,8 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
       {/* Main Content Area - Stable structure to prevent remounting */}
       <div 
         style={{ 
-          pointerEvents: (isCashier && isExpired) ? 'none' : 'auto',
-          filter: (isCashier && isExpired) ? 'blur(1px)' : 'none'
+          pointerEvents: blockContent ? 'none' : 'auto',
+          filter: blockContent ? 'blur(1px)' : 'none'
         }}
       >
         {children}
@@ -201,6 +255,7 @@ const LicenseOverlay: React.FC<LicenseOverlayProps> = ({ children }) => {
           onClose={() => setShowActivationDialog(false)}
           onActivate={handleActivateLicense}
           isExpired={isExpired || false}
+          canGenerateKey={isAdmin || onLicensePage}
         />
       )}
     </>

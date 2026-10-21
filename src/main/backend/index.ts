@@ -17,6 +17,7 @@ import { CustomerController } from './controllers/customer.controller';
 import { SaleReturnController } from './controllers/sale-return.controller';
 import { LicenseController } from './controllers/license.controller';
 import { SuperAdminController } from './controllers/super-admin.controller';
+import { BackupController } from './controllers/backup.controller';
 
 export class Backend {
   private databaseController!: DatabaseController;
@@ -30,6 +31,7 @@ export class Backend {
   private saleReturnController!: SaleReturnController;
   private licenseController!: LicenseController;
   private superAdminController!: SuperAdminController;
+  private backupController?: BackupController;
 
   /**
    * Initialize backend services and controllers
@@ -75,6 +77,9 @@ export class Backend {
       // Register any additional custom handlers
       this.databaseController.registerCustomHandlers();
 
+      // Dated database copies, automatic on a schedule (Settings → Backup)
+      this.backupController = new BackupController();
+
       console.log('Backend initialized successfully');
     } catch (error) {
       console.error('Backend initialization error: ', error);
@@ -87,6 +92,7 @@ export class Backend {
    */
   public async cleanup(): Promise<void> {
     try {
+      this.backupController?.stop();
       const dbConnection = getDatabaseConnection();
       await dbConnection.close();
       console.log('Backend cleanup completed');

@@ -24,9 +24,12 @@ import {
   FiEye,
   FiChevronDown,
   FiChevronUp,
+  FiCheckCircle,
+  FiShoppingCart,
 } from 'react-icons/fi';
 import { useDashboardHeader } from './useDashboardHeader';
 import PDFPreviewModal from '../../components/common/PDFPreviewModal';
+import { KpiCard } from '../../components/reports/ReportUI';
 import { PharmacySettings, getStoredPharmacySettings } from '../../types/pharmacy';
 import { currencySymbols, getCurrencySymbol as getSymbol } from '../../../common/currency';
 
@@ -67,6 +70,26 @@ interface PaymentRecord {
   notes?: string;
   paymentDate: string;
   createdAt?: string;
+  /** Shared by the pieces of one payment that was split across several POs. */
+  batchId?: string;
+  purchaseTotal?: number;
+  /** Still unpaid on this PO right after this piece. */
+  remainingAfter?: number;
+}
+
+/** One payment as the cashier made it: total plus the pieces it was split into. */
+interface PaymentGroup {
+  key: string;
+  at: string;
+  supplierName: string;
+  companyName?: string;
+  paymentMethod: PaymentMethod;
+  referenceNumber?: string;
+  checkNumber?: string;
+  bankName?: string;
+  total: number;
+  /** In the order the money was applied (oldest purchase first). */
+  pieces: PaymentRecord[];
 }
 
 interface PaymentSummary {
@@ -99,7 +122,14 @@ interface SupplierLedgerRow {
   paymentMethod?: string;
   reference?: string;
   notes?: string;
+  /** Shared by all PO slices of one supplier payment. */
+  batchId?: string;
 }
+
+/** Ledger display item: a single row, or one supplier payment that was split across several POs. */
+type LedgerItem =
+  | { type: 'row'; row: SupplierLedgerRow }
+  | { type: 'batch'; key: string; rows: SupplierLedgerRow[] };
 
 interface SupplierAccount {
   supplierId: number;
@@ -164,17 +194,16 @@ const toLocalIsoDate = (d: Date) => {
   return `${year}-${month}-${day}`;
 };
 
-/** Column template for supplier ledger — grid lines align with Selling / Purchasing panels */
+/** Supplier ledger columns: When | What happened | Amount | Owed after | Actions */
 const supplierLedgerGridStyle: React.CSSProperties = {
-  gridTemplateColumns:
-    'minmax(142px, 1.2fr) 78px minmax(120px, 1.25fr) minmax(90px, 0.82fr) minmax(90px, 0.82fr) minmax(118px, 1.05fr) minmax(150px, 1.25fr) 90px',
+  gridTemplateColumns: 'minmax(110px, 0.7fr) minmax(320px, 3fr) minmax(150px, 1fr) minmax(170px, 1.1fr) 104px',
 };
 
 const ledgerGridHeaderClass =
-  'grid w-full gap-0 items-center border-b-2 border-gray-300 dark:border-gray-500 bg-gradient-to-r from-gray-50/90 to-gray-100/60 dark:from-gray-700/50 dark:to-gray-700/30 text-[10px] font-extrabold text-gray-700 dark:text-gray-300 uppercase tracking-wider [&>div]:flex [&>div]:items-center [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:sm:px-3 [&>div]:py-2.5';
+  'grid w-full items-center gap-4 px-4 py-2.5 border-b border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400';
 
 const ledgerGridRowClass =
-  'grid w-full gap-0 items-center border-b border-gray-200 dark:border-gray-600 last:border-b-0 text-xs transition-colors hover:bg-gradient-to-r hover:from-emerald-50/30 hover:to-transparent dark:hover:from-emerald-900/10 dark:hover:to-transparent [&>div]:border-r [&>div]:border-gray-200 dark:[&>div]:border-gray-600 [&>div:last-child]:border-r-0 [&>div]:px-2.5 [&>div]:sm:px-3 [&>div]:py-2 [&>div]:min-h-[2.75rem] [&>div]:flex [&>div]:items-center';
+  'grid w-full items-center gap-4 px-4 py-3 border-b border-gray-100 dark:border-gray-700/70 last:border-b-0 transition-colors hover:bg-gray-50/80 dark:hover:bg-gray-700/20';
 
 const Payments: React.FC = () => {
   const { setHeader } = useDashboardHeader();
@@ -204,6 +233,7 @@ const Payments: React.FC = () => {
   const [customToDate, setCustomToDate] = useState<string>('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [purchaseFilter, setPurchaseFilter] = useState<'all' | 'pending' | 'paid'>('all');
+  const [ledgerOrder, setLedgerOrder] = useState<'newest' | 'oldest'>('newest');
   const { searchTerm, setSearchTerm, handleSearchChange, immediateSearchTerm } = useDebouncedSearch('', 300);
 
   // Modal state (supplier-level total; payment is allocated oldest PO first on the server)
@@ -225,7 +255,6 @@ const Payments: React.FC = () => {
 
   const [paymentDate, setPaymentDate] = useState(today);
   const [processing, setProcessing] = useState(false);
-  const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [viewPaymentHistory, setViewPaymentHistory] = useState<Purchase | null>(null);
   /** Ledger payment row opened via eye icon (full method / ref / notes). */
   const [viewLedgerPayment, setViewLedgerPayment] = useState<SupplierLedgerRow | null>(null);
@@ -248,6 +277,7 @@ const Payments: React.FC = () => {
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [ledgerPage, setLedgerPage] = useState(1);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
   const LEDGER_ROWS_PER_PAGE = 20;
   
   // View mode state
@@ -274,13 +304,16 @@ const Payments: React.FC = () => {
 
   const formatDateTime = useCallback((value?: string) => {
     if (!value) return '—';
-    return new Date(value).toLocaleString('en-GB', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+    return new Date(value)
+      .toLocaleString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      })
+      .replace(/\b(am|pm)\b/, (m) => m.toUpperCase());
   }, []);
 
   const isToday = useCallback((dateString?: string) => {
@@ -457,7 +490,8 @@ const Payments: React.FC = () => {
             reject(response.error);
           }
         });
-        window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, true]); // true = paginated
+        // Not paginated: pieces of one payment are grouped on screen, so paging happens per payment.
+        window.electron.ipcRenderer.sendMessage('payment-get-all' as any, [filters, false]);
       } catch (err) {
         console.error('Error loading payment records:', err);
         reject(err);
@@ -686,15 +720,49 @@ const Payments: React.FC = () => {
     return rows;
   }, [supplierLedger, purchaseFilter, searchTerm]);
 
+  // Collapse PO slices of one payment into a single item, placed where its newest slice appears.
+  const ledgerItems = useMemo<LedgerItem[]>(() => {
+    const batchSizes = new Map<string, number>();
+    filteredLedger.forEach(r => {
+      if (r.kind === 'payment' && r.batchId) batchSizes.set(r.batchId, (batchSizes.get(r.batchId) || 0) + 1);
+    });
+    const items: LedgerItem[] = [];
+    const batchItems = new Map<string, { type: 'batch'; key: string; rows: SupplierLedgerRow[] }>();
+    filteredLedger.forEach(r => {
+      if (r.kind === 'payment' && r.batchId && (batchSizes.get(r.batchId) || 0) > 1) {
+        const existing = batchItems.get(r.batchId);
+        if (existing) {
+          existing.rows.push(r);
+        } else {
+          const item = { type: 'batch' as const, key: r.batchId, rows: [r] };
+          batchItems.set(r.batchId, item);
+          items.push(item);
+        }
+      } else {
+        items.push({ type: 'row', row: r });
+      }
+    });
+    return ledgerOrder === 'oldest' ? items.reverse() : items;
+  }, [filteredLedger, ledgerOrder]);
+
   const ledgerTotalPages = useMemo(
-    () => Math.max(1, Math.ceil(filteredLedger.length / LEDGER_ROWS_PER_PAGE)),
-    [filteredLedger.length],
+    () => Math.max(1, Math.ceil(ledgerItems.length / LEDGER_ROWS_PER_PAGE)),
+    [ledgerItems.length],
   );
 
-  const pagedLedgerRows = useMemo(() => {
+  const pagedLedgerItems = useMemo(() => {
     const start = (ledgerPage - 1) * LEDGER_ROWS_PER_PAGE;
-    return filteredLedger.slice(start, start + LEDGER_ROWS_PER_PAGE);
-  }, [filteredLedger, ledgerPage]);
+    return ledgerItems.slice(start, start + LEDGER_ROWS_PER_PAGE);
+  }, [ledgerItems, ledgerPage]);
+
+  const toggleBatch = useCallback((key: string) => {
+    setExpandedBatches(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     setLedgerPage(1);
@@ -745,6 +813,58 @@ const Payments: React.FC = () => {
       return b[1].date.getTime() - a[1].date.getTime();
     });
   }, [displayRecords]);
+
+  const paymentGroups = useMemo<PaymentGroup[]>(() => {
+    const groups: PaymentGroup[] = [];
+    const byKey = new Map<string, PaymentGroup>();
+    displayRecords.forEach((record) => {
+      const key = record.batchId || `single-${record.id}`;
+      let group = byKey.get(key);
+      if (!group) {
+        group = {
+          key,
+          at: record.paymentDate,
+          supplierName: record.supplierName,
+          companyName: record.companyName,
+          paymentMethod: record.paymentMethod,
+          referenceNumber: record.referenceNumber,
+          checkNumber: record.checkNumber,
+          bankName: record.bankName,
+          total: 0,
+          pieces: [],
+        };
+        byKey.set(key, group);
+        groups.push(group);
+      }
+      group.total += Number(record.amount) || 0;
+      group.pieces.push(record);
+    });
+    // Records arrive newest first; the money was applied oldest purchase first.
+    groups.forEach((g) => g.pieces.reverse());
+    return groups;
+  }, [displayRecords]);
+
+  const groupPages = Math.max(1, Math.ceil(paymentGroups.length / recordsPerPage));
+  const pagedPaymentGroups = useMemo(() => {
+    const page = Math.min(currentPage, groupPages);
+    return paymentGroups.slice((page - 1) * recordsPerPage, page * recordsPerPage);
+  }, [paymentGroups, currentPage, groupPages, recordsPerPage]);
+
+  const paymentGroupsByDate = useMemo(() => {
+    const days: { key: string; date: Date; total: number; groups: PaymentGroup[] }[] = [];
+    paymentGroups.forEach((g) => {
+      const date = new Date(g.at);
+      const key = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      let day = days.find((d) => d.key === key);
+      if (!day) {
+        day = { key, date, total: 0, groups: [] };
+        days.push(day);
+      }
+      day.total += g.total;
+      day.groups.push(g);
+    });
+    return days;
+  }, [paymentGroups]);
 
   const filteredSupplierAccounts = useMemo(() => {
     if (!searchTerm) return supplierAccounts;
@@ -910,30 +1030,6 @@ const Payments: React.FC = () => {
     }
   };
 
-  const handleDeletePurchase = async (purchaseId: number) => {
-    if (!window.confirm(`Are you sure you want to delete purchase PO-${purchaseId}? This action cannot be undone.`)) {
-      return;
-    }
-    setProcessing(true);
-    try {
-      window.electron.ipcRenderer.once('purchase-delete-reply', (response: any) => {
-        setProcessing(false);
-        setDeleteConfirm(null);
-        if (response.success) {
-          loadAllData();
-          alert('Purchase deleted successfully!');
-        } else {
-          alert('Error deleting purchase: ' + (response.error || 'Unknown error'));
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('purchase-delete', [purchaseId]);
-    } catch (err) {
-      setProcessing(false);
-      setDeleteConfirm(null);
-      alert('Error deleting purchase. Please try again.');
-    }
-  };
-
   const handleDownloadFromPreview = async () => {
     if (!pdfHtmlContent) return;
     try {
@@ -953,7 +1049,7 @@ const Payments: React.FC = () => {
           alert('Error downloading: ' + (response.error || 'Unknown error'));
         }
       });
-      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, false]);
+      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, getStoredPharmacySettings(), false]);
     } catch (err) {
       console.error(err);
       alert('Failed to download PDF');
@@ -972,6 +1068,398 @@ const Payments: React.FC = () => {
   };
 
   const hasActiveFilters = selectedSupplierId || selectedPaymentMethod || periodType !== 'all' || searchTerm;
+
+  const PAID_EPSILON = 0.005;
+
+  /** Purchase rows: where this purchase stands now (same wording as Purchase Records). */
+  const renderPurchaseStatus = (row: SupplierLedgerRow) => {
+    const total = row.grandTotal ?? row.debit;
+    const due = Math.max(0, row.remainingBalance ?? 0);
+    if (due <= PAID_EPSILON) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-green-50 dark:bg-green-900/25 px-2 py-0.5 text-xs font-semibold text-green-700 dark:text-green-300">
+          <FiCheckCircle className="w-3 h-3" /> Fully paid
+        </span>
+      );
+    }
+    if (due >= total - PAID_EPSILON) {
+      return (
+        <span className="inline-flex items-center rounded-full bg-red-50 dark:bg-red-900/25 px-2 py-0.5 text-xs font-semibold text-red-700 dark:text-red-300">
+          Unpaid
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center rounded-full bg-amber-50 dark:bg-amber-900/25 px-2 py-0.5 text-xs font-semibold text-amber-700 dark:text-amber-300">
+        {formatCurrency(due)} still due
+      </span>
+    );
+  };
+
+  /** Payment slice: what this money did to its purchase. */
+  const renderSliceOutcome = (row: SupplierLedgerRow) => {
+    const left = Math.max(0, row.poRemainingAfter ?? 0);
+    return left <= PAID_EPSILON ? (
+      <span className="inline-flex items-center gap-0.5 text-green-700 dark:text-green-400 font-semibold">
+        <FiCheckCircle className="w-3 h-3" /> now fully paid
+      </span>
+    ) : (
+      <span className="text-amber-700 dark:text-amber-400 font-semibold">{formatCurrency(left)} left</span>
+    );
+  };
+
+  const renderMethodChip = (row: SupplierLedgerRow) => {
+    const mc = row.paymentMethod ? getPaymentMethodColor(row.paymentMethod) : null;
+    if (!mc) return null;
+    return (
+      <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
+        {getPaymentMethodLabel(row.paymentMethod || '')}
+      </span>
+    );
+  };
+
+  const renderWhen = (eventAt: string, indent = false) => {
+    const d = new Date(eventAt);
+    const valid = !Number.isNaN(d.getTime());
+    return (
+      <div className={`min-w-0 leading-tight ${indent ? 'pl-5' : ''}`}>
+        <p className="text-[13px] font-medium text-gray-800 dark:text-gray-100 whitespace-nowrap">
+          {valid ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+        </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+          {valid ? d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : ''}
+        </p>
+      </div>
+    );
+  };
+
+  const renderEventIcon = (kind: 'purchase' | 'payment', small = false) => (
+    <span
+      className={`flex-shrink-0 rounded-full flex items-center justify-center ${small ? 'w-7 h-7' : 'w-9 h-9'} ${
+        kind === 'purchase'
+          ? 'bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+          : 'bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-400'
+      }`}
+    >
+      {kind === 'purchase' ? (
+        <FiShoppingCart className={small ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+      ) : (
+        <FiCreditCard className={small ? 'w-3.5 h-3.5' : 'w-4 h-4'} />
+      )}
+    </span>
+  );
+
+  /** Signed amount: + adds to what you owe, − is money paid. */
+  const renderAmount = (kind: 'purchase' | 'payment', amount: number, label?: string) => (
+    <div className="min-w-0 text-right leading-tight">
+      <p
+        className={`text-[15px] font-bold tabular-nums whitespace-nowrap ${
+          kind === 'purchase' ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'
+        }`}
+      >
+        {kind === 'purchase' ? '+ ' : '− '}
+        {formatCurrency(amount)}
+      </p>
+      <p className="text-xs text-gray-500 dark:text-gray-400">
+        {label ?? (kind === 'purchase' ? 'added to bill' : 'paid')}
+      </p>
+    </div>
+  );
+
+  const renderOwedAfter = (after: number, before?: number) => (
+    <div className="min-w-0 text-right leading-tight">
+      {after <= PAID_EPSILON ? (
+        <p className="text-[15px] font-bold text-green-700 dark:text-green-400">Nothing owed</p>
+      ) : (
+        <p className="text-[15px] font-bold tabular-nums text-gray-900 dark:text-white whitespace-nowrap">
+          {formatCurrency(after)}
+        </p>
+      )}
+      {typeof before === 'number' && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 tabular-nums whitespace-nowrap">
+          was {formatCurrency(before)}
+        </p>
+      )}
+    </div>
+  );
+
+  const iconButton =
+    'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:text-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/60 transition-colors';
+
+  const renderLedgerRow = (row: SupplierLedgerRow, child = false) => {
+    const key = row.kind === 'payment' && row.paymentId != null
+      ? `pay-${row.paymentId}`
+      : `pur-${row.purchaseId}-${row.eventAt}`;
+    const isPurchase = row.kind === 'purchase';
+    const purchase = isPurchase ? purchaseFromLedgerRow(row) : null;
+
+    return (
+      <div
+        key={key}
+        className={`${ledgerGridRowClass} ${
+          child
+            ? 'bg-gray-100/90 dark:bg-gray-900/50 hover:!bg-gray-100 dark:hover:!bg-gray-900/60 border-l-4 border-l-gray-300 dark:border-l-gray-600 text-gray-600'
+            : ''
+        }`}
+        style={supplierLedgerGridStyle}
+      >
+        {renderWhen(row.eventAt, child)}
+
+        <div className={`min-w-0 flex items-start gap-3 ${child ? 'pl-5' : ''}`}>
+          {renderEventIcon(row.kind, child)}
+          <div className="min-w-0 space-y-1">
+            {isPurchase ? (
+              <>
+                <p className="text-sm text-gray-800 dark:text-gray-100">
+                  New purchase <span className="font-semibold">PO-{row.purchaseId}</span> from{' '}
+                  <span className="font-semibold">{row.supplierName}</span>
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {renderPurchaseStatus(row)}
+                  {(row.notes || '').trim() ? (
+                    <span className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1" title={row.notes}>
+                      {row.notes}
+                    </span>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-800 dark:text-gray-100">
+                  {child ? 'Part paid to ' : (
+                    <>
+                      Paid <span className="font-semibold">{row.supplierName}</span> for{' '}
+                    </>
+                  )}
+                  <span className="font-semibold">PO-{row.purchaseId}</span>
+                </p>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="inline-flex items-center rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 px-2 py-0.5">
+                    <span className="mr-1">PO-{row.purchaseId}:</span>
+                    {renderSliceOutcome(row)}
+                  </span>
+                  {!child && renderMethodChip(row)}
+                  {!child && row.reference ? (
+                    <span className="text-gray-500 dark:text-gray-400 truncate" title={row.reference}>
+                      Ref {row.reference}
+                    </span>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {renderAmount(row.kind, isPurchase ? row.debit : row.credit, child ? 'part of payment' : undefined)}
+        {renderOwedAfter(row.balanceAfter, row.balanceBefore)}
+
+        <div className="flex items-center justify-end gap-1.5">
+          {isPurchase && purchase && (
+            <button
+              type="button"
+              onClick={() => handleViewPaymentHistory(purchase)}
+              className={iconButton}
+              title="View purchase payment history"
+            >
+              <FiEye className="w-4 h-4" />
+            </button>
+          )}
+          {!isPurchase && row.paymentId != null && (
+            <>
+              <button
+                type="button"
+                onClick={() => handleViewLedgerPaymentDetail(row)}
+                className={iconButton}
+                title="View payment details"
+              >
+                <FiEye className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeletePaymentRecord(row.paymentId!)}
+                disabled={processing}
+                className={`${iconButton} hover:!text-red-600 hover:!bg-red-50 dark:hover:!bg-red-950/25 disabled:opacity-40`}
+                title="Delete payment"
+              >
+                <FiTrash2 className="w-4 h-4" />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  /** One supplier payment split across several POs: one row with the total and where it went. */
+  const renderLedgerBatch = (item: { key: string; rows: SupplierLedgerRow[] }) => {
+    const { rows } = item;
+    const newest = rows[0];
+    const oldest = rows[rows.length - 1];
+    const total = rows.reduce((sum, r) => sum + (Number(r.credit) || 0), 0);
+    const expanded = expandedBatches.has(item.key);
+    // rows are newest first; money was applied to the oldest purchase first.
+    const slicesInPayOrder = [...rows].reverse();
+
+    return (
+      <React.Fragment key={`batch-${item.key}`}>
+        <div
+          className={`${ledgerGridRowClass} ${
+            expanded
+              ? 'bg-gray-100/90 dark:bg-gray-900/50 hover:!bg-gray-100 dark:hover:!bg-gray-900/60 border-l-4 border-l-gray-400 dark:border-l-gray-500 !border-b-gray-200 dark:!border-b-gray-700'
+              : ''
+          }`}
+          style={supplierLedgerGridStyle}
+        >
+          {renderWhen(newest.eventAt)}
+
+          <div className="min-w-0 flex items-start gap-3">
+            {renderEventIcon('payment')}
+            <div className="min-w-0 space-y-1.5">
+              <p className="text-sm text-gray-800 dark:text-gray-100">
+                Paid <span className="font-semibold">{newest.supplierName}</span>{' '}
+                <span className="font-semibold">{formatCurrency(total)}</span> — covered {rows.length} purchases
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {slicesInPayOrder.map((slice) => (
+                  <span
+                    key={`slice-${slice.paymentId ?? slice.purchaseId}`}
+                    className="inline-flex items-center gap-1 rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 px-2 py-0.5 text-gray-700 dark:text-gray-200"
+                  >
+                    <span className="font-semibold">PO-{slice.purchaseId}</span>
+                    <span className="tabular-nums">{formatCurrency(Number(slice.credit) || 0)}</span>
+                    <span className="text-gray-400">→</span>
+                    {renderSliceOutcome(slice)}
+                  </span>
+                ))}
+                {renderMethodChip(newest)}
+              </div>
+            </div>
+          </div>
+
+          {renderAmount('payment', total, `paid · ${rows.length} purchases`)}
+          {renderOwedAfter(newest.balanceAfter, oldest.balanceBefore)}
+
+          <div className="flex items-center justify-end">
+            <button
+              type="button"
+              onClick={() => toggleBatch(item.key)}
+              className="inline-flex h-8 items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-600 px-2.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
+              title={expanded ? 'Hide the separate parts' : 'Show each part (view or delete)'}
+            >
+              {expanded ? <FiChevronUp className="w-3.5 h-3.5" /> : <FiChevronDown className="w-3.5 h-3.5" />}
+              Parts
+            </button>
+          </div>
+        </div>
+        {expanded && (ledgerOrder === 'oldest' ? slicesInPayOrder : rows).map(r => renderLedgerRow(r, true))}
+      </React.Fragment>
+    );
+  };
+
+  const recordsGridStyle: React.CSSProperties = {
+    gridTemplateColumns: 'minmax(110px, 0.7fr) minmax(170px, 1.2fr) minmax(300px, 2.6fr) minmax(150px, 1fr) 48px',
+  };
+
+  /** Where one piece of a payment went, and what it left on that purchase. */
+  const renderPaymentPiece = (piece: PaymentRecord, canDelete: boolean) => {
+    const left = Math.max(0, piece.remainingAfter ?? 0);
+    return (
+      <div
+        key={piece.id}
+        className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-gray-700 dark:text-gray-200"
+      >
+        <span className="inline-flex min-w-[52px] font-semibold text-gray-900 dark:text-white">PO-{piece.purchaseId}</span>
+        <span className="tabular-nums text-green-700 dark:text-green-400 font-medium">{formatCurrency(Number(piece.amount) || 0)}</span>
+        <span className="text-gray-300 dark:text-gray-600">→</span>
+        {left <= PAID_EPSILON ? (
+          <span className="inline-flex items-center gap-1 font-semibold text-green-700 dark:text-green-400">
+            <FiCheckCircle className="w-3.5 h-3.5" /> now fully paid
+          </span>
+        ) : (
+          <span className="font-semibold text-amber-700 dark:text-amber-400">{formatCurrency(left)} still due</span>
+        )}
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => handleDeletePaymentRecord(piece.id)}
+            className="ml-1 p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+            title="Delete this part (today only)"
+          >
+            <FiTrash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
+  const renderPaymentGroupRow = (group: PaymentGroup) => {
+    const d = new Date(group.at);
+    const methodColor = getPaymentMethodColor(group.paymentMethod);
+    const split = group.pieces.length > 1;
+    const deletable = isToday(group.at);
+    return (
+      <div
+        key={group.key}
+        className="grid items-center gap-4 px-4 py-3.5 border-b border-gray-100 dark:border-gray-700/70 hover:bg-gray-50/80 dark:hover:bg-gray-700/20 transition-colors"
+        style={recordsGridStyle}
+      >
+        <div className="leading-tight">
+          <p className="text-[13px] font-medium text-gray-800 dark:text-gray-100 whitespace-nowrap">
+            {d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">
+            {d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+          </p>
+        </div>
+
+        <div className="min-w-0 space-y-1">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{group.supplierName}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
+              {getPaymentMethodLabel(group.paymentMethod)}
+            </span>
+            {(group.checkNumber || group.referenceNumber) && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                {group.checkNumber ? `Cheque ${group.checkNumber}` : `Ref ${group.referenceNumber}`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-0 space-y-1">
+          {split && (
+            <p className="text-xs text-gray-600 dark:text-gray-300">
+              You paid <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(group.total)}</span> at once
+              {' — '}split automatically, oldest purchase first:
+            </p>
+          )}
+          {group.pieces.map((piece) => renderPaymentPiece(piece, split && deletable))}
+        </div>
+
+        <div className="text-right leading-tight">
+          <p className="text-[15px] font-bold tabular-nums text-green-600 dark:text-green-400 whitespace-nowrap">
+            {formatCurrency(group.total)}
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            {split ? `paid · ${group.pieces.length} purchases` : 'paid'}
+          </p>
+        </div>
+
+        <div className="flex justify-end">
+          {!split && deletable && (
+            <button
+              type="button"
+              onClick={() => handleDeletePaymentRecord(group.pieces[0].id)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-600 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30"
+              title="Delete payment (today only)"
+            >
+              <FiTrash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex flex-col h-auto md:h-[calc(100vh-80px)] w-full bg-gradient-to-br from-gray-50 via-gray-50 to-gray-100/50 dark:from-gray-900 dark:via-gray-900 dark:to-gray-800/80 overflow-visible md:overflow-hidden px-4 pb-4 md:pb-0">
@@ -1029,303 +1517,147 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      {/* Stats Header - Matching Sales Report Design */}
-      {loading ? (
-        <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
-          {/* Skeleton loaders for stats */}
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="flex items-center gap-1.5 bg-gray-100 dark:bg-gray-700 px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-600 shadow-sm animate-pulse">
-              <div className="w-3.5 h-3.5 bg-gray-300 dark:bg-gray-600 rounded" />
-              <div className="w-16 h-3 bg-gray-300 dark:bg-gray-600 rounded mr-2" />
-              <div className="w-24 h-3 bg-gray-300 dark:bg-gray-600 rounded" />
-            </div>
-          ))}
-          <button
-            onClick={loadAllData}
-            disabled
-            className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md uppercase tracking-wide flex items-center gap-1.5 shadow-sm opacity-50 cursor-not-allowed"
-          >
-            <FiRefreshCw className="w-3.5 h-3.5 animate-spin" />
-            Refresh
-          </button>
-        </div>
-      ) : (
-        <div className="bg-gradient-to-br from-white via-white to-gray-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-gray-800/90 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm p-3 mb-2 flex flex-wrap items-center gap-3 flex-shrink-0">
-          <div className="flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/20 px-2.5 py-1.5 rounded-md border border-blue-200 dark:border-blue-600/50 shadow-sm">
-            <FiDollarSign className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Purchases</span>
-            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 ml-1">
-              {formatCurrency(paymentSummary?.totalPurchases || 0)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/20 px-2.5 py-1.5 rounded-md border border-emerald-200 dark:border-emerald-600/50 shadow-sm">
-            <FiTrendingUp className="w-3.5 h-3.5 text-emerald-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Paid</span>
-            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 ml-1">
-              {formatCurrency(paymentSummary?.totalPaid || 0)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 bg-orange-50 dark:bg-orange-900/20 px-2.5 py-1.5 rounded-md border border-orange-200 dark:border-orange-600/50 shadow-sm">
-            <FiTrendingDown className="w-3.5 h-3.5 text-orange-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Outstanding</span>
-            <span className="text-xs font-bold text-orange-600 dark:text-orange-400 ml-1">
-              {formatCurrency(paymentSummary?.totalRemaining || 0)}
-            </span>
-          </div>
-
-          <div className="flex items-center gap-1.5 bg-green-50 dark:bg-green-900/20 px-2.5 py-1.5 rounded-md border border-green-200 dark:border-green-600/50 shadow-sm">
-            <FiDollarSign className="w-3.5 h-3.5 text-green-500" />
-            <span className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wide">Cash</span>
-            <span className="text-xs font-bold text-green-600 dark:text-green-400 ml-1">
-              {formatCurrency(paymentSummary?.cashPayments || 0)}
-            </span>
-          </div>
-
-          <button
-            onClick={loadAllData}
-            className="ml-auto px-3 py-1.5 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-xs font-semibold rounded-md transition-colors uppercase tracking-wide flex items-center gap-1.5 shadow-sm"
-          >
-            <FiRefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      )}
-
-
-      {/* Date Selection - Prominent */}
-      <div className="bg-gradient-to-br from-white via-white to-blue-50/30 dark:from-gray-800 dark:via-gray-800 dark:to-blue-900/10 rounded-lg border border-blue-200/50 dark:border-blue-800/30 shadow-md p-3 mb-2 flex-shrink-0">
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <FiCalendar className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-            <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">Select Date Range:</span>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => {
-                setPeriodType('today');
-                setCustomFromDate('');
-                setCustomToDate('');
-                setShowDatePicker(false);
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                periodType === 'today'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              Today
-            </button>
-            <button
-              onClick={() => {
-                setPeriodType('week');
-                setCustomFromDate('');
-                setCustomToDate('');
-                setShowDatePicker(false);
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                periodType === 'week'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              This Week
-            </button>
-            <button
-              onClick={() => {
-                setPeriodType('month');
-                setCustomFromDate('');
-                setCustomToDate('');
-                setShowDatePicker(false);
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                periodType === 'month'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              This Month
-            </button>
-            <button
-              onClick={() => {
-                setPeriodType('year');
-                setCustomFromDate('');
-                setCustomToDate('');
-                setShowDatePicker(false);
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                periodType === 'year'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              This Year
-            </button>
-
-            {/* Inline Custom Date Picker */}
-            {showDatePicker && periodType === 'custom' && (
-              <div className="flex items-center gap-2.5 animate-in fade-in slide-in-from-left-2 mx-1 px-3 border-l border-r border-gray-200 dark:border-gray-700/50">
-                <div className="flex items-center gap-1.5">
-                  <label className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-tighter">FROM:</label>
-                  <input
-                    type="date"
-                    value={customFromDate}
-                    max={today}
-                    onChange={(e) => setCustomFromDate(e.target.value)}
-                    className="appearance-none bg-gray-100 dark:bg-[#1a2130] text-gray-700 dark:text-white border border-gray-300 dark:border-gray-600 px-2.5 py-1 rounded-md text-[11px] font-bold outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-                  />
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <label className="text-[10px] font-black text-gray-500 dark:text-gray-400 uppercase tracking-tighter">TO:</label>
-                  <input
-                    type="date"
-                    value={customToDate}
-                    max={today}
-                    onChange={(e) => setCustomToDate(e.target.value)}
-                    className="appearance-none bg-gray-100 dark:bg-[#1a2130] text-gray-700 dark:text-white border border-gray-300 dark:border-gray-600 px-2.5 py-1 rounded-md text-[11px] font-bold outline-none focus:ring-1 focus:ring-emerald-500/50 transition-all"
-                  />
-                </div>
-                <button
-                  onClick={() => setShowDatePicker(false)}
-                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"
-                >
-                  <FiX className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
-
-            <button
-              onClick={() => {
-                setShowDatePicker(!showDatePicker);
-                if (!showDatePicker) {
-                  setPeriodType('custom');
-                  if (!customFromDate || !customToDate) {
-                    setCustomFromDate(today);
-                    setCustomToDate(today);
-                  }
-                }
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all flex items-center gap-2 ${
-                periodType === 'custom'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              <FiCalendar className="w-4 h-4" />
-              Custom Date
-            </button>
-            <button
-              onClick={() => {
-                setPeriodType('all');
-                setCustomFromDate('');
-                setCustomToDate('');
-                setShowDatePicker(false);
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${
-                periodType === 'all'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-              }`}
-            >
-              All Time
-            </button>
-          </div>
-        </div>
-        
-
+      {/* Summary: three plain numbers */}
+      <div className="flex-shrink-0 grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
+        <KpiCard
+          tone="blue"
+          icon={<FiShoppingCart className="w-4 h-4" />}
+          label="Total bought"
+          value={loading ? '…' : formatCurrency(paymentSummary?.totalPurchases || 0)}
+          hint="All purchases in this period"
+        />
+        <KpiCard
+          tone="emerald"
+          icon={<FiCheckCircle className="w-4 h-4" />}
+          label="Total paid"
+          value={loading ? '…' : formatCurrency(paymentSummary?.totalPaid || 0)}
+          hint={loading ? undefined : `Cash ${formatCurrency(paymentSummary?.cashPayments || 0)}`}
+        />
+        <KpiCard
+          tone={(paymentSummary?.totalRemaining || 0) > 0 ? 'rose' : 'emerald'}
+          icon={<FiAlertCircle className="w-4 h-4" />}
+          label="You still owe"
+          value={loading ? '…' : formatCurrency(paymentSummary?.totalRemaining || 0)}
+          hint={(paymentSummary?.totalRemaining || 0) > 0 ? 'Unpaid to suppliers' : 'Everything is paid'}
+        />
       </div>
 
-      {/* Other Filters - Compact & Integrated */}
-      <div className="flex flex-wrap gap-4 items-center px-1 py-1 mb-2">
-        <div className="flex-1 min-w-[300px]">
-          <div className="relative group">
-            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
+      {/* One toolbar: search, supplier, period, (status), add payment */}
+      <div className="flex-shrink-0 mt-3 mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2.5 shadow-sm">
+        <div className="relative flex-1 min-w-[220px]">
+          <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Search supplier, PO number or reference…"
+            value={immediateSearchTerm}
+            onChange={handleSearchChange}
+            className="w-full h-9 pl-9 pr-3 text-sm bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 placeholder:text-gray-400"
+          />
+        </div>
+
+        <select
+          value={selectedSupplierId || ''}
+          onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
+          className="h-9 px-3 text-sm bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-emerald-500/30 cursor-pointer"
+          title="Supplier"
+        >
+          <option value="">All suppliers</option>
+          {suppliers.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name} {s.companyName ? `(${s.companyName})` : ''}
+            </option>
+          ))}
+        </select>
+
+        <div className="flex items-center gap-2 h-9 px-3 bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg">
+          <FiCalendar className="w-4 h-4 text-gray-400" />
+          <select
+            value={periodType}
+            onChange={(e) => {
+              const next = e.target.value as PeriodType;
+              setPeriodType(next);
+              if (next === 'custom') {
+                setShowDatePicker(true);
+                if (!customFromDate || !customToDate) {
+                  setCustomFromDate(today);
+                  setCustomToDate(today);
+                }
+              } else {
+                setShowDatePicker(false);
+                setCustomFromDate('');
+                setCustomToDate('');
+              }
+            }}
+            className="bg-transparent text-sm text-gray-700 dark:text-gray-200 outline-none cursor-pointer"
+            title="Period"
+          >
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+            <option value="month">This month</option>
+            <option value="year">This year</option>
+            <option value="custom">Pick dates…</option>
+          </select>
+        </div>
+
+        {periodType === 'custom' && (
+          <div className="flex items-center gap-2 h-9 px-3 bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg">
             <input
-              type="text"
-              placeholder="Search supplier, PO#, reference..."
-              value={immediateSearchTerm}
-              onChange={handleSearchChange}
-              className="w-full pl-10 pr-4 py-2 text-sm bg-gray-100/50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 rounded-lg focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 outline-none transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500"
+              type="date"
+              aria-label="From date"
+              value={customFromDate}
+              max={today}
+              onChange={(e) => setCustomFromDate(e.target.value)}
+              className="bg-transparent text-sm text-gray-700 dark:text-gray-200 outline-none"
+            />
+            <span className="text-gray-300">→</span>
+            <input
+              type="date"
+              aria-label="To date"
+              value={customToDate}
+              max={today}
+              onChange={(e) => setCustomToDate(e.target.value)}
+              className="bg-transparent text-sm text-gray-700 dark:text-gray-200 outline-none"
             />
           </div>
-        </div>
-        
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-gray-100/50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 px-3 py-1.5 rounded-lg group focus-within:ring-2 focus-within:ring-emerald-500/20 focus-within:border-emerald-500/50 transition-all">
-            <FiFilter className="w-3.5 h-3.5 text-gray-400 group-focus-within:text-emerald-500" />
-            <select
-              value={selectedSupplierId || ''}
-              onChange={(e) => setSelectedSupplierId(e.target.value ? parseInt(e.target.value) : null)}
-              className="bg-transparent text-sm text-gray-700 dark:text-gray-200 outline-none min-w-[160px] font-medium cursor-pointer"
-            >
-              <option value="" className="dark:bg-gray-800">All Suppliers</option>
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id} className="dark:bg-gray-800">
-                  {s.name} {s.companyName ? `(${s.companyName})` : ''}
-                </option>
+        )}
+
+        {activeTab === 'records' && (
+          <select
+            value={selectedPaymentMethod || ''}
+            onChange={(e) => setSelectedPaymentMethod(e.target.value as PaymentMethod || null)}
+            className="h-9 px-3 text-sm bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 outline-none cursor-pointer"
+            title="Payment method"
+          >
+            <option value="">All methods</option>
+            <option value="cash">Cash</option>
+            <option value="bank_transfer">Bank transfer</option>
+            <option value="check">Cheque</option>
+            <option value="online">Online</option>
+          </select>
+        )}
+
+        {activeTab === 'payments' && (
+          <>
+            <div className="inline-flex h-9 items-center rounded-lg bg-gray-100 dark:bg-gray-900/60 p-1">
+              {([
+                ['all', `All (${ledgerPurchaseStats.all})`],
+                ['pending', `Still owed (${ledgerPurchaseStats.pending})`],
+                ['paid', `Paid off (${ledgerPurchaseStats.paid})`],
+              ] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setPurchaseFilter(id)}
+                  className={`h-7 px-3 rounded-md text-xs font-semibold transition-all ${
+                    purchaseFilter === id
+                      ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
               ))}
-            </select>
-          </div>
-
-          {activeTab === 'records' && (
-            <div className="flex items-center gap-2 bg-gray-100/50 dark:bg-gray-800/40 border border-gray-200 dark:border-gray-700/50 px-3 py-1.5 rounded-lg group focus-within:ring-2 focus-within:ring-emerald-500/20 transition-all">
-              <select
-                value={selectedPaymentMethod || ''}
-                onChange={(e) => setSelectedPaymentMethod(e.target.value as PaymentMethod || null)}
-                className="bg-transparent text-sm text-gray-700 dark:text-gray-200 outline-none font-medium cursor-pointer"
-              >
-                <option value="" className="dark:bg-gray-800">All Methods</option>
-                <option value="cash" className="dark:bg-gray-800">Cash</option>
-                <option value="bank_transfer" className="dark:bg-gray-800">Bank Transfer</option>
-                <option value="check" className="dark:bg-gray-800">Check</option>
-                <option value="online" className="dark:bg-gray-800">Online</option>
-              </select>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Make Payments Tab */}
-      {activeTab === 'payments' && (
-        <div className="overflow-y-auto space-y-3">
-
-          {/* Ledger toolbar: filters + Add Payment */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/90 dark:bg-gray-800/80 p-1 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setPurchaseFilter('all')}
-                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  purchaseFilter === 'all'
-                    ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm ring-1 ring-gray-200/80 dark:ring-gray-600'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-                }`}
-              >
-                All <span className="tabular-nums opacity-80">{ledgerPurchaseStats.all}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPurchaseFilter('pending')}
-                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  purchaseFilter === 'pending'
-                    ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-900 dark:text-amber-100 shadow-sm ring-1 ring-amber-200/80 dark:ring-amber-800/60'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-amber-800 dark:hover:text-amber-200'
-                }`}
-              >
-                Pending <span className="tabular-nums opacity-80">{ledgerPurchaseStats.pending}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setPurchaseFilter('paid')}
-                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  purchaseFilter === 'paid'
-                    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100 shadow-sm ring-1 ring-emerald-200/80 dark:ring-emerald-800/50'
-                    : 'text-gray-600 dark:text-gray-400 hover:text-emerald-800 dark:hover:text-emerald-200'
-                }`}
-              >
-                Paid <span className="tabular-nums opacity-80">{ledgerPurchaseStats.paid}</span>
-              </button>
             </div>
             <button
               type="button"
@@ -1333,20 +1665,40 @@ const Payments: React.FC = () => {
                 resetPaymentForm();
                 setShowAddPaymentModal(true);
               }}
-              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900"
+              className="ml-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-lg bg-emerald-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
             >
               <FiPlus className="h-4 w-4" />
-              Add Payment
+              Pay supplier
             </button>
-          </div>
+          </>
+        )}
+      </div>
 
-          <div className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/60 dark:bg-gray-800/40 px-3 py-2 text-[11px] leading-relaxed text-gray-600 dark:text-gray-400">
-            <span className="font-semibold text-gray-700 dark:text-gray-300">Newest first.</span>{' '}
-            Balance = running payable after the row (see “Was” line for balance before the row). Debit / credit = this row only.
-          </div>
+      {/* Make Payments Tab */}
+      {activeTab === 'payments' && (
+        // Fills the remaining height; only the ledger rows scroll (no second, outer scrollbar).
+        <div className="flex-1 min-h-0 flex flex-col gap-3 pb-4">
 
           {/* Supplier ledger — grid lines (Selling / Purchasing style) */}
-          <div className="rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+            <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Supplier account history</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Purchases <span className="font-semibold text-red-600 dark:text-red-400">add</span> to what you owe, payments{' '}
+                  <span className="font-semibold text-green-600 dark:text-green-400">reduce</span> it. A payment always clears the oldest unpaid purchase first.
+                </p>
+              </div>
+              <select
+                value={ledgerOrder}
+                onChange={(e) => setLedgerOrder(e.target.value as 'newest' | 'oldest')}
+                className="h-8 px-2.5 text-xs font-medium bg-white dark:bg-gray-900/40 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 outline-none cursor-pointer"
+                title="Order"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+            </div>
             {loading ? (
               <div className="flex items-center justify-center py-14">
                 <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
@@ -1365,156 +1717,25 @@ const Payments: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <div className="overflow-x-hidden">
-                <div className="w-full">
-                  <div className={ledgerGridHeaderClass} style={supplierLedgerGridStyle}>
-                    <div>{'Date & time'}</div>
-                    <div className="justify-center text-center">Type</div>
-                    <div className="min-w-0 justify-center text-center">Supplier</div>
-                    <div className="justify-end text-right">Debit</div>
-                    <div className="justify-end text-right">Credit</div>
-                    <div className="justify-center text-center">Balance</div>
-                    <div className="min-w-0 justify-center text-center">Notes</div>
-                    <div className="justify-center">Act.</div>
+              <div className="flex-1 min-h-0 flex flex-col overflow-x-hidden">
+                <div className="flex-1 min-h-0 flex flex-col w-full">
+                  <div className={`${ledgerGridHeaderClass} flex-shrink-0`} style={supplierLedgerGridStyle}>
+                    <div>When</div>
+                    <div>What happened</div>
+                    <div className="text-right">Amount</div>
+                    <div className="text-right">You owe after</div>
+                    <div />
                   </div>
-                  <div className="max-h-[58vh] overflow-y-auto">
-                  {pagedLedgerRows.map((row) => {
-                    const key = row.kind === 'payment' && row.paymentId != null
-                      ? `pay-${row.paymentId}`
-                      : `pur-${row.purchaseId}-${row.eventAt}`;
-                    const isPurchase = row.kind === 'purchase';
-                    const purchase = isPurchase ? purchaseFromLedgerRow(row) : null;
-                    const mc = row.paymentMethod ? getPaymentMethodColor(row.paymentMethod) : null;
-
-                    return (
-                      <div key={key} className={ledgerGridRowClass} style={supplierLedgerGridStyle}>
-                        <div className="min-w-0 text-[11px] text-gray-600 dark:text-gray-400 font-medium tabular-nums whitespace-nowrap">
-                          {formatDateTime(row.eventAt)}
-                        </div>
-                        <div className="min-w-0 flex justify-center">
-                          {isPurchase ? (
-                            <span
-                              className="inline-flex items-center rounded-md border-2 border-red-200 bg-gradient-to-br from-red-50 to-orange-50/80 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-red-700 shadow-sm ring-1 ring-red-100 dark:border-red-800/70 dark:from-red-950/40 dark:to-red-950/20 dark:text-red-300 dark:ring-red-900/40"
-                              title="Purchase (adds to supplier balance)"
-                            >
-                              Purchase
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center rounded-md border-2 border-green-300 bg-gradient-to-br from-green-50 to-emerald-50/90 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wide text-green-700 shadow-sm ring-1 ring-green-100 dark:border-green-700 dark:from-green-950/45 dark:to-emerald-950/30 dark:text-green-300 dark:ring-green-900/35"
-                              title="Payment (reduces supplier balance)"
-                            >
-                              Payment
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0 justify-center text-center font-medium text-gray-900 dark:text-gray-100 truncate text-[11px]" title={row.supplierName}>
-                          {row.supplierName}
-                        </div>
-                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
-                          {row.debit > 0 ? (
-                            <span className="text-red-600 dark:text-red-400">{formatCurrency(row.debit)}</span>
-                          ) : (
-                            <span className="text-gray-400 dark:text-gray-500">—</span>
-                          )}
-                        </div>
-                        <div className="min-w-0 justify-end text-right font-medium tabular-nums text-[11px]">
-                          {row.credit > 0 ? (
-                            <span className="text-green-600 dark:text-green-400">{formatCurrency(row.credit)}</span>
-                          ) : (
-                            <span className="text-gray-400 dark:text-gray-500">—</span>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex flex-col items-end justify-center gap-0 leading-tight">
-                          <span className={`font-semibold tabular-nums text-[11px] ${row.balanceAfter <= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'}`}>
-                            {formatCurrency(row.balanceAfter)}
-                          </span>
-                          {typeof row.balanceBefore === 'number' && (
-                            <span className="text-[9px] font-medium text-gray-400 dark:text-gray-500 tabular-nums">
-                              Was {formatCurrency(row.balanceBefore)}
-                            </span>
-                          )}
-                        </div>
-                        <div className="min-w-0 flex flex-col items-start justify-center gap-0.5 py-0.5">
-                          {isPurchase ? (
-                            <span className="text-[10px] text-gray-500 dark:text-gray-400 tabular-nums">PO-{row.purchaseId}</span>
-                          ) : (
-                            <>
-                              <span className="text-[10px] font-medium text-gray-600 dark:text-gray-300 tabular-nums">PO-{row.purchaseId}</span>
-                              {mc ? (
-                                <span className={`inline-flex w-fit max-w-full truncate rounded border px-1.5 py-0.5 text-[9px] font-bold ${mc.bg} ${mc.text} ${mc.border}`}>
-                                  {getPaymentMethodLabel(row.paymentMethod || '')}
-                                </span>
-                              ) : null}
-                              {row.reference ? (
-                                <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-full" title={row.reference}>
-                                  {row.reference}
-                                </span>
-                              ) : null}
-                            </>
-                          )}
-                          {isPurchase && (row.notes || '').trim() ? (
-                            <span className="text-[10px] text-gray-500 dark:text-gray-400 line-clamp-2 leading-snug" title={row.notes}>
-                              {row.notes}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="justify-center gap-0.5">
-                          <div className="flex items-center justify-center gap-0.5 flex-wrap">
-                            {isPurchase && purchase && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewPaymentHistory(purchase)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                  title="History"
-                                >
-                                  <FiEye className="w-3.5 h-3.5" />
-                                </button>
-                                {isToday(row.eventAt) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setDeleteConfirm(row.purchaseId)}
-                                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
-                                    title="Delete PO (today)"
-                                  >
-                                    <FiTrash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </>
-                            )}
-                            {!isPurchase && row.paymentId != null && (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => handleViewLedgerPaymentDetail(row)}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700/60"
-                                  title="View payment details"
-                                >
-                                  <FiEye className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeletePaymentRecord(row.paymentId!)}
-                                  disabled={processing}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-red-400 hover:border-red-200 hover:bg-red-50/80 dark:hover:bg-red-950/25 disabled:opacity-40"
-                                  title="Delete payment"
-                                >
-                                  <FiTrash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                  <div className="flex-1 min-h-0 overflow-y-auto">
+                  {pagedLedgerItems.map((item) =>
+                    item.type === 'row' ? renderLedgerRow(item.row) : renderLedgerBatch(item),
+                  )}
                   </div>
                   {filteredLedger.length > 0 && (
-                    <div className="border-t border-gray-200 dark:border-gray-600 px-3 py-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
+                    <div className="flex-shrink-0 border-t border-gray-200 dark:border-gray-600 px-3 py-2 flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
                       <span>
                         Showing {((ledgerPage - 1) * LEDGER_ROWS_PER_PAGE) + 1} to{' '}
-                        {Math.min(ledgerPage * LEDGER_ROWS_PER_PAGE, filteredLedger.length)} of {filteredLedger.length}
+                        {Math.min(ledgerPage * LEDGER_ROWS_PER_PAGE, ledgerItems.length)} of {ledgerItems.length}
                       </span>
                       <div className="flex items-center gap-1">
                         <button
@@ -1889,300 +2110,134 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      {/* Payment Records Tab */}
+      {/* Payment Records Tab: one row per payment, with how it was split */}
       {activeTab === 'records' && (
-        <div className="space-y-4 overflow-y-auto">
-          {/* View Mode Toggle */}
-          <div className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 p-4">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300">View Mode:</span>
-              <button
-                onClick={() => setRecordsViewMode('table')}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                  recordsViewMode === 'table'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                <FiFileText className="w-4 h-4 inline mr-2" />
-                Table View
-              </button>
-              <button
-                onClick={() => setRecordsViewMode('timeline')}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
-                  recordsViewMode === 'timeline'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                }`}
-              >
-                <FiCalendar className="w-4 h-4 inline mr-2" />
-                Timeline View
-              </button>
-            </div>
-            {recordsViewMode === 'timeline' && (
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                {recordsByDate.length} day{recordsByDate.length !== 1 ? 's' : ''} • {displayRecords.length} record{displayRecords.length !== 1 ? 's' : ''}
+        <div className="flex-1 min-h-0 flex flex-col pb-4">
+          <div className="flex-1 min-h-0 flex flex-col rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
+            <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 dark:border-gray-700">
+              <div>
+                <h2 className="text-sm font-bold text-gray-900 dark:text-white">Payments made</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Each row is one payment. When you pay a supplier, the money automatically clears their{' '}
+                  <span className="font-semibold">oldest unpaid purchase first</span>, then the next one.
+                </p>
               </div>
-            )}
-          </div>
+              <div className="inline-flex rounded-lg bg-gray-100 dark:bg-gray-900/60 p-1">
+                {(['table', 'timeline'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setRecordsViewMode(mode)}
+                    className={`h-7 px-3 rounded-md text-xs font-semibold transition-all ${
+                      recordsViewMode === mode
+                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                    }`}
+                  >
+                    {mode === 'table' ? 'List' : 'By day'}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-          <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm overflow-hidden">
             {loading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
-                <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
-                <span className="text-sm font-medium">Loading payment records...</span>
+              <div className="flex items-center justify-center py-12">
+                <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
+                  <div className="w-10 h-10 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+                  <span className="text-sm font-medium">Loading payments…</span>
+                </div>
               </div>
-            </div>
-          ) : displayRecords.length === 0 ? (
-            <div className="p-12 text-center">
-              <FiFileText className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500 dark:text-gray-400 font-medium">No payment records found</p>
-              <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-                {periodType === 'today' 
-                  ? 'No payments made today. Try changing the date filter to see more records.'
-                  : periodType === 'week'
-                  ? 'No payments made this week. Try changing the date filter to see more records.'
-                  : periodType === 'month'
-                  ? 'No payments made this month. Try changing the date filter to see more records.'
-                  : selectedSupplierId || selectedPaymentMethod
-                  ? 'No payment records match your current filters. Try adjusting or clearing filters.'
-                  : 'Payment records will appear here when you make payments'}
-              </p>
-              {(periodType !== 'all' || selectedSupplierId || selectedPaymentMethod || searchTerm) && (
-                <button
-                  onClick={clearFilters}
-                  className="mt-4 px-4 py-2 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg font-medium transition-colors inline-flex items-center gap-2"
+            ) : paymentGroups.length === 0 ? (
+              <div className="p-12 text-center">
+                <FiFileText className="w-14 h-14 mx-auto text-gray-300 mb-4" />
+                <p className="text-gray-700 dark:text-gray-300 font-semibold">No payments found</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {periodType !== 'all' || selectedSupplierId || selectedPaymentMethod || searchTerm
+                    ? 'Nothing matches these filters. Try another period or clear the filters.'
+                    : 'Payments will appear here after you pay a supplier.'}
+                </p>
+                {(periodType !== 'all' || selectedSupplierId || selectedPaymentMethod || searchTerm) && (
+                  <button
+                    onClick={clearFilters}
+                    className="mt-4 px-4 py-2 text-sm text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg font-medium inline-flex items-center gap-2"
+                  >
+                    <FiX className="w-4 h-4" />
+                    Clear filters
+                  </button>
+                )}
+              </div>
+            ) : recordsViewMode === 'table' ? (
+              <>
+                <div
+                  className="flex-shrink-0 grid items-center gap-4 px-4 py-2.5 border-b border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/40 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+                  style={recordsGridStyle}
                 >
-                  <FiX className="w-4 h-4" />
-                  Clear all filters
-                </button>
-              )}
-            </div>
-          ) : recordsViewMode === 'table' ? (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                  <tr>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Date</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Supplier</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">PO #</th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Method</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Reference</th>
-                    <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Amount</th>
-                    <th className="px-4 py-3 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {displayRecords.map((record) => {
-                    const methodColor = getPaymentMethodColor(record.paymentMethod);
-                    return (
-                      <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-                        <td className="px-4 py-3 text-sm text-gray-900 dark:text-white font-medium">{formatDate(record.paymentDate)}</td>
-                        <td className="px-4 py-3">
-                          <div className="text-sm font-medium text-gray-900 dark:text-white">{record.supplierName}</div>
-                          {record.companyName && (
-                            <div className="text-xs text-gray-500 dark:text-gray-400">{record.companyName}</div>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">PO-{record.purchaseId}</td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                            {getPaymentMethodLabel(record.paymentMethod)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
-                          {record.checkNumber && <div>Check: {record.checkNumber}</div>}
-                          {record.referenceNumber && <div>Ref: {record.referenceNumber}</div>}
-                          {record.bankName && <div className="text-xs">{record.bankName}</div>}
-                          {!record.checkNumber && !record.referenceNumber && '—'}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-right font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(record.amount)}</td>
-                        <td className="px-4 py-3 text-center">
-                          {isToday(record.paymentDate) && (
-                            <button
-                              onClick={() => handleDeletePaymentRecord(record.id)}
-                              className="inline-flex items-center justify-center w-8 h-8 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg"
-                              title="Delete Payment (Today Only)"
-                            >
-                              <FiTrash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  <div>When</div>
+                  <div>Paid to</div>
+                  <div>Where the money went</div>
+                  <div className="text-right">Amount</div>
+                  <div />
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto">
+                  {pagedPaymentGroups.map(renderPaymentGroupRow)}
+                </div>
+              </>
             ) : (
-              /* Timeline View - Grouped by Date */
-              <div className="divide-y divide-gray-200 dark:divide-gray-700">
-                {recordsByDate.map(([dateKey, group]) => (
-                  <div key={dateKey} className="p-6 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
-                    {/* Date Header */}
-                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center text-white font-bold text-sm shadow-md">
-                          {group.date.getDate()}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-gray-900 dark:text-white text-lg">
-                            {dateKey}
-                          </div>
-                          <div className="text-xs text-gray-500 dark:text-gray-400">
-                            {group.records.length} payment{group.records.length !== 1 ? 's' : ''}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Daily Total</div>
-                        <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
-                          {formatCurrency(group.totalAmount)}
-                        </div>
-                      </div>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                {paymentGroupsByDate.map((day) => (
+                  <div key={day.key}>
+                    <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2 bg-gray-50/95 dark:bg-gray-700/80 backdrop-blur border-b border-gray-200 dark:border-gray-600">
+                      <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                        {day.key}
+                        <span className="ml-2 text-xs font-normal text-gray-500 dark:text-gray-400">
+                          {day.groups.length} payment{day.groups.length !== 1 ? 's' : ''}
+                        </span>
+                      </span>
+                      <span className="text-sm font-bold tabular-nums text-green-700 dark:text-green-400">
+                        {formatCurrency(day.total)}
+                      </span>
                     </div>
-
-                    {/* Records for this date */}
-                    <div className="space-y-3">
-                      {group.records.map((record: PaymentRecord) => {
-                        const methodColor = getPaymentMethodColor(record.paymentMethod);
-                        return (
-                          <div
-                            key={record.id}
-                            className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                          >
-                            <div className="flex items-center gap-4 flex-1">
-                              <div className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 flex items-center justify-center border-2 border-gray-200 dark:border-gray-600">
-                                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                                  {getPaymentMethodLabel(record.paymentMethod).charAt(0)}
-                                </span>
-                              </div>
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="font-semibold text-gray-900 dark:text-white">
-                                    {record.supplierName}
-                                  </span>
-                                  {record.companyName && (
-                                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                                      ({record.companyName})
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-3 text-xs text-gray-600 dark:text-gray-400">
-                                  <span className="flex items-center gap-1">
-                                    <span className="font-medium">PO-{record.purchaseId}</span>
-                                  </span>
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${methodColor.bg} ${methodColor.text}`}>
-                                    {getPaymentMethodLabel(record.paymentMethod)}
-                                  </span>
-                                  {(record.checkNumber || record.referenceNumber) && (
-                                    <span className="text-gray-500 dark:text-gray-400">
-                                      {record.checkNumber ? `Check: ${record.checkNumber}` : `Ref: ${record.referenceNumber}`}
-                                    </span>
-                                  )}
-                                </div>
-                                {record.notes && (
-                                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 italic">
-                                    {record.notes}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-4">
-                              <div className="text-right">
-                                <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
-                                  {formatCurrency(record.amount)}
-                                </div>
-                                <div className="text-xs text-gray-500 dark:text-gray-400">
-                                  {new Date(record.paymentDate).toLocaleTimeString('en-GB', {
-                                    hour: '2-digit',
-                                    minute: '2-digit'
-                                  })}
-                                </div>
-                              </div>
-                              {isToday(record.paymentDate) && (
-                                <button
-                                  onClick={() => handleDeletePaymentRecord(record.id)}
-                                  className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
-                                  title="Delete Payment (Today Only)"
-                                >
-                                  <FiTrash2 className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {day.groups.map(renderPaymentGroupRow)}
                   </div>
                 ))}
-                {recordsByDate.length === 0 && (
-                  <div className="p-12 text-center">
-                    <FiCalendar className="w-16 h-16 mx-auto text-gray-300 mb-4" />
-                    <p className="text-gray-500 dark:text-gray-400 font-medium">No records found for selected period</p>
+              </div>
+            )}
+
+            {!loading && paymentGroups.length > 0 && (
+              <div className="flex-shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40">
+                <span className="text-sm text-gray-600 dark:text-gray-300">
+                  <span className="font-semibold">{paymentGroups.length}</span> payment{paymentGroups.length !== 1 ? 's' : ''} ·
+                  total paid{' '}
+                  <span className="font-bold text-green-700 dark:text-green-400 tabular-nums">
+                    {formatCurrency(paymentGroups.reduce((sum, g) => sum + g.total, 0))}
+                  </span>
+                </span>
+                {recordsViewMode === 'table' && groupPages > 1 && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={currentPage <= 1}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 disabled:opacity-40"
+                    >
+                      Previous
+                    </button>
+                    <span className="px-2 font-medium text-gray-700 dark:text-gray-300">
+                      Page {Math.min(currentPage, groupPages)} of {groupPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage((p) => Math.min(groupPages, p + 1))}
+                      disabled={currentPage >= groupPages}
+                      className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
                   </div>
                 )}
               </div>
             )}
           </div>
-          
-          {/* Pagination Controls - Only show in table view when not searching */}
-          {recordsViewMode === 'table' && !searchTerm && paymentRecords.length > 0 && totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-4">
-                <span className="text-sm text-gray-600 dark:text-gray-400">
-                  Showing {((currentPage - 1) * recordsPerPage) + 1} to {Math.min(currentPage * recordsPerPage, totalRecords)} of {totalRecords} records
-                </span>
-                <select
-                  value={recordsPerPage}
-                  onChange={(e) => {
-                    setRecordsPerPage(Number(e.target.value));
-                    setCurrentPage(1);
-                  }}
-                  className="px-2 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none bg-white dark:bg-gray-700"
-                >
-                  <option value={25}>25 per page</option>
-                  <option value={50}>50 per page</option>
-                  <option value={100}>100 per page</option>
-                  <option value={200}>200 per page</option>
-                </select>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setCurrentPage(1)}
-                  disabled={currentPage === 1}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  First
-                </button>
-                <button
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Previous
-                </button>
-                <span className="px-4 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Next
-                </button>
-                <button
-                  onClick={() => setCurrentPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Last
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -2662,7 +2717,7 @@ const Payments: React.FC = () => {
                           alert('Error exporting: ' + (response.error || 'Unknown error'));
                         }
                       });
-                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, pharmacySettings, showPreview]);
+                      window.electron.ipcRenderer.sendMessage('payment-export-pdf', [filters, getStoredPharmacySettings(), showPreview]);
                     } else {
                       window.electron.ipcRenderer.once('payment-export-csv-reply', (response: any) => {
                         setExporting(false);
@@ -2673,7 +2728,7 @@ const Payments: React.FC = () => {
                           alert('Error exporting: ' + (response.error || 'Unknown error'));
                         }
                       });
-                      window.electron.ipcRenderer.sendMessage('payment-export-csv', [filters, pharmacySettings]);
+                      window.electron.ipcRenderer.sendMessage('payment-export-csv', [filters, getStoredPharmacySettings()]);
                     }
                   } catch (err) {
                     setExporting(false);
@@ -2697,33 +2752,6 @@ const Payments: React.FC = () => {
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-          {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-6">
-                <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Delete Purchase</h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-              Are you sure you want to delete purchase PO-{deleteConfirm}? This will also delete all associated payment records. This action cannot be undone.
-                </p>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setDeleteConfirm(null)}
-                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => handleDeletePurchase(deleteConfirm)}
-                    disabled={processing}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-                  >
-                    {processing ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
         </div>
       )}
 

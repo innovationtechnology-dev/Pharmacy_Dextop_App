@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FiX, FiAlertCircle, FiKey, FiCheckCircle, FiClock } from 'react-icons/fi';
+import { FiX, FiAlertCircle, FiKey, FiCheckCircle, FiClock, FiHelpCircle } from 'react-icons/fi';
 import {
   hasExceededLimit,
   getRemainingAttempts,
@@ -13,12 +13,15 @@ interface LicenseActivationDialogProps {
   onClose: () => void;
   onActivate: (code: string) => Promise<{ success: boolean; error?: string }>;
   isExpired: boolean;
+  /** False for cashiers: they cannot generate a key, so tell them where one comes from. */
+  canGenerateKey?: boolean;
 }
 
 const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
   onClose,
   onActivate,
   isExpired,
+  canGenerateKey = true,
 }) => {
   const [activationCode, setActivationCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -130,6 +133,19 @@ const LicenseActivationDialog: React.FC<LicenseActivationDialogProps> = ({
                         Attempts remaining today: <strong>{remainingAttempts}</strong>
                       </p>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {!canGenerateKey && (
+                <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-100 dark:border-amber-900/30 rounded-lg flex items-start gap-3">
+                  <FiHelpCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div className="text-xs text-amber-800 dark:text-amber-300 leading-relaxed">
+                    <p className="font-bold">Don&apos;t have a key?</p>
+                    <p className="mt-1">
+                      Close this and press <strong>Open License Page</strong>, then fill in <strong>Generate License Key</strong>. Or ask your admin, or contact support:
+                    </p>
+                    <p className="mt-1 font-semibold">innovationtechnology.dev@gmail.com · (+92) 3205720-774</p>
                   </div>
                 </div>
               )}

@@ -328,3 +328,63 @@
 .animate-slideInRight {
   animation: slideInRight 0.3s ease-out;
 }
+
+* {
+  scrollbar-color: rgb(var(--color-emerald-500)) rgb(var(--color-gray-100));
+  scrollbar-width: thin;
+}
+
+.dark * {
+  scrollbar-color: rgb(var(--color-emerald-400)) rgb(var(--color-gray-900));
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background-color: rgb(var(--color-gray-100));
+}
+
+.dark *::-webkit-scrollbar-track {
+  background-color: rgb(var(--color-gray-900));
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--color-emerald-500));
+  border: 2px solid rgb(var(--color-gray-100));
+  border-radius: 9999px;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background-color: rgb(var(--color-emerald-400));
+  border-color: rgb(var(--color-gray-900));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--color-emerald-600));
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--color-emerald-300));
+}
+
+*::-webkit-scrollbar-corner {
+  background-color: rgb(var(--color-gray-100));
+}
+
+.dark *::-webkit-scrollbar-corner {
+  background-color: rgb(var(--color-gray-900));
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

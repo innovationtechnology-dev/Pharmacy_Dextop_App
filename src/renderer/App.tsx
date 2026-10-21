@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import * as MiscAppFxns from './pages/lib/app/misc';
 import { ThemeProvider } from './contexts/ThemeContext';
+import NetworkGate from './components/network/NetworkGate';
 
 import Home from './pages/home';
 // import SqlDemo from './pages/sqlDemoPage.js';
@@ -26,6 +27,7 @@ import MainMenu from './pages/dashboard-pages/MainMenu';
 import SaleReturn from './pages/dashboard-pages/SaleReturn';
 import Stocks from './pages/dashboard-pages/Stocks';
 import License from './pages/dashboard-pages/License';
+import MedicineAnalytics from './pages/dashboard-pages/MedicineAnalytics';
 import SuperAdminDashboard from './pages/super-admin/SuperAdminDashboard';
 import './index.css';
 // import OrderDashboard from './pages/dashboard-pages/Order.js'
@@ -46,6 +48,7 @@ export default class App extends React.Component {
     return (
       <ThemeProvider>
         <fieldset id="app">
+          <NetworkGate>
           <Router>
             <Routes>
               <Route path="/" element={<Home />} />
@@ -73,9 +76,11 @@ export default class App extends React.Component {
                 <Route path="/sale-return" element={<SaleReturn />} />
                 <Route path="/stocks" element={<Stocks />} />
                 <Route path="/license" element={<License />} />
+                <Route path="/medicine-analytics" element={<MedicineAnalytics />} />
               </Route>
             </Routes>
           </Router>
+          </NetworkGate>
         </fieldset>
       </ThemeProvider>
     );

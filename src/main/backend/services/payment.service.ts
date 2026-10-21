@@ -10,12 +10,20 @@ export interface Payment {
     notes?: string;
     paymentDate: string;
     createdAt?: string;
+    /** Shared by every PO slice of one supplier payment, so the ledger can show the total paid at once. */
+    batchId?: string;
 }
+
+/**
+ * Shared across all PaymentService instances (each controller creates its own): repersist runs
+ * must not overlap on the single DB connection, or one run's RELEASE drops the other's SAVEPOINT.
+ */
+let repersistQueue: Promise<void> = Promise.resolve();
+let repersistSavepointSeq = 0;
 
 export class PaymentService {
     private dbService = getDatabaseService();
     private purchaseService: PurchaseService;
-    private repersistSavepointSeq = 0;
 
     constructor() {
         this.purchaseService = new PurchaseService();
@@ -48,14 +56,47 @@ export class PaymentService {
         if (!ppInfo.some((col: any) => col.name === 'supplier_balance_after')) {
             await this.dbService.execute(`ALTER TABLE purchase_payments ADD COLUMN supplier_balance_after REAL`);
         }
+        if (!ppInfo.some((col: any) => col.name === 'batch_id')) {
+            await this.dbService.execute(`ALTER TABLE purchase_payments ADD COLUMN batch_id TEXT`);
+        }
+        // Backfill: slices written by one allocated payment share supplier, entry time and method.
+        await this.dbService.execute(`
+      UPDATE purchase_payments
+      SET batch_id = 'legacy-' || (SELECT supplier_id FROM purchases WHERE purchases.id = purchase_payments.purchase_id)
+        || '-' || COALESCE(created_at, payment_date) || '-' || payment_method || '-' || COALESCE(reference, '')
+      WHERE batch_id IS NULL AND amount > 0
+    `);
+
+        // Repair payments previously stamped at a fixed 12:00:00 on the day they were entered:
+        // use the real entry time so they sort correctly against that day's purchases.
+        const repaired = await this.dbService.execute(`
+      UPDATE purchase_payments
+      SET payment_date = created_at
+      WHERE created_at IS NOT NULL
+        AND time(payment_date) = '12:00:00'
+        AND date(payment_date) = date(created_at)
+        AND time(created_at) <> '12:00:00'
+    `);
+        if ((repaired as any)?.changes > 0) {
+            await this.repersistSupplierRunningBalances();
+        }
     }
 
     private paymentDateSqlValue(payment: Payment): string {
         if (payment.paymentDate && String(payment.paymentDate).trim()) {
             const d = String(payment.paymentDate).trim();
-            return d.includes('T') || d.includes(' ') ? d : `${d} 12:00:00`;
+            if (d.includes('T') || d.includes(' ')) return d;
+            // Date-only (from the date picker): stamp with the current local time so the
+            // payment sorts after purchases made earlier that day instead of at a fixed noon.
+            const now = new Date();
+            const pad = (n: number) => String(n).padStart(2, '0');
+            return `${d} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
         }
         return `datetime('now', 'localtime')`;
+    }
+
+    private newBatchId(): string {
+        return `b-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
     /** Insert one payment row and increase purchase paid amount (caller manages transaction). */
@@ -63,13 +104,19 @@ export class PaymentService {
         const payExpr = this.paymentDateSqlValue(payment);
         const useLiteral = payExpr.startsWith("datetime(");
         const sql = useLiteral
-            ? `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date, created_at)
-               VALUES (?, ?, ?, ?, ?, ${payExpr}, datetime('now', 'localtime'))`
-            : `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, payment_date, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`;
-        const params = useLiteral
-            ? [payment.purchaseId, payment.amount, payment.paymentMethod, payment.reference || null, payment.notes || null]
-            : [payment.purchaseId, payment.amount, payment.paymentMethod, payment.reference || null, payment.notes || null, payExpr];
+            ? `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, batch_id, payment_date, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ${payExpr}, datetime('now', 'localtime'))`
+            : `INSERT INTO purchase_payments (purchase_id, amount, payment_method, reference, notes, batch_id, payment_date, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))`;
+        const base = [
+            payment.purchaseId,
+            payment.amount,
+            payment.paymentMethod,
+            payment.reference || null,
+            payment.notes || null,
+            payment.batchId || this.newBatchId(),
+        ];
+        const params = useLiteral ? base : [...base, payExpr];
         const result = await this.dbService.execute(sql, params);
         return (result as any).lastID as number;
     }
@@ -128,6 +175,7 @@ export class PaymentService {
             throw new Error(`Payment amount (${totalAmount}) cannot exceed total open balance (${sumOpen}) for this supplier`);
         }
 
+        const batchId = this.newBatchId();
         await this.dbService.execute('BEGIN TRANSACTION');
         try {
             let left = totalAmount;
@@ -142,6 +190,7 @@ export class PaymentService {
                     reference: payment.reference,
                     notes: payment.notes,
                     paymentDate: payment.paymentDate ?? '',
+                    batchId,
                 };
                 await this.insertPurchasePaymentRow(slice);
                 await this.purchaseService.updatePurchasePayment(r.id, chunk);
@@ -158,7 +207,13 @@ export class PaymentService {
     /**
      * Recompute and persist supplier running balance after each purchase and each payment (global timeline).
      */
-    public async repersistSupplierRunningBalances(): Promise<void> {
+    public repersistSupplierRunningBalances(): Promise<void> {
+        const run = repersistQueue.then(() => this.repersistSupplierRunningBalancesNow());
+        repersistQueue = run.catch(() => undefined);
+        return run;
+    }
+
+    private async repersistSupplierRunningBalancesNow(): Promise<void> {
         const purchaseRows = await this.dbService.query(
             `SELECT id AS purchase_id, created_at AS event_at, supplier_id, grand_total AS gtot
              FROM purchases ORDER BY datetime(created_at) ASC, id ASC`,
@@ -213,33 +268,32 @@ export class PaymentService {
             return a.sortKey - b.sortKey;
         });
 
-        // Use SAVEPOINT so this work can run while another handler still holds an open
-        // transaction (SQLite rejects nested BEGIN on the same connection).
-        const sp = `sb_rep_${++this.repersistSavepointSeq}_${Date.now()}`;
-        await this.dbService.execute(`SAVEPOINT ${sp}`);
-        try {
-            const balanceBySupplier = new Map<number, number>();
-            for (const e of events) {
-                const prev = balanceBySupplier.get(e.supplierId) || 0;
-                const next = prev + e.debit - e.credit;
-                balanceBySupplier.set(e.supplierId, next);
-                const v = Math.max(0, next);
-                if (e.kind === 'purchase') {
-                    await this.dbService.execute(`UPDATE purchases SET supplier_balance_after = ? WHERE id = ?`, [
-                        v,
-                        e.purchaseId,
-                    ]);
-                } else if (e.paymentId != null) {
-                    await this.dbService.execute(`UPDATE purchase_payments SET supplier_balance_after = ? WHERE id = ?`, [
-                        v,
-                        e.paymentId,
-                    ]);
-                }
+        const statements: string[] = [];
+        const balanceBySupplier = new Map<number, number>();
+        const sqlNumber = (n: number) => (Number.isFinite(n) ? String(n) : '0');
+        for (const e of events) {
+            const prev = balanceBySupplier.get(e.supplierId) || 0;
+            const next = prev + e.debit - e.credit;
+            balanceBySupplier.set(e.supplierId, next);
+            const v = sqlNumber(Math.max(0, next));
+            if (e.kind === 'purchase') {
+                statements.push(`UPDATE purchases SET supplier_balance_after = ${v} WHERE id = ${Math.trunc(e.purchaseId)};`);
+            } else if (e.paymentId != null) {
+                statements.push(`UPDATE purchase_payments SET supplier_balance_after = ${v} WHERE id = ${Math.trunc(e.paymentId)};`);
             }
-            await this.dbService.execute(`RELEASE ${sp}`);
+        }
+        if (!statements.length) return;
+
+        // One script, one sqlite3_exec call: nothing else on the shared connection can run in
+        // between, so another request's COMMIT/ROLLBACK can no longer destroy this SAVEPOINT
+        // ("no such savepoint"). SAVEPOINT (not BEGIN) still nests inside a caller's transaction.
+        const sp = `sb_rep_${++repersistSavepointSeq}_${Date.now()}`;
+        try {
+            await this.dbService.executeScript(`SAVEPOINT ${sp};\n${statements.join('\n')}\nRELEASE ${sp};`);
         } catch (err) {
-            await this.dbService.execute(`ROLLBACK TO ${sp}`);
-            await this.dbService.execute(`RELEASE ${sp}`);
+            // exec stops at the failing statement; undo whatever ran (best effort — the values are
+            // derived and recomputed on the next run).
+            await this.dbService.executeScript(`ROLLBACK TO ${sp}; RELEASE ${sp};`).catch(() => undefined);
             throw err;
         }
     }
@@ -467,9 +521,22 @@ export class PaymentService {
                 pp.*, 
                 p.supplier_id, 
                 p.supplier_name,
-                p.notes as purchase_notes
+                p.notes as purchase_notes,
+                p.grand_total,
+                -- Still unpaid on this PO right after this payment (same rule as the ledger).
+                MAX(0, COALESCE(p.grand_total, 0) - COALESCE((
+                    SELECT SUM(x.amount) FROM purchase_payments x
+                    WHERE x.purchase_id = pp.purchase_id
+                    AND (
+                        datetime(COALESCE(x.payment_date, x.created_at)) < datetime(COALESCE(pp.payment_date, pp.created_at))
+                        OR (
+                            datetime(COALESCE(x.payment_date, x.created_at)) = datetime(COALESCE(pp.payment_date, pp.created_at))
+                            AND x.id <= pp.id
+                        )
+                    )
+                ), 0)) AS remaining_after
             ${baseSql}
-            ORDER BY pp.payment_date DESC
+            ORDER BY datetime(COALESCE(pp.payment_date, pp.created_at)) DESC, pp.id DESC
             ${paginated ? 'LIMIT ? OFFSET ?' : ''}
         `;
 
@@ -491,7 +558,10 @@ export class PaymentService {
             referenceNumber: row.reference,
             notes: row.notes,
             paymentDate: row.payment_date,
-            createdAt: row.created_at
+            createdAt: row.created_at,
+            batchId: row.batch_id || undefined,
+            purchaseTotal: Number(row.grand_total) || 0,
+            remainingAfter: Math.max(0, Number(row.remaining_after) || 0),
         }));
 
         if (paginated) {
@@ -639,6 +709,7 @@ export class PaymentService {
             paymentMethod?: string;
             reference?: string;
             notes?: string;
+            batchId?: string;
         }>
     > {
         const { supplierId } = filters;
@@ -676,7 +747,7 @@ export class PaymentService {
         const paymentSql = `SELECT pp.id AS payment_id, pp.purchase_id,
                     COALESCE(pp.payment_date, pp.created_at) AS event_at,
                     p.supplier_id, p.supplier_name,
-                    pp.amount, pp.payment_method, pp.reference, pp.notes, pp.supplier_balance_after
+                    pp.amount, pp.payment_method, pp.reference, pp.notes, pp.batch_id, pp.supplier_balance_after
              FROM purchase_payments pp
              INNER JOIN purchases p ON p.id = pp.purchase_id
              ${paymentWhere}
@@ -708,6 +779,7 @@ export class PaymentService {
             paymentMethod?: string;
             reference?: string;
             notes?: string;
+            batchId?: string;
             sortKey: number;
             storedSupplierBalanceAfter?: number;
         };
@@ -758,6 +830,7 @@ export class PaymentService {
                             : method,
                 reference: r.reference || undefined,
                 notes: r.notes || undefined,
+                batchId: r.batch_id || undefined,
                 sortKey: new Date(r.event_at).getTime() * 1000 + 500 + idx,
                 storedSupplierBalanceAfter: stored,
             });
@@ -789,6 +862,7 @@ export class PaymentService {
             paymentMethod?: string;
             reference?: string;
             notes?: string;
+            batchId?: string;
         }> = [];
 
         const poUnpaid = new Map<number, number>();
@@ -851,6 +925,7 @@ export class PaymentService {
                 paymentMethod: e.paymentMethod,
                 reference: e.reference,
                 notes: e.notes,
+                batchId: e.batchId,
             });
         }
 

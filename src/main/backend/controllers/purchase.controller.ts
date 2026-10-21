@@ -1,7 +1,8 @@
 import { ipcMain, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { PurchaseService, Purchase } from '../services/purchase.service';
 import { PaymentService } from '../services/payment.service';
-import { currencySymbols, getCurrencySymbol } from '../../../common/currency';
+import { getCurrencySymbol } from '../../../common/currency';
+import { getMedicineService } from '../services/medicine.service';
 
 export class PurchaseController {
   private purchaseService: PurchaseService;
@@ -29,6 +30,7 @@ export class PurchaseController {
       try {
         const purchase = args[0] as Purchase;
         const purchaseId = await this.purchaseService.createPurchase(purchase);
+        getMedicineService().invalidateBarcodeCache();
         event.reply('purchase-create-reply', { success: true, data: { id: purchaseId } });
       } catch (error) {
         console.error('Create purchase error:', error);
@@ -201,7 +203,7 @@ export class PurchaseController {
     });
 
     // Get next batch number for a medicine
-    ipcMain.handle('get-next-batch-number', async (event: IpcMainInvokeEvent, medicineId: number) => {
+    ipcMain.handle('get-next-batch-number', async (_event: IpcMainInvokeEvent, medicineId: number) => {
       try {
         const nextBatchNumber = await this.purchaseService.getNextBatchNumber(medicineId);
         return { success: true, nextBatchNumber };
