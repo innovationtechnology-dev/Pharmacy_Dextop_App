@@ -521,9 +521,22 @@ export class PaymentService {
                 pp.*, 
                 p.supplier_id, 
                 p.supplier_name,
-                p.notes as purchase_notes
+                p.notes as purchase_notes,
+                p.grand_total,
+                -- Still unpaid on this PO right after this payment (same rule as the ledger).
+                MAX(0, COALESCE(p.grand_total, 0) - COALESCE((
+                    SELECT SUM(x.amount) FROM purchase_payments x
+                    WHERE x.purchase_id = pp.purchase_id
+                    AND (
+                        datetime(COALESCE(x.payment_date, x.created_at)) < datetime(COALESCE(pp.payment_date, pp.created_at))
+                        OR (
+                            datetime(COALESCE(x.payment_date, x.created_at)) = datetime(COALESCE(pp.payment_date, pp.created_at))
+                            AND x.id <= pp.id
+                        )
+                    )
+                ), 0)) AS remaining_after
             ${baseSql}
-            ORDER BY pp.payment_date DESC
+            ORDER BY datetime(COALESCE(pp.payment_date, pp.created_at)) DESC, pp.id DESC
             ${paginated ? 'LIMIT ? OFFSET ?' : ''}
         `;
 
@@ -545,7 +558,10 @@ export class PaymentService {
             referenceNumber: row.reference,
             notes: row.notes,
             paymentDate: row.payment_date,
-            createdAt: row.created_at
+            createdAt: row.created_at,
+            batchId: row.batch_id || undefined,
+            purchaseTotal: Number(row.grand_total) || 0,
+            remainingAfter: Math.max(0, Number(row.remaining_after) || 0),
         }));
 
         if (paginated) {
