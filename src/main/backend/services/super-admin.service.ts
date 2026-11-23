@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { getDatabaseService } from './database.service';
+import { getMedicineService } from './medicine.service';
 import { databaseConfig } from '../config/database.config';
 
 export interface SuperAdminLoginResult {
@@ -720,6 +721,17 @@ export class SuperAdminService {
 
         // Reconnect
         await dbConnection.connect();
+
+        // Bring the imported file up to the current medicine schema (gtin column, stock batches)
+        // and repair barcodes written by older builds. Without this, an older database only works
+        // after an app restart, and scan results cached for the previous database would linger.
+        try {
+          const medicineService = getMedicineService();
+          medicineService.invalidateBarcodeCache();
+          await medicineService.initializeTable();
+        } catch (migrationErr) {
+          console.error('Post-import medicine migration failed:', migrationErr);
+        }
 
         // 3. Post-Import Verification - Get summary of imported data
         const summary = await this.getDatabaseSummary();

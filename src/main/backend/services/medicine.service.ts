@@ -6,6 +6,11 @@ import {
   extractGtin,
   normalizeScannedBarcode,
 } from '../../../common/barcodeLookup';
+import {
+  buildBarcodeRepairSql,
+  canonicalStoredBarcode,
+  planBarcodeRepair,
+} from '../../../common/barcodeRepair';
 
 export type MedicineStatus = 'active' | 'inactive' | 'discontinued';
 
@@ -322,6 +327,59 @@ export class MedicineService {
       WHERE selling_price_per_pill = 0
         AND purchase_item_id IS NOT NULL
     `);
+
+    await this.repairLegacyBarcodes();
+  }
+
+  /**
+   * Repairs databases written by the old scanner code: merges the per-batch duplicate rows of a
+   * product (same GTIN) into one medicine and replaces full GS1 scan strings with the GTIN.
+   * Idempotent — on an already repaired database the plan is empty and nothing is written.
+   * Runs on startup and after a database import/restore.
+   */
+  private async repairLegacyBarcodes(): Promise<void> {
+    const rows = await this.dbService.query(`
+      SELECT m.id, m.name, m.barcode, m.pill_quantity AS pillQuantity, m.status,
+             (SELECT COALESCE(SUM(sb.qty_remaining), 0) FROM stock_batches sb WHERE sb.medicine_id = m.id) AS stock
+      FROM medicines m
+      WHERE m.barcode IS NOT NULL AND m.barcode != ''
+    `);
+    const plan = planBarcodeRepair(rows);
+    if (plan.merges.length === 0 && plan.barcodeUpdates.length === 0) return;
+
+    // Every table with a medicine_id column (sale/purchase/return items, stock_batches, grn_items…).
+    const tables = await this.dbService.query(
+      `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`
+    );
+    const childTables: string[] = [];
+    for (const { name } of tables) {
+      if (!/^[A-Za-z0-9_]+$/.test(name)) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const cols = await this.dbService.query(`PRAGMA table_info("${name}")`);
+      if (cols.some((c: any) => c.name === 'medicine_id')) childTables.push(name);
+    }
+
+    try {
+      await this.dbService.executeScript(buildBarcodeRepairSql(plan, childTables));
+    } catch (error) {
+      await this.dbService.executeScript('ROLLBACK;').catch(() => undefined);
+      console.error('[medicines] Barcode repair failed and was rolled back:', error);
+      return;
+    }
+
+    this.invalidateBarcodeCache();
+    const mergedRows = plan.merges.reduce((n, m) => n + m.mergeIds.length, 0);
+    console.log(
+      `[medicines] Barcode repair: merged ${mergedRows} duplicate row(s) into ${plan.merges.length} medicine(s), ` +
+        `cleaned ${plan.barcodeUpdates.length} barcode(s).`
+    );
+    if (plan.skipped.length > 0) {
+      console.warn(
+        `[medicines] ${plan.skipped.length} product(s) share a barcode but differ in pack size or strength; ` +
+          `left unmerged for manual review:`,
+        plan.skipped.map((s) => `GTIN ${s.gtin}: keep #${s.keepId}, others #${s.ids.join(', #')}`)
+      );
+    }
   }
 
   /**
@@ -686,7 +744,9 @@ export class MedicineService {
   /**
    * Create a new medicine.
    */
-  public async createMedicine(medicine: Medicine): Promise<number> {
+  public async createMedicine(input: Medicine): Promise<number> {
+    // A full GS1 scan is stored as its GTIN so the next batch (other expiry/lot) still matches.
+    const medicine: Medicine = { ...input, barcode: canonicalStoredBarcode(input.barcode) ?? undefined };
     // Check if barcode already exists
     if (medicine.barcode) {
       const existingMedicine = await this.dbService.queryOne(
@@ -733,7 +793,9 @@ export class MedicineService {
    * Update medicine metadata (name, barcode, pills per packet, status).
    * Only allows status updates for medicines used in transactions.
    */
-  public async updateMedicine(id: number, medicine: Partial<Medicine>): Promise<void> {
+  public async updateMedicine(id: number, input: Partial<Medicine>): Promise<void> {
+    const medicine: Partial<Medicine> =
+      input.barcode === undefined ? input : { ...input, barcode: canonicalStoredBarcode(input.barcode) ?? '' };
     // Check if medicine has been used in transactions
     const hasTransactions = await this.hasMedicineBeenUsed(id);
     
