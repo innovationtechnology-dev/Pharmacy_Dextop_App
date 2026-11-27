@@ -318,15 +318,6 @@ const SellingPanel: React.FC = () => {
   const [returnedQuantities, setReturnedQuantities] = useState<Map<string, number>>(new Map());
   const [currentSaleReturnTotal, setCurrentSaleReturnTotal] = useState<number>(0);
   const [receiptPreviewHtml, setReceiptPreviewHtml] = useState<string | null>(null);
-  const [saleDeleteConfirm, setSaleDeleteConfirm] = useState<{
-    saleId: number;
-    saleDate: string;
-  } | null>(null);
-  const [removeLineConfirm, setRemoveLineConfirm] = useState<{
-    medicineId: number;
-    itemName: string;
-    returnedQty: number;
-  } | null>(null);
   const isCashier = getAuthUser()?.role === 'cashier';
 
   const isWithin24Hours = useCallback((dateString?: string): boolean => {
@@ -1306,37 +1297,11 @@ const SellingPanel: React.FC = () => {
     [addToCart]
   );
 
-  const removeFromCart = async (medicineId: number) => {
+  /** New (unsaved) bill only. Items on a saved sale go back through Return Items, never deleted. */
+  const removeFromCart = (medicineId: number) => {
+    if (currentBillIndex >= 0 || selectedSaleId) return;
     clearQtyDraft(medicineId);
-
-    const nextCart = cart.filter((item) => item.medicine.id !== medicineId);
-
-    // New bill: local cart removal only.
-    if (currentBillIndex < 0 || !selectedSaleId) {
-      setCart(nextCart);
-      return;
-    }
-
-    // Editing a history sale: persist immediately.
-    if (isCashier && !isWithin24Hours(selectedSale?.createdAt)) {
-      return;
-    }
-
-    // Warn if this medicine has return records that will also be deleted.
-    const returnedQtyForItem = Array.from(returnedQuantities.entries())
-      .filter(([k]) => k.startsWith(`${medicineId}_`))
-      .reduce((sum, [, v]) => sum + v, 0);
-    if (returnedQtyForItem > 0) {
-      const itemName = cart.find(i => i.medicine.id === medicineId)?.medicine.name || 'this medicine';
-      setRemoveLineConfirm({
-        medicineId,
-        itemName,
-        returnedQty: returnedQtyForItem,
-      });
-      return;
-    }
-
-    await performPersistedLineRemoval(medicineId);
+    setCart((prev) => prev.filter((item) => item.medicine.id !== medicineId));
   };
 
   const updateCartQuantity = (medicineId: number, change: number) => {
@@ -2082,150 +2047,6 @@ const SellingPanel: React.FC = () => {
     }
   }, [selectedSaleId, returnItems, customerName, customerPhone, returnReason, returnNotes, loadMedicines, loadSalesHistory, refreshExpiringAlerts]);
 
-  // Helper function to check if a date is today
-  const isToday = (dateString: string): boolean => {
-    try {
-      const date = new Date(dateString);
-      const today = new Date();
-
-      // Compare year, month, and day
-      return (
-        date.getFullYear() === today.getFullYear() &&
-        date.getMonth() === today.getMonth() &&
-        date.getDate() === today.getDate()
-      );
-    } catch (error) {
-      console.error('Error checking if date is today:', error);
-      return false;
-    }
-  };
-
-  const canCurrentUserDeleteSale = useCallback((saleDate: string): boolean => {
-    if (!isCashier) {
-      return isToday(saleDate);
-    }
-    return isWithin24Hours(saleDate);
-  }, [isCashier, isWithin24Hours]);
-
-  const requestDeleteSale = useCallback((saleId: number, saleDate: string) => {
-    if (!canCurrentUserDeleteSale(saleDate)) {
-      alert(isCashier ? 'Cashiers can only delete sales created within 24 hours' : 'You can only delete sales created today');
-      return;
-    }
-    setSaleDeleteConfirm({ saleId, saleDate });
-  }, [canCurrentUserDeleteSale, isCashier]);
-
-  // Handle delete sale
-  const handleDeleteSale = useCallback(async (saleId: number) => {
-    try {
-      window.electron.ipcRenderer.once('sale-delete-reply', (response: any) => {
-        setSaleDeleteConfirm(null);
-        if (response.success) {
-          alert('Sale deleted successfully!');
-          // If the deleted sale was selected, clear the form
-          if (selectedSaleId === saleId) {
-            clearFormForNewBill();
-            setCurrentBillIndex(-1);
-            setSelectedSaleId(null);
-          }
-          loadMedicines(); // Reload medicines to update stock
-          loadSalesHistory(); // Reload sales history
-          refreshExpiringAlerts();
-        } else {
-          alert(`Error deleting sale: ${response.error || 'Unknown error'}`);
-        }
-      });
-      window.electron.ipcRenderer.sendMessage('sale-delete', [saleId]);
-    } catch (error) {
-      console.error('Error deleting sale:', error);
-      alert('Error deleting sale. Please try again.');
-    }
-  }, [selectedSaleId, loadMedicines, loadSalesHistory, refreshExpiringAlerts, clearFormForNewBill]);
-
-  /** After user confirms (or when no return rows exist), persist removing one line from an edited sale. */
-  const performPersistedLineRemoval = useCallback(
-    async (medicineId: number) => {
-      const nextCart = cart.filter((item) => item.medicine.id !== medicineId);
-
-      if (nextCart.length === 0) {
-        if (selectedSale) {
-          requestDeleteSale(selectedSale.saleId, selectedSale.createdAt);
-        }
-        return;
-      }
-
-      setProcessing(true);
-      try {
-        const saleItems = nextCart.flatMap((item) => {
-          const breakdown = item.batchBreakdown;
-          if (breakdown && breakdown.length > 1) {
-            return breakdown.map((seg) => {
-              const segSubtotal = seg.pills * seg.price;
-              const discountAmt = (segSubtotal * (item.discount || 0)) / 100;
-              const taxAmt = ((segSubtotal - discountAmt) * (item.tax || 0)) / 100;
-              return {
-                medicineId: item.medicine.id,
-                medicineName: item.medicine.name,
-                pills: seg.pills,
-                unitPrice: seg.price,
-                discountAmount: discountAmt,
-                taxAmount: taxAmt,
-              };
-            });
-          }
-          return [{
-            medicineId: item.medicine.id,
-            medicineName: item.medicine.name,
-            pills: item.pills,
-            unitPrice: item.batchBreakdown && item.batchBreakdown.length === 1
-              ? item.batchBreakdown[0].price
-              : item.unitPrice,
-            discountAmount: item.discountAmount || 0,
-            taxAmount: item.taxAmount || 0,
-          }];
-        });
-
-        const sale = {
-          items: saleItems,
-          customerName: customerName || undefined,
-          customerPhone: customerPhone || undefined,
-          saleType: saleType || 'Regular',
-          additionalDiscount: 0,
-          prescriptionNumber: prescriptionNumber.trim() || undefined,
-          doctorName: doctorName.trim() || undefined,
-        };
-
-        const result = await updateSale(selectedSaleId!, sale);
-        if (result.success) {
-          setCart(nextCart);
-          loadMedicines();
-          loadSalesHistory();
-          refreshExpiringAlerts();
-        } else {
-          alert(`Error updating sale: ${result.error || 'Unknown error'}`);
-        }
-      } catch (error) {
-        console.error('Error updating sale after removing item:', error);
-        alert('Error updating sale. Please try again.');
-      } finally {
-        setProcessing(false);
-      }
-    },
-    [
-      cart,
-      selectedSale,
-      selectedSaleId,
-      customerName,
-      customerPhone,
-      saleType,
-      prescriptionNumber,
-      doctorName,
-      requestDeleteSale,
-      loadMedicines,
-      loadSalesHistory,
-      refreshExpiringAlerts,
-    ]
-  );
 
   const currencyCode = pharmacyInfo.currency || 'USD';
   const symbol = getSymbol(currencyCode);
@@ -3039,7 +2860,8 @@ const SellingPanel: React.FC = () => {
                       </div>
                       <div className="col-span-1 text-center">Tax%</div>
                       <div className="col-span-3 text-right pr-1">Amount</div>
-                      <div className="col-span-1 text-center">Remove</div>
+                      {/* Saved sales: lines are taken back through Return Items, never deleted from the bill. */}
+                      <div className="col-span-1 text-center">{currentBillIndex < 0 ? 'Remove' : ''}</div>
                     </div>
                       );
                     })()}
@@ -3360,22 +3182,18 @@ const SellingPanel: React.FC = () => {
                           </span>
                         </div>
                         <div className="col-span-1 text-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)) return;
-                              removeFromCart(item.medicine.id);
-                            }}
-                            disabled={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)}
-                            className={`p-1.5 transition-all border border-transparent ${
-                              isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt)
-                                ? 'text-gray-400 dark:text-gray-600 cursor-not-allowed'
-                                : 'text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded hover:border-red-300 dark:hover:border-red-700'
-                            }`}
-                            title={isCashier && currentBillIndex >= 0 && !isWithin24Hours(selectedSale?.createdAt) ? 'Cashiers cannot modify old sales' : 'Remove from cart'}
-                          >
-                            <FiTrash2 className="w-4 h-4" />
-                          </button>
+                          {/* Only a new (unsaved) bill can drop lines. A saved sale is never edited by
+                              deleting a line — the item goes back through Return Items instead. */}
+                          {currentBillIndex < 0 && (
+                            <button
+                              type="button"
+                              onClick={() => removeFromCart(item.medicine.id)}
+                              className="p-1.5 transition-all border border-transparent text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-700 dark:hover:text-red-300 rounded hover:border-red-300 dark:hover:border-red-700"
+                              title="Remove from cart"
+                            >
+                              <FiTrash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -3659,9 +3477,9 @@ const SellingPanel: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Update, Delete and Print buttons row - Only show if no returns AND not cashier */}
+                      {/* Update and Print. No Delete: a saved sale is reversed through Return Items. */}
                       {currentSaleReturnTotal === 0 && (!isCashier || currentBillIndex === -1 || isWithin24Hours(selectedSale?.createdAt)) && (
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             type="button"
                             onClick={() => void handleCheckout()}
@@ -3680,37 +3498,6 @@ const SellingPanel: React.FC = () => {
                               </>
                             )}
                           </button>
-
-                          {(() => {
-                            const sale = salesHistoryList.find(s => s.saleId === selectedSaleId);
-                            const canDelete = !!(sale && canCurrentUserDeleteSale(sale.createdAt));
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (sale) {
-                                    requestDeleteSale(sale.saleId, sale.createdAt);
-                                  }
-                                }}
-                                disabled={!canDelete}
-                                className={`py-2.5 rounded-lg text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-1.5 ${
-                                  canDelete
-                                    ? 'bg-red-600 dark:bg-red-700 text-white hover:bg-red-700 dark:hover:bg-red-600'
-                                    : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-500 cursor-not-allowed'
-                                }`}
-                                title={
-                                  canDelete
-                                    ? 'Delete this sale'
-                                    : (isCashier
-                                      ? 'Cashiers can only delete sales created within 24 hours'
-                                      : 'Can only delete today\'s sales')
-                                }
-                              >
-                                <FiTrash2 className="w-3.5 h-3.5" />
-                                <span>Delete</span>
-                              </button>
-                            );
-                          })()}
 
                           <button
                             type="button"
@@ -3970,28 +3757,6 @@ const SellingPanel: React.FC = () => {
         </div>
       </div>
 
-      {removeLineConfirm && (
-        <ConfirmDialog
-          isOpen
-          onClose={() => setRemoveLineConfirm(null)}
-          onConfirm={() => {
-            if (!removeLineConfirm) return;
-            void performPersistedLineRemoval(removeLineConfirm.medicineId);
-          }}
-          title="Remove line item"
-          message={`"${removeLineConfirm.itemName}" has ${removeLineConfirm.returnedQty} pill(s) already returned.
-
-Removing it will permanently delete:
-• The sale record for this item
-• All associated return records
-
-Are you sure you want to continue?`}
-          confirmText="Continue"
-          cancelText="Cancel"
-          type="danger"
-        />
-      )}
-
       {/* Return Modal */}
       {showNoDiscountConfirm && (
         <ConfirmDialog
@@ -4012,35 +3777,6 @@ Are you sure you want to continue?`}
           cancelText="Go Back & Add Discount"
           type="danger"
         />
-      )}
-
-      {saleDeleteConfirm && (
-        <div className="fixed inset-0 z-[110] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-              Delete Sale
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400 mb-5">
-              Are you sure you want to delete this sale? This action cannot be undone.
-            </p>
-            <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={() => setSaleDeleteConfirm(null)}
-                className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors font-medium"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeleteSale(saleDeleteConfirm.saleId)}
-                className="flex-1 px-4 py-2 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {showReturnModal && (
